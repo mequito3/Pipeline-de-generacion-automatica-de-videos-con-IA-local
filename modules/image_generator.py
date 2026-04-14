@@ -866,7 +866,8 @@ def generate_images(
             img.save(str(out))
             image_paths[i] = str(out)
 
-    # ── Paso 2: ComfyUI batch — submit todos, luego poll simultáneo ───────────
+    # ── Paso 2: ComfyUI — submit uno a uno y esperar resultado antes del siguiente
+    # (evita timeouts cuando ComfyUI bloquea su HTTP server mientras genera en GPU)
     if comfyui_jobs:
         n_unique = len(comfyui_jobs)
         n_total  = sum(len(v) for v in comfyui_jobs.values())
@@ -876,17 +877,12 @@ def generate_images(
                 f"(ahorro: {n_total - n_unique} generaciones)"
             )
 
-        # Enviar todos los prompts a la cola de ComfyUI de una vez
-        # pending: [(prompt_id, prompt, [(scene_idx, out_path)])]
-        pending: list[tuple[str, str, list[tuple[int, Path]]]] = []
-
         for prompt_idx, (prompt, scene_list) in enumerate(comfyui_jobs.items()):
+            # ── Submit ────────────────────────────────────────────────────────
+            scene_seed = None
+            if post_seed is not None:
+                scene_seed = (post_seed + prompt_idx * 137) % (2**31)
             try:
-                # Seed determinístico: mismo video = misma persona en todas las escenas
-                # post_seed=None → aleatorio (modo legacy compatible)
-                scene_seed = None
-                if post_seed is not None:
-                    scene_seed = (post_seed + prompt_idx * 137) % (2**31)
                 prompt_id = _comfyui_submit(
                     prompt,
                     character_description=character_description,
@@ -894,33 +890,28 @@ def generate_images(
                     seed=scene_seed,
                 )
                 logger.info(f"Encolado {prompt_id[:8]}… → '{prompt[:55]}'")
-                pending.append((prompt_id, prompt, scene_list))
             except Exception as e:
                 logger.error(f"Error enviando '{prompt[:55]}': {e}")
                 for idx, out in scene_list:
                     image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
+                continue
 
-        # Sondear todos los prompt_ids hasta que terminen o se agote el timeout
-        timeout     = 120
-        poll_elapsed = 0
-
-        while pending and poll_elapsed < timeout:
-            time.sleep(1)
-            poll_elapsed += 1
-
-            still_pending = []
-            for prompt_id, prompt, scene_list in pending:
+            # ── Poll hasta completar (300s por imagen) ────────────────────────
+            img_timeout  = 300
+            poll_elapsed = 0
+            done         = False
+            while poll_elapsed < img_timeout:
+                time.sleep(2)
+                poll_elapsed += 2
                 try:
                     history = requests.get(
                         f"{config.SD_COMFYUI_URL}/history/{prompt_id}", timeout=10
                     ).json()
                 except Exception as e:
                     logger.warning(f"Polling {prompt_id[:8]}: {e}")
-                    still_pending.append((prompt_id, prompt, scene_list))
                     continue
 
                 if prompt_id not in history:
-                    still_pending.append((prompt_id, prompt, scene_list))
                     continue
 
                 entry  = history[prompt_id]
@@ -930,11 +921,13 @@ def generate_images(
                     logger.error(f"ComfyUI error {prompt_id[:8]}: {status.get('messages', [])}")
                     for idx, out in scene_list:
                         image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
-                    continue
+                    done = True
+                    break
 
                 outputs = entry.get("outputs", {})
                 if not outputs:
-                    still_pending.append((prompt_id, prompt, scene_list))
+                    if poll_elapsed % 15 == 0:
+                        logger.info(f"Esperando imagen {prompt_idx+1}/{n_unique}… {poll_elapsed}s")
                     continue
 
                 # Imagen lista — descargar y copiar para escenas duplicadas
@@ -950,16 +943,13 @@ def generate_images(
                     logger.error(f"Error descargando {prompt_id[:8]}: {e}")
                     for idx, out in scene_list:
                         image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
+                done = True
+                break
 
-            pending = still_pending
-            if pending and poll_elapsed % 15 == 0:
-                logger.info(f"Esperando {len(pending)} imagen(es)… {poll_elapsed}s/{timeout}s")
-
-        # Timeout — usar fallback PIL para las que no terminaron
-        for prompt_id, prompt, scene_list in pending:
-            logger.error(f"Timeout: {prompt_id[:8]} no completó en {timeout}s")
-            for idx, out in scene_list:
-                image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
+            if not done:
+                logger.error(f"Timeout: {prompt_id[:8]} no completó en {img_timeout}s")
+                for idx, out in scene_list:
+                    image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
 
     # ── Paso 3: Safety net — ningún slot debe quedar None ─────────────────────
     for i, path in enumerate(image_paths):
