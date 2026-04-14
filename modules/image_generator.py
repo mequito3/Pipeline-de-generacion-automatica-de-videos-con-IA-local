@@ -585,37 +585,41 @@ def detect_sd_backend() -> str:
 _FEMALE_WORDS = {"woman", "girl", "female", "she", "her", "lady", "wife", "girlfriend"}
 _MALE_WORDS   = {"man", "boy", "male", "he", "his", "guy", "husband", "boyfriend"}
 
+# Palabras que indican que la escena es un retrato del narrador
+# (y por tanto debe llevar character_description al frente)
+_PORTRAIT_WORDS = {
+    "portrait", "face", "expression", "close-up", "closeup", "silhouette",
+    "tears", "crying", "sobbing", "screaming", "laughing", "staring",
+    "looking", "smiling", "frowning", "shocked", "devastated", "angry",
+}
+
 
 def _enrich_prompt(raw: str, character_description: str = "", gender: str = "") -> str:
     """
     Construye el prompt final para SD:
-    1. Antepone character_description para consistencia visual del personaje
+    1. Solo antepone character_description si la escena es un retrato del narrador
+       (no en escenas de animales, objetos, lugares, u otras personas)
     2. Corrige el género si el prompt menciona el sexo equivocado
     3. Añade estilo dramático/cinematográfico
-
-    Args:
-        raw:                   Prompt base generado por Ollama
-        character_description: Descripción física del narrador (viene del script)
-        gender:                "female" | "male" — género del narrador
     """
     prompt = raw.strip()
 
     # 1. Corregir género si el prompt menciona el sexo contrario
     if gender == "male":
         for fw in _FEMALE_WORDS:
-            # reemplaza "woman" → "man", "girl" → "man", etc. (word boundary)
-            import re as _re
-            prompt = _re.sub(rf'\b{fw}\b', "man", prompt, flags=_re.IGNORECASE)
+            prompt = re.sub(rf'\b{fw}\b', "man", prompt, flags=re.IGNORECASE)
     elif gender == "female":
         for mw in _MALE_WORDS:
-            import re as _re
-            prompt = _re.sub(rf'\b{mw}\b', "woman", prompt, flags=_re.IGNORECASE)
+            prompt = re.sub(rf'\b{mw}\b', "woman", prompt, flags=re.IGNORECASE)
 
-    # 2. Anteponer descripción del personaje para consistencia entre escenas
+    # 2. Anteponer character_description solo si la escena es sobre el narrador.
+    #    Si el prompt describe un animal, objeto, lugar u otras personas sin
+    #    referencia a un retrato del narrador, no lo forzamos.
     if character_description:
-        # Sólo añadir si el prompt no la incluye ya
-        char_lower = character_description.lower()
-        if char_lower[:20] not in prompt.lower():
+        prompt_lower = prompt.lower()
+        char_lower   = character_description.lower()
+        is_narrator_scene = any(w in prompt_lower for w in _PORTRAIT_WORDS)
+        if is_narrator_scene and char_lower[:20] not in prompt_lower:
             prompt = f"{character_description}, {prompt}"
 
     # 3. Sufijo de estilo cinematográfico/dramático

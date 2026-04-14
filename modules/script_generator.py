@@ -729,16 +729,22 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "script_text": "¿Alguna vez creíste conocer bien a alguien y resultó que todo era mentira? Yo también lo creí. Todo empezó hace dos años cuando conocí a alguien que parecía perfecto. Trabajábamos juntos y todo iba bien hasta que un día descubrí algo que lo cambió todo. No podía creerlo. Confronté a esa persona y su reacción me destruyó por dentro. Tardé años en recuperarme. Hoy soy otra. ¿Lo hubieras perdonado después de cinco años? Déjamelo en los comentarios.",
   "scenes": [
     {{"text": "intro_hook exacto aqui", "image_prompt": "cinematic portrait, 35mm film, [character_description], dramatic dark background, questioning silhouette, emotional"}},
-    {{"text": "primer fragmento de la historia", "image_prompt": "cinematic portrait, 35mm film, [character_description], [location inicio], calm unaware expression, soft lamp light, photorealistic"}},
-    {{"text": "fragmento del descubrimiento", "image_prompt": "cinematic portrait, 35mm film, [character_description], shocked expression, holding phone, tears forming, dramatic side lighting, photorealistic"}},
-    {{"text": "fragmento de confrontacion o tension maxima", "image_prompt": "cinematic portrait, 35mm film, [character_description], angry devastated, dark hallway, harsh overhead light, photorealistic"}},
-    {{"text": "consecuencia emocional final + outro_cta", "image_prompt": "cinematic portrait, 35mm film, [character_description], sitting alone crying, early morning light, broken expression, photorealistic"}}
+    {{"text": "fragmento que describe el lugar o contexto inicial", "image_prompt": "cinematic wide shot, cozy apartment living room at night, warm lamp light, empty couch, intimate atmosphere, 35mm film, photorealistic"}},
+    {{"text": "fragmento donde aparece otra persona clave (pareja, amigo, familiar)", "image_prompt": "cinematic shot, two people facing each other in a dimly lit kitchen, tension between them, dramatic side lighting, 35mm film, photorealistic"}},
+    {{"text": "fragmento donde aparece un animal o un objeto crucial de la historia", "image_prompt": "cinematic close-up, golden retriever dog sitting on a bed looking sad, soft morning light, shallow depth of field, photorealistic, 35mm film"}},
+    {{"text": "fragmento del descubrimiento o giro emocional", "image_prompt": "cinematic portrait, 35mm film, [character_description], shocked expression, staring at phone screen, tears forming, dramatic side lighting, photorealistic"}},
+    {{"text": "consecuencia emocional final + outro_cta", "image_prompt": "cinematic portrait, 35mm film, [character_description], sitting alone at window, rain outside, broken expression, early morning light, photorealistic"}}
   ]
 }}
 
 REGLAS:
 - scenes: minimo 5, maximo 8. Cada scene = un fragmento de narracion + su imagen.
-- image_prompt: reemplaza [character_description] y [location inicio] con los valores reales.
+- image_prompt: describe VISUALMENTE lo que ocurre en esa escena especifica.
+  * Si el texto menciona a otra persona (pareja, amigo, familiar) → ponla en la imagen, con [character_description] como figura secundaria o sin ella.
+  * Si el texto menciona un animal → muestra el animal, no al narrador.
+  * Si el texto describe un lugar o un objeto clave → muéstralo en primer plano.
+  * Solo usa [character_description] como sujeto principal cuando la escena ES sobre el narrador (su reaccion, su emocion, su cara).
+  * Maximo 2-3 escenas de puro retrato del narrador. El resto debe mostrar el mundo de la historia.
 - script_text = intro_hook + historia completa + outro_cta (todo junto, sin omitir nada).
 - narrator_gender: detectar si la historia la cuenta un hombre (male) o una mujer (female)."""
 
