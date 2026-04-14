@@ -28,11 +28,6 @@ Para correr todo el pipeline 100% local necesitas una laptop/PC con al menos:
 - **CPU** — Procesa el audio TTS y el ensamblado del video con FFmpeg (rápido en cualquier CPU moderno).
 - **SSD** — Los modelos de IA y los videos temporales se generan mucho más rápido en SSD vs HDD.
 
-### Ejemplos de laptops que funcionan bien
-
-- **Presupuesto (~$600-800):** ASUS VivoBook 16 con Ryzen 5 + 16 GB RAM + RTX 3050 (4 GB VRAM)
-- **Balance (~$900-1200):** Lenovo IdeaPad Gaming 3 con Ryzen 7 + 16 GB RAM + RTX 4060 (8 GB VRAM)
-- **Sin GPU dedicada:** Cualquier laptop con 16 GB RAM puede correr todo excepto SD (usa PIL fallback para imágenes)
 
 > **Nota:** El pipeline funciona incluso sin GPU dedicada. En ese caso las imágenes se generan con gradientes de color (PIL fallback) en vez de Stable Diffusion. Todo lo demás (LLM, TTS, video) corre normal en CPU.
 
