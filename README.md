@@ -1,4 +1,4 @@
-# Crypto Shorts Factory v2
+# Shorts Factory v2
 
 Generador automático de YouTube Shorts de crypto/finanzas.
 **100% local — $0 en APIs de pago.**
