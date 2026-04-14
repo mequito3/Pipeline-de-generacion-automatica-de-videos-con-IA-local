@@ -243,6 +243,178 @@ def _fetch_postsecret_blog() -> list[dict]:
     return results
 
 
+def _fetch_confesiones_anonimas() -> list[dict]:
+    """
+    Obtiene confesiones de confesionesanonimas.org/muro.php — sitio hispanohablante
+    de confesiones anonimas con categorias dramaticas.
+
+    Estructura HTML de cada confesion:
+      <article class="card" data-category="Amor / Relaciones">
+        <h3>Titulo o "Sin titulo"</h3>
+        <div class="meta">Categoria • Pais • Fecha</div>
+        <button class="btn view" data-full="TEXTO COMPLETO AQUI">Ver mas</button>
+      </article>
+
+    El texto completo esta en el atributo data-full del boton "Ver mas".
+    Retorna lista de dicts en el mismo formato que los posts de Reddit.
+    """
+    from bs4 import BeautifulSoup
+    import re as _re
+    import hashlib
+
+    # Categorias con mayor potencial dramatico para Shorts
+    _DRAMATIC_CATEGORIES = {
+        "Amor / Relaciones",
+        "Secretos Oscuros",
+        "Tristeza / Dolor",
+        "Familia",
+        "Chismecito",
+        "Amigos",
+    }
+
+    # Palabras clave que descartan confesiones de esta fuente
+    _CA_BLOCKED = [
+        "suicid", "matarme", "quitarme la vida",
+        "abusar", "abuso sexual", "menor",
+        "terroris",
+    ]
+
+    results = []
+    # La pagina no tiene paginacion publica visible — una sola pagina con ~20-30 cards
+    pages_to_try = [
+        "https://confesionesanonimas.org/muro.php",
+        "https://confesionesanonimas.org/muro.php?categoria=Amor+%2F+Relaciones",
+        "https://confesionesanonimas.org/muro.php?categoria=Secretos+Oscuros",
+        "https://confesionesanonimas.org/muro.php?categoria=Tristeza+%2F+Dolor",
+        "https://confesionesanonimas.org/muro.php?categoria=Familia",
+    ]
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+
+    seen_texts: set[str] = set()
+
+    for url in pages_to_try:
+        try:
+            resp = requests.get(url, headers=headers, timeout=config.SCRAPER_TIMEOUT)
+            if resp.status_code != 200:
+                logger.debug(f"confesionesanonimas.org: HTTP {resp.status_code} en {url}")
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            cards = soup.select("article.card")
+
+            if not cards:
+                logger.debug(f"confesionesanonimas.org: 0 cards en {url}")
+                continue
+
+            logger.debug(f"confesionesanonimas.org: {len(cards)} cards en {url}")
+
+            for card in cards:
+                # Extraer categoria del atributo data-category
+                category = card.get("data-category", "").strip()
+
+                # Solo categorias dramaticas (o todas si no hay filtro en URL)
+                if category and category not in _DRAMATIC_CATEGORIES:
+                    continue
+
+                # Titulo del h3 (puede ser "Sin título")
+                h3 = card.find("h3")
+                raw_title = h3.get_text(strip=True) if h3 else ""
+                titulo = raw_title if raw_title and raw_title.lower() != "sin título" else ""
+
+                # Meta: "Categoria • Pais • Fecha"
+                meta_div = card.find("div", class_="meta")
+                fecha = ""
+                if meta_div:
+                    meta_text = meta_div.get_text(separator=" ", strip=True)
+                    # Extraer fecha con regex (formato: YYYY-MM-DD o YYYY-MM-DD HH:MM)
+                    date_match = _re.search(r"\d{4}-\d{2}-\d{2}", meta_text)
+                    if date_match:
+                        fecha = date_match.group(0)
+
+                # Texto completo: atributo data-full del boton "Ver mas"
+                btn = card.find("button", class_="view")
+                if not btn:
+                    continue
+                texto = btn.get("data-full", "").strip()
+
+                if not texto:
+                    continue
+
+                # Evitar duplicados por contenido (el mismo texto puede aparecer en varias URLs)
+                text_hash = hashlib.md5(texto[:200].encode("utf-8")).hexdigest()[:12]
+                if text_hash in seen_texts:
+                    continue
+                seen_texts.add(text_hash)
+
+                # Filtro de contenido bloqueado
+                texto_lower = texto.lower()
+                if any(kw in texto_lower for kw in _CA_BLOCKED):
+                    continue
+
+                # Filtro de longitud minima (80 palabras ~ 480 chars a ~6 chars/palabra)
+                word_count = len(texto.split())
+                if word_count < 80:
+                    continue
+
+                # ID unico basado en hash del contenido (no hay ID nativo)
+                post_id = f"ca_{text_hash}"
+
+                # Titulo de fallback: primeras palabras del texto
+                if not titulo:
+                    titulo = texto[:80].rstrip() + "..."
+
+                # Score base: preferir categorias mas dramaticas
+                score_map = {
+                    "Secretos Oscuros": 350,
+                    "Amor / Relaciones": 300,
+                    "Tristeza / Dolor": 280,
+                    "Familia": 260,
+                    "Chismecito": 240,
+                    "Amigos": 220,
+                }
+                score = score_map.get(category, 200)
+
+                # Bonus por longitud: historias mas largas = mejores para narrar
+                if word_count >= 200:
+                    score += 60
+                elif word_count >= 120:
+                    score += 30
+
+                results.append({
+                    "id": post_id,
+                    "title": titulo,
+                    "selftext": texto,
+                    "score": score,
+                    "num_comments": 0,
+                    "is_self": True,
+                    "_source": "confesionesanonimas.org",
+                    "_category": category,
+                    "_fecha": fecha,
+                })
+
+        except requests.exceptions.ConnectionError:
+            logger.warning("confesionesanonimas.org: sin conexion a internet")
+            break
+        except Exception as e:
+            logger.debug(f"confesionesanonimas.org error en {url}: {e}")
+            continue
+
+    if results:
+        logger.info(
+            f"confesionesanonimas.org: {len(results)} confesiones validas obtenidas"
+        )
+    return results
+
+
 def _try_post(post: dict, used_ids: set) -> dict | None:
     """Aplica filtros y devuelve story dict si el post es válido, None si no."""
     post_id = post.get("id", "")
@@ -285,8 +457,8 @@ def get_story() -> dict | None:
     Busca y retorna una historia real de Reddit u otras fuentes de confesiones.
 
     Flujo:
-    1. Reddit (principal) — recorre subreddits configurados en orden aleatorio
-    2. Fallback: grouphug.us si Reddit no da resultados válidos
+    1. Elegir fuente primaria al azar: 50% Reddit, 30% confesionesanonimas.org, 20% grouphug.us
+    2. Si la fuente primaria falla, intentar las restantes en orden.
     3. Marca el post como usado para evitar repeticiones.
 
     Returns:
@@ -295,44 +467,87 @@ def get_story() -> dict | None:
     """
     used_ids = _load_used_ids()
 
-    # ── FUENTE PRIMARIA: Reddit ────────────────────────────────────────────────
-    subreddits = config.REDDIT_SUBREDDITS[:]
-    random.shuffle(subreddits)
+    # Seleccion de fuente primaria con pesos (Reddit dominante, CA como fuente hispanohablante)
+    fuente_rand = random.random()
+    if fuente_rand < 0.50:
+        orden_fuentes = ["reddit", "confesionesanonimas", "grouphug"]
+    elif fuente_rand < 0.80:
+        orden_fuentes = ["confesionesanonimas", "reddit", "grouphug"]
+    else:
+        orden_fuentes = ["grouphug", "reddit", "confesionesanonimas"]
 
-    for subreddit in subreddits:
-        logger.info(f"Buscando historia en r/{subreddit}...")
-        posts = _fetch_subreddit(subreddit)
+    logger.info(f"Orden de fuentes para esta ejecucion: {orden_fuentes}")
 
-        if not posts:
-            time.sleep(1)
-            continue
+    for fuente in orden_fuentes:
 
-        posts.sort(key=_score_post, reverse=True)
-        top_posts = posts[:5]
-        random.shuffle(top_posts)
-        top_posts += posts[5:30]
+        # ── Reddit ────────────────────────────────────────────────────────────
+        if fuente == "reddit":
+            subreddits = config.REDDIT_SUBREDDITS[:]
+            random.shuffle(subreddits)
 
-        for post in top_posts:
-            post["_source"] = f"r/{subreddit}"
-            story = _try_post(post, used_ids)
-            if story:
-                logger.info(
-                    f"Historia seleccionada: '{story['titulo'][:60]}' "
-                    f"| {len(story['historia'])} chars | {story['upvotes']} upvotes | {story['fuente']}"
-                )
-                return story
+            for subreddit in subreddits:
+                logger.info(f"Buscando historia en r/{subreddit}...")
+                posts = _fetch_subreddit(subreddit)
 
-        time.sleep(1.5)
+                if not posts:
+                    time.sleep(1)
+                    continue
 
-    # ── FUENTE SECUNDARIA: grouphug.us ────────────────────────────────────────
-    logger.info("Reddit sin resultados — intentando grouphug.us...")
-    gh_posts = _fetch_grouphug()
-    random.shuffle(gh_posts)
-    for post in gh_posts:
-        story = _try_post(post, used_ids)
-        if story:
-            logger.info(f"Historia de grouphug.us: {len(story['historia'])} chars")
-            return story
+                posts.sort(key=_score_post, reverse=True)
+                top_posts = posts[:5]
+                random.shuffle(top_posts)
+                top_posts += posts[5:30]
+
+                for post in top_posts:
+                    post["_source"] = f"r/{subreddit}"
+                    story = _try_post(post, used_ids)
+                    if story:
+                        logger.info(
+                            f"Historia seleccionada (Reddit): '{story['titulo'][:60]}' "
+                            f"| {len(story['historia'])} chars | {story['upvotes']} upvotes"
+                        )
+                        return story
+
+                time.sleep(1.5)
+
+            logger.info("Reddit: sin resultados validos")
+
+        # ── confesionesanonimas.org ────────────────────────────────────────────
+        elif fuente == "confesionesanonimas":
+            logger.info("Intentando confesionesanonimas.org...")
+            ca_posts = _fetch_confesiones_anonimas()
+            # Ordenar por score descendente y mezclar los top para variedad
+            ca_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
+            top_ca = ca_posts[:5]
+            random.shuffle(top_ca)
+            top_ca += ca_posts[5:]
+
+            for post in top_ca:
+                story = _try_post(post, used_ids)
+                if story:
+                    logger.info(
+                        f"Historia seleccionada (confesionesanonimas.org): "
+                        f"'{story['titulo'][:60]}' | {len(story['historia'])} chars"
+                    )
+                    return story
+
+            logger.info("confesionesanonimas.org: sin resultados validos")
+
+        # ── grouphug.us ───────────────────────────────────────────────────────
+        elif fuente == "grouphug":
+            logger.info("Intentando grouphug.us...")
+            gh_posts = _fetch_grouphug()
+            random.shuffle(gh_posts)
+            for post in gh_posts:
+                story = _try_post(post, used_ids)
+                if story:
+                    logger.info(
+                        f"Historia seleccionada (grouphug.us): "
+                        f"{len(story['historia'])} chars"
+                    )
+                    return story
+
+            logger.info("grouphug.us: sin resultados validos")
 
     logger.warning("No se encontro ninguna historia valida en ninguna fuente")
     return None
