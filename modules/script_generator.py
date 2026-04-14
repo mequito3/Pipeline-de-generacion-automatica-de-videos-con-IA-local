@@ -413,9 +413,10 @@ def _call_ollama(
         if char_count >= 100:
             print(".", end="", flush=True)
             char_count = 0
-        # Detectar cierre del JSON y parar si ya generó suficiente
+        # Detectar cierre del JSON y parar en cuanto las llaves estén balanceadas
         if not json_closed and full_response.count("}") >= full_response.count("{") > 0:
             json_closed = True
+            break  # El JSON está completo — no esperar el resto de max_tokens
 
     print(f" {len(full_response)} chars")  # salto de línea al terminar
     return full_response
