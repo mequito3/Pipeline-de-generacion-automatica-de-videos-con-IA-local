@@ -737,7 +737,7 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "hook": "revelacion devastadora de la historia, maxima 12 palabras — primer impacto tras el intro_hook",
   "pregunta": "pregunta ESPECIFICA al dilema de esta historia. Ej: '¿Lo hubieras perdonado despues de cinco anos?'",
   "outro_cta": "pregunta especifica + llamada a accion natural. Ej: '¿Lo hubieras perdonado? Dejamelo en los comentarios y dale like si te sorprendio.'",
-  "script_text": "¿Alguna vez creíste conocer bien a alguien y resultó que todo era mentira? Yo también lo creí. Todo empezó hace dos años cuando conocí a alguien que parecía perfecto. Trabajábamos juntos y todo iba bien hasta que un día descubrí algo que lo cambió todo. No podía creerlo. Confronté a esa persona y su reacción me destruyó por dentro. Tardé años en recuperarme. Hoy soy otra. ¿Lo hubieras perdonado después de cinco años? Déjamelo en los comentarios.",
+  "script_text": "[ESCRIBE AQUI la narracion COMPLETA de ESTA historia especifica — NO copies este texto. Empieza con el intro_hook de arriba. Narra TODOS los detalles de la historia: quien, que paso, cuando se enteraron, como reaccionaron, cuales fueron las consecuencias. Minimo 180 palabras. Termina con el outro_cta de arriba. Primera persona, frases cortas, tono amarillista.]",
   "scenes": [
     {{"text": "intro_hook exacto aqui", "image_prompt": "cinematic portrait, 35mm film, [character_description], dramatic dark background, questioning silhouette, emotional"}},
     {{"text": "fragmento que describe el lugar o contexto inicial", "image_prompt": "cinematic wide shot, cozy apartment living room at night, warm lamp light, empty couch, intimate atmosphere, 35mm film, photorealistic"}},
@@ -957,11 +957,10 @@ def generate_script_from_story(story: dict) -> dict:
     historia = story["historia"]
     fuente   = story.get("fuente", "Reddit")
 
-    # Calcular tokens: narración en español (~1.5x palabras originales) + JSON overhead (~400 tokens)
-    # Schema simplificado (sin storyboard): ~1200-1600 tokens típico
-    # Cap en 2200 para historias largas; mínimo 1400 para que el JSON no se trunque
+    # Calcular tokens: narración española (~1.5x palabras) + JSON overhead (~500 tokens)
+    # Mínimo 1800 para que el script_text no se trunque; cap 3000 para historias muy largas
     story_words   = len(historia.split())
-    max_tokens    = min(2200, max(1400, int(story_words * 2.5)))
+    max_tokens    = min(3000, max(1800, int(story_words * 3)))
     logger.info(f"Historia: {story_words} palabras — max_tokens={max_tokens}")
 
     last_error = None
