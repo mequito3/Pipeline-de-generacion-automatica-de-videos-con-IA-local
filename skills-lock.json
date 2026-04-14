@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "a16a6d7d7e0a5154a5058fd9aacf8e675368b2a4a0dc5edf0fee775169c6abe0"
+    }
+  }
+}

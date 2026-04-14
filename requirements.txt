@@ -1,0 +1,44 @@
+# ─── Shorts Factory — requirements.txt ──────────────────────────────────────
+# Instalación: pip install -r requirements.txt
+# Python 3.10+ requerido
+# COSTO TOTAL DE APIs: $0 — todo corre localmente
+
+# ─── LLM Local ───────────────────────────────────────────────────────────────
+ollama>=0.1.8                   # Cliente para Ollama (llama3, mistral, etc.)
+
+# ─── TTS Local ────────────────────────────────────────────────────────────────
+edge-tts>=6.1.9                 # Microsoft Edge TTS neural (gratis, requiere internet)
+pyttsx3>=2.90                   # Text-to-Speech offline con voces del sistema
+
+# ─── Sincronización de subtítulos ─────────────────────────────────────────────
+faster-whisper>=1.0.0           # Timestamps exactos por palabra (CTranslate2)
+stable-ts>=2.14.0               # Forced alignment con Whisper (más preciso para TTS)
+openai-whisper>=20231117        # Modelo base requerido por stable-ts
+
+# ─── Video / Audio ────────────────────────────────────────────────────────────
+moviepy>=1.0.3                  # Edición y ensamblaje de video
+pydub>=0.25.1                   # Conversión WAV → MP3 (requiere ffmpeg en PATH)
+numpy>=1.24.0                   # Arrays de frames para moviepy
+
+# ─── Imágenes ─────────────────────────────────────────────────────────────────
+Pillow>=10.0.0                  # Procesamiento de imágenes, upscale, fallback
+
+# ─── HTTP / APIs locales ──────────────────────────────────────────────────────
+requests>=2.31.0                # Llamadas a A1111, ComfyUI y Ollama
+
+# ─── Selenium (YouTube upload) ────────────────────────────────────────────────
+selenium>=4.18.0                # Automatización del navegador
+undetected-chromedriver>=3.5.5  # ChromeDriver anti-detección de bots
+
+# ─── Configuración ────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0            # Cargar .env con credenciales de YouTube
+
+# ─── Scheduler ────────────────────────────────────────────────────────────────
+schedule>=1.2.1                 # Ejecutar el pipeline cada N horas
+
+# ─── Dependencias del sistema (NO pip) — instalar manualmente ─────────────────
+# ffmpeg: winget install ffmpeg  (requerido por moviepy y pydub)
+# Chrome: https://www.google.com/chrome/ (requerido por Selenium)
+# Ollama: https://ollama.ai (servidor LLM local)
+# Stable Diffusion A1111: https://github.com/AUTOMATIC1111/stable-diffusion-webui
+# Stable Diffusion ComfyUI: https://github.com/comfyanonymous/ComfyUI

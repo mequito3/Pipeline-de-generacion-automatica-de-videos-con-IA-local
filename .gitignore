@@ -1,0 +1,53 @@
+# ─── Credenciales — NUNCA subir ──────────────────────────────────────────────
+.env
+*.env.local
+
+# ─── Output generado ─────────────────────────────────────────────────────────
+output/
+logs/
+
+# ─── Perfil Chrome (contiene cookies/sesión de YouTube) ──────────────────────
+chrome_profile/
+
+# ─── Estado del scheduler ────────────────────────────────────────────────────
+topics_index.json
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# ─── Entornos virtuales ───────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ─── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── Windows ──────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ─── Archivos temporales de moviepy ───────────────────────────────────────────
+temp_audio.m4a
+*.temp.*
+
+# ─── Assets personalizados (no rastrear fuentes/música grandes) ───────────────
+assets/fonts/*.ttf
+assets/music/*.mp3
+assets/music/*.wav
