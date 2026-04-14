@@ -726,7 +726,7 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "hook": "revelacion devastadora de la historia, maxima 12 palabras — primer impacto tras el intro_hook",
   "pregunta": "pregunta ESPECIFICA al dilema de esta historia. Ej: '¿Lo hubieras perdonado despues de cinco anos?'",
   "outro_cta": "pregunta especifica + llamada a accion natural. Ej: '¿Lo hubieras perdonado? Dejamelo en los comentarios y dale like si te sorprendio.'",
-  "script_text": "EMPIEZA con intro_hook. Luego narracion COMPLETA. TERMINA con outro_cta. Todo en espanol, primera persona, frases cortas.",
+  "script_text": "¿Alguna vez creíste conocer bien a alguien y resultó que todo era mentira? Yo también lo creí. Todo empezó hace dos años cuando conocí a alguien que parecía perfecto. Trabajábamos juntos y todo iba bien hasta que un día descubrí algo que lo cambió todo. No podía creerlo. Confronté a esa persona y su reacción me destruyó por dentro. Tardé años en recuperarme. Hoy soy otra. ¿Lo hubieras perdonado después de cinco años? Déjamelo en los comentarios.",
   "scenes": [
     {{"text": "intro_hook exacto aqui", "image_prompt": "cinematic portrait, 35mm film, [character_description], dramatic dark background, questioning silhouette, emotional"}},
     {{"text": "primer fragmento de la historia", "image_prompt": "cinematic portrait, 35mm film, [character_description], [location inicio], calm unaware expression, soft lamp light, photorealistic"}},

@@ -7,7 +7,9 @@ Dos rutas según el prompt:
   3. Sin ComfyUI disponible → PIL fallback con gradiente oscuro
 """
 
+import copy
 import io
+import json
 import logging
 import random
 import re
@@ -515,12 +517,43 @@ def _draw_logo_composite(brands: list[str], output_path: Path) -> str:
 # ─── ComfyUI Z-Image Turbo ────────────────────────────────────────────────────
 
 def detect_sd_backend() -> str:
-    """Detecta qué backend de SD está disponible."""
-    if config.SD_BACKEND in ("comfyui", "a1111"):
-        url = config.SD_COMFYUI_URL if config.SD_BACKEND == "comfyui" else config.SD_A1111_URL
-        logger.info(f"Backend forzado por config: {config.SD_BACKEND} @ {url}")
-        return config.SD_BACKEND
+    """
+    Detecta qué backend de SD está disponible y accesible.
 
+    Si SD_BACKEND está forzado ('comfyui' o 'a1111'), verifica conectividad
+    antes de confirmar — evita que un servidor caído cause timeouts silenciosos
+    durante la generación. En ese caso emite un warning claro y devuelve 'none'.
+    """
+    if config.SD_BACKEND == "comfyui":
+        for endpoint in ["/system_stats", "/queue", "/"]:
+            try:
+                r = requests.get(f"{config.SD_COMFYUI_URL}{endpoint}", timeout=5)
+                if r.status_code in (200, 404):
+                    logger.info(f"ComfyUI confirmado en {config.SD_COMFYUI_URL}")
+                    return "comfyui"
+            except Exception:
+                pass
+        logger.warning(
+            f"SD_BACKEND=comfyui pero {config.SD_COMFYUI_URL} no responde. "
+            "Asegúrate de que ComfyUI esté corriendo. Usando fallback PIL."
+        )
+        return "none"
+
+    if config.SD_BACKEND == "a1111":
+        try:
+            r = requests.get(f"{config.SD_A1111_URL}/sdapi/v1/sd-models", timeout=5)
+            if r.status_code == 200:
+                logger.info(f"A1111 confirmado en {config.SD_A1111_URL}")
+                return "a1111"
+        except Exception:
+            pass
+        logger.warning(
+            f"SD_BACKEND=a1111 pero {config.SD_A1111_URL} no responde. "
+            "Asegúrate de que A1111 esté corriendo. Usando fallback PIL."
+        )
+        return "none"
+
+    # ── Modo auto: sondear ambos ──────────────────────────────────────────────
     for endpoint in ["/system_stats", "/queue", "/"]:
         try:
             r = requests.get(f"{config.SD_COMFYUI_URL}{endpoint}", timeout=5)
@@ -538,7 +571,13 @@ def detect_sd_backend() -> str:
     except Exception:
         pass
 
-    logger.warning("Ningún backend SD detectado — usando fallback PIL")
+    logger.warning(
+        "Ningún backend SD detectado — usando fallback PIL.\n"
+        "  Para imágenes IA, inicia uno de estos servidores:\n"
+        "  • ComfyUI:  python main.py  (en directorio ComfyUI, puerto 8000)\n"
+        "  • A1111:    ./webui.sh / webui.bat  (puerto 7860)\n"
+        "  Luego ajusta SD_BACKEND en .env: 'comfyui' | 'a1111' | 'auto'"
+    )
     return "none"
 
 
@@ -589,41 +628,16 @@ def _enrich_prompt(raw: str, character_description: str = "", gender: str = "") 
     )
 
 
+_WORKFLOW_JSON = Path(r"C:\Users\ameri\Downloads\generador_imagnes_correcot.json")
+
 def _build_z_image_workflow(prompt: str, seed: int) -> dict:
-    """Workflow Z-Image Turbo para ComfyUI API."""
-    return {
-        "client_id": str(uuid.uuid4()),
-        "prompt": {
-            "9":     {"class_type": "SaveImage",
-                      "inputs": {"filename_prefix": "csf_", "images": ["57:8", 0]}},
-            "57:30": {"class_type": "CLIPLoader",
-                      "inputs": {"clip_name": "qwen_3_4b.safetensors",
-                                 "type": "lumina2", "device": "default"}},
-            "57:29": {"class_type": "VAELoader",
-                      "inputs": {"vae_name": "ae.safetensors"}},
-            "57:33": {"class_type": "ConditioningZeroOut",
-                      "inputs": {"conditioning": ["57:27", 0]}},
-            "57:8":  {"class_type": "VAEDecode",
-                      "inputs": {"samples": ["57:3", 0], "vae": ["57:29", 0]}},
-            "57:28": {"class_type": "UNETLoader",
-                      "inputs": {"unet_name": "z_image_turbo_bf16.safetensors",
-                                 "weight_dtype": "default"}},
-            "57:27": {"class_type": "CLIPTextEncode",
-                      "inputs": {"text": prompt, "clip": ["57:30", 0]}},
-            "57:13": {"class_type": "EmptySD3LatentImage",
-                      "inputs": {"width": _native_res(), "height": _native_res(), "batch_size": 1}},
-            "57:11": {"class_type": "ModelSamplingAuraFlow",
-                      "inputs": {"shift": 3, "model": ["57:28", 0]}},
-            "57:3":  {"class_type": "KSampler",
-                      "inputs": {
-                          "seed": seed, "steps": _turbo_steps(), "cfg": 1,
-                          "sampler_name": "res_multistep", "scheduler": "simple",
-                          "denoise": 1, "model": ["57:11", 0],
-                          "positive": ["57:27", 0], "negative": ["57:33", 0],
-                          "latent_image": ["57:13", 0],
-                      }},
-        },
-    }
+    """Workflow Z-Image Turbo para ComfyUI API — cargado desde el JSON del usuario."""
+    with open(_WORKFLOW_JSON, encoding="utf-8") as f:
+        nodes = copy.deepcopy(json.load(f))
+    # Inyectar prompt y seed dinámicamente
+    nodes["57:27"]["inputs"]["text"] = prompt
+    nodes["57:3"]["inputs"]["seed"]  = seed
+    return {"client_id": str(uuid.uuid4()), "prompt": nodes}
 
 
 def _comfyui_clear_queue() -> None:
@@ -647,7 +661,10 @@ def _comfyui_submit(prompt: str, character_description: str = "", gender: str = 
         seed = random.randint(0, 2**31 - 1)
     workflow = _build_z_image_workflow(_enrich_prompt(prompt, character_description, gender), seed=seed)
     logger.info(f"Z-Image Turbo submit | seed={seed} | '{prompt[:60]}'")
-    resp = requests.post(f"{config.SD_COMFYUI_URL}/prompt", json=workflow, timeout=30)
+    # timeout=90: el HTTP server de ComfyUI puede bloquearse hasta ~60s
+    # mientras la GPU termina el job anterior antes de aceptar el siguiente.
+    # 30s era demasiado corto con modelos grandes o GPU lenta.
+    resp = requests.post(f"{config.SD_COMFYUI_URL}/prompt", json=workflow, timeout=90)
     if resp.status_code != 200:
         raise RuntimeError(f"ComfyUI HTTP {resp.status_code}: {resp.text[:200]}")
     prompt_id = resp.json().get("prompt_id")
