@@ -165,38 +165,47 @@ def _build_message(
     narrator_gender: str,
     timeout_h: int,
 ) -> str:
-    """Construye el mensaje profesional para WhatsApp."""
+    """Construye el mensaje completo para WhatsApp con toda la info del video."""
     gender_icon  = "👩" if narrator_gender == "female" else ("👨" if narrator_gender == "male" else "🎙")
     gender_label = "Mujer" if narrator_gender == "female" else ("Hombre" if narrator_gender == "male" else "Auto")
 
-    # Descripción: primeras 120 chars
-    desc_preview = (description or "").strip()
-    if len(desc_preview) > 120:
-        desc_preview = desc_preview[:117] + "..."
+    # Descripción completa (YouTube acepta hasta 5000 chars; mostramos todo)
+    desc_full = (description or "").strip()
 
-    # Tags: hasta 6 hashtags
+    # Todos los hashtags formateados
     hashtags = " ".join(
-        (t if t.startswith("#") else f"#{t}") for t in (tags or [])[:6]
+        (t if t.startswith("#") else f"#{t}") for t in (tags or [])
     )
 
     lines = [
-        "🎬 *CONFESIONES DRAMATICAS*",
-        "━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"📌 *Titulo:* {title}",
-        f"⏱ *Duracion:* {duration_s:.0f} segundos",
-        f"📁 *Tamanio:* {video_size_mb:.1f} MB",
+        f"🎬 *{config.CHANNEL_NAME}*",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"📌 *TÍTULO:*",
+        title,
+        "",
+        f"⏱ *Duración:* {duration_s:.0f}s   "
+        f"📁 *Tamaño:* {video_size_mb:.1f} MB   "
         f"{gender_icon} *Narrador:* {gender_label}",
     ]
 
-    if desc_preview:
-        lines += ["", "📝 *Descripcion:*", desc_preview]
+    if desc_full:
+        lines += [
+            "",
+            "📝 *DESCRIPCIÓN (para YouTube):*",
+            desc_full,
+        ]
 
     if hashtags:
-        lines += ["", f"🏷 {hashtags}"]
+        lines += [
+            "",
+            "🏷 *HASHTAGS:*",
+            hashtags,
+        ]
 
     lines += [
         "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "Responde *SI* para subir a YouTube",
         "Responde *NO* para descartar",
         f"_(Sin respuesta en {timeout_h}h = descartado)_",
