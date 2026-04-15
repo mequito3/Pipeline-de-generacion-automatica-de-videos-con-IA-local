@@ -85,38 +85,11 @@ REGLAS DE ESCRITURA:
 - Detalles específicos y creíbles: mencionar objetos, lugares, momentos concretos
 - PROHIBIDO: nombres reales, violencia explícita, contenido ilegal
 
-═══ REGLAS DE TÍTULO ═══
+═══ TÍTULO, DESCRIPCIÓN Y TAGS ═══
 
-El título DEBE ser diferente en cada video. Rota entre estos formatos — NUNCA uses el mismo formato dos veces:
-  A) "Descubrí que mi [relación] llevaba [tiempo] [acción vergonzosa]"
-  B) "Lo que encontré en [objeto/lugar] me destruyó por completo"
-  C) "[Tiempo] de [relación] y nunca supe la verdad sobre [hecho]"
-  D) "La doble vida que [persona] llevaba mientras yo [acción]"
-  E) "Cuando abrí [objeto] vi algo que cambió mi vida para siempre"
-  F) "Mi [relación] confesó algo el día que [evento]: no lo pude creer"
-  G) "[Número] años mintiendo: lo que nadie sabía sobre mi [relación]"
-  H) "El secreto que destruyó nuestra [relación] de [tiempo]"
-  I) "Nadie me creyó cuando dije lo que vi en [lugar/objeto]"
-  J) "Llevábamos [tiempo] juntos cuando [evento inesperado] lo cambió todo"
-PROHIBIDO: empezar todos los títulos con "Nunca debí" — es una sola fórmula de diez posibles.
-
-═══ REGLAS DE DESCRIPCIÓN Y TAGS ═══
-
-Descripción (200-400 chars): menciona el CONTEXTO ESPECÍFICO de ESTA historia.
-NO uses siempre los mismos keywords. Varía según el tipo de conflicto:
-  - Infidelidad → pareja, infidelidad, engaño, traición amorosa, relación
-  - Familia → familia, secreto familiar, madre/padre, hermano, herencia
-  - Amistad → mejor amigo, traición, años de amistad, confianza
-  - Trabajo → jefe, compañero, empresa, secreto laboral, despido
-  - Vecino/conocido → vecino, sorpresa, descubrimiento, realidad oculta
-Termina siempre con una llamada a comentar (varía el texto).
-
-Tags (12 exactos): 4 específicos del tema + 4 emocionales/narrativos + 4 de canal/alcance.
-Ejemplos específicos (rotar según historia):
-  Infidelidad: #infidelidad #engano #traicionamorosa #parejatoxica
-  Familia: #secretofamiliar #drama #familia #verdadoculta
-  Trabajo: #dramallaboral #jefe #secreto #vidadoble
-  Siempre incluir: #shorts o #viral + #confesiones + 2 emocionales (#impactante #increible)
+Título (máx 100 chars): clickbait viral en español latino. Sé creativo — usa el gancho emocional más fuerte de ESTA historia concreta.
+Descripción (200-400 chars): cuenta de qué va el video con las palabras clave naturales de esta historia. Termina invitando a comentar.
+Tags (12): los más relevantes para el algoritmo de YouTube en esta historia específica — combina tema, emoción y alcance.
 
 IMAGE PROMPTS: cinematográficos y emocionales en inglés para Stable Diffusion.
 Ejemplos: "close-up of a woman staring at phone in shock, dark room, cinematic 35mm", "man sitting alone at kitchen table, head in hands, dramatic side lighting", "empty apartment at night, single lamp, emotional"."""
@@ -126,9 +99,9 @@ USER_PROMPT_TEMPLATE = """Tema de confesión: {topic}
 Genera una historia dramática anónima para YouTube Shorts con este JSON exacto:
 
 {{
-  "title": "título con formato variado (A/B/C/D/E/F/G/H/I/J del system prompt) — específico del conflicto de {topic}, máx 100 chars",
-  "description": "descripción SEO 200-400 chars con keywords ESPECÍFICOS del tipo de conflicto de {topic} — NO siempre los mismos genéricos",
-  "tags": ["#TAG_ESPECIFICO_TEMA","#SEGUNDO_TAG_TEMA","#EMOCION","#shorts","#viral","#TIPO_CONFLICTO","#CONTEXTO","#RELACION","#SEO_1","#SEO_2","#confesiones","#impactante"],
+  "title": "título viral clickbait en español, máx 100 chars",
+  "description": "descripción SEO 200-400 chars en español",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "female o male segun el genero del protagonista que narra la historia",
   "character_description": "descripcion fisica CONSISTENTE del narrador: genero, edad, rasgos, ropa en ingles. Ej mujer: 'Hispanic woman, late 20s, dark hair, red blouse'. Ej hombre: 'Latino man, early 30s, short dark hair, grey t-shirt'",
   "hook": "frase inicial impactante, máx 12 palabras. Que duela o sorprenda. Ej: 'Nunca debí abrir ese cajón.'",
@@ -151,9 +124,9 @@ REGLA MAS IMPORTANTE: script_text debe ser una historia fluida con lógica inter
 Campos: title, description, tags (lista 12), narrator_gender, character_description, hook, contexto, problema, giro, final, pregunta, script_text (100-130 PALABRAS CONECTADAS).
 
 {{
-  "title": "[TITULO con formato variado — A/B/C/D/E/F/G/H/I/J del system prompt. NO empezar con 'Nunca debí']",
-  "description": "[DESCRIPCION 200-400 chars con keywords ESPECIFICOS del tipo de conflicto de {topic}, termina con llamada a comentar]",
-  "tags": ["#TAG_ESPECIFICO_DEL_TEMA","#SEGUNDO_TAG_ESPECIFICO","#EMOCION_PRINCIPAL","#shorts","#viral","#TIPO_CONFLICTO","#CONTEXTO","#RELACION","#SEO_KEYWORD_1","#SEO_KEYWORD_2","#confesiones","#impactante"],
+  "title": "título viral clickbait en español, máx 100 chars",
+  "description": "descripción SEO 200-400 chars en español",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
   "hook": "[PRIMERA_FRASE_IMPACTANTE — máx 12 palabras, que duela o sorprenda]",
@@ -945,29 +918,12 @@ El campo script_text DEBE tener esta estructura exacta:
    - REGLA: la pregunta debe mencionar ALGO especifico de ESTA historia (la accion concreta, la relacion concreta, la decision concreta).
    - Cierra siempre con: "Dejamelo en los comentarios", "Cuentame abajo", "Dale like si te paso algo asi".
 
-4. TITULO — VARÍA EL FORMATO EN CADA VIDEO:
-   Rota entre estos patrones, nunca uses el mismo dos veces seguidas:
-   A) "Descubrí que mi [relación] llevaba [tiempo] [acción]"
-   B) "Lo que encontré en [objeto/lugar] me destruyó por completo"
-   C) "[Tiempo] de [relación] y nunca supe la verdad sobre [hecho]"
-   D) "La doble vida que [persona] llevaba mientras yo [acción]"
-   E) "Cuando abrí [objeto] vi algo que cambió mi vida para siempre"
-   F) "Mi [relación] confesó algo el día que [evento]"
-   G) "[Número] años mintiendo: lo que nadie sabía sobre mi [relación]"
-   H) "El secreto que destruyó nuestra [relación] de [tiempo]"
-   I) "Nadie me creyó cuando dije lo que vi en [lugar]"
-   PROHIBIDO: empezar con "Nunca debí" — es solo una de nueve fórmulas.
+4. TITULO, DESCRIPCION Y TAGS:
+   - Título (máx 100 chars): el gancho más fuerte y viral de ESTA historia concreta.
+   - Descripción (200-400 chars): las palabras clave naturales de esta historia. Invita a comentar.
+   - Tags (12): los más relevantes para el algoritmo de YouTube en esta historia específica.
 
-5. TAGS — ESPECIFICOS DE ESTA HISTORIA (no genéricos):
-   - 4 tags del tema específico: infidelidad / familia / trabajo / amistad / vecino
-   - 4 tags emocionales/narrativos: #impactante #increible #viral #drama
-   - 4 tags de alcance/canal: #shorts #confesiones #historiareal #youtube
-   PROHIBIDO repetir siempre los mismos 12 — cada historia tiene su propio vocabulario.
-
-6. DESCRIPCION — keywords específicos del conflicto de ESTA historia (200-400 chars).
-   No copies siempre "drama, traición, emocional" — usa las palabras clave reales del conflicto.
-
-7. GENERO DEL NARRADOR:
+5. GENERO DEL NARRADOR:
    - Detectar si la historia la cuenta un hombre o una mujer por el contexto.
    - narrator_gender = "female" si la voz narradora es femenina, "male" si es masculina.
    - character_description DEBE coincidir con el genero detectado.
@@ -996,9 +952,9 @@ ESTRUCTURA OBLIGATORIA de script_text:
 
 {{
   "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra TODOS los detalles: quien, que señales hubo, como se descubrio, como reaccionaron, que consecuencias tuvo. Entre 150 y 250 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
-  "title": "titulo con formato variado (A/B/C/D/E/F/G/H/I del system prompt) — especifico del conflicto de ESTA historia, maximo 100 caracteres",
-  "description": "descripcion SEO 200-400 caracteres con keywords ESPECIFICOS del tipo de drama de ESTA historia (no siempre los mismos)",
-  "tags": ["#TAG_DEL_TEMA_1","#TAG_DEL_TEMA_2","#EMOCION_ESPECIFICA","#shorts","#viral","#TIPO_CONFLICTO","#RELACION_INVOLUCRADA","#CONTEXTO","#SEO_KEYWORD_1","#SEO_KEYWORD_2","#confesiones","#historiareal"],
+  "title": "titulo viral clickbait en espanol, maximo 100 caracteres",
+  "description": "descripcion SEO 200-400 caracteres en espanol",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "female o male segun quien cuenta la historia",
   "character_description": "descripcion fisica CONSISTENTE del narrador en ingles. Ej: 'Hispanic woman, late 20s, long dark wavy hair, wearing a white blouse and jeans'",
   "intro_hook": "pregunta retorica al espectador sobre el tema de esta historia. Ej: '¿Alguna vez creiste conocer bien a alguien y resultó que todo era mentira?'",
@@ -1020,9 +976,9 @@ CAMPOS OBLIGATORIOS: title, description, tags, narrator_gender, character_descri
 
 {{
   "script_text": "[INTRO_HOOK]. [HISTORIA_COMPLETA_CON_TODOS_LOS_DETALLES — 150 a 250 palabras]. [PREGUNTA_ESPECIFICA_SIN_PERDONAR_NI_QUE_HARIAS]? [LLAMADA_A_ACCION].",
-  "title": "[TITULO con formato variado A/B/C/D/E/F/G/H/I del system prompt — especifico de ESTA historia]",
-  "description": "[DESCRIPCION 200-400 chars con keywords DEL CONFLICTO ESPECIFICO de esta historia, NO keywords genericos]",
-  "tags": ["#TAG_ESPECIFICO_1","#TAG_ESPECIFICO_2","#EMOCION","#shorts","#viral","#TIPO_DRAMA","#RELACION","#CONTEXTO","#SEO_1","#SEO_2","#confesiones","#historiareal"],
+  "title": "titulo viral clickbait en espanol, maximo 100 caracteres",
+  "description": "descripcion SEO 200-400 caracteres en espanol",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
   "intro_hook": "[PREGUNTA_RETORICA_ESPECIFICA_DE_ESTA_HISTORIA]",
