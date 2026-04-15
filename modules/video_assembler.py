@@ -83,39 +83,121 @@ def _draw_text_with_stroke(draw, x, y, text, font, fill=(255, 255, 255), stroke=
 
 def _render_intro_png(hook: str, title: str, first_image_path: str | None) -> Image.Image:
     """
-    Intro directa: 0.5s fade-in desde negro a la primera imagen de escena.
-    Sin badge, sin blur — el narrador empieza a hablar desde el segundo 0.
-    Solo hook text superpuesto para anclar al espectador.
+    Intro con branding completo:
+      - Fondo: primera escena sin blur (inmersión inmediata)
+      - Gradiente cinemático (oscuro arriba/abajo, semi en centro)
+      - Vignette en bordes para profundidad
+      - Franja roja + barra dorada con nombre del canal (top)
+      - Etiqueta dorada "HISTORIA REAL" sobre el hook
+      - Hook grande centrado (Impact blanco con stroke)
+      - Línea roja de acento bajo el hook
     """
-    W, H  = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    WHITE = (255, 255, 255)
+    W, H   = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    WHITE  = (255, 255, 255)
+    RED    = (204, 0, 0)
+    GOLD   = (255, 210, 40)
 
-    # Fondo: primera imagen de escena sin blur (inmersión inmediata)
+    # ── 1. Fondo ──────────────────────────────────────────────────────────────
     if first_image_path and Path(first_image_path).exists():
         bg = Image.open(first_image_path).convert("RGB").resize((W, H), Image.LANCZOS)
     else:
         bg = Image.new("RGB", (W, H), (10, 10, 20))
 
-    # Overlay oscuro suave (40% alpha) para que el texto sea legible
-    ov   = Image.new("RGBA", (W, H), (0, 0, 0, 102))  # 102 ≈ 40% de 255
-    bg   = Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
+    # ── 2. Gradiente cinemático (oscuro arriba, abierto al centro, oscuro abajo)
+    grad = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd   = ImageDraw.Draw(grad)
+    for y in range(H):
+        frac = y / H
+        if frac < 0.25:
+            # Superior: oscuro progresivo de 80% → 40%
+            t     = frac / 0.25
+            alpha = int(204 - t * 102)
+        elif frac > 0.72:
+            # Inferior: oscuro progresivo de 40% → 85%
+            t     = (frac - 0.72) / 0.28
+            alpha = int(102 + t * 115)
+        else:
+            # Centro: semi-transparente fijo 40%
+            alpha = 102
+        gd.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+    bg = Image.alpha_composite(bg.convert("RGBA"), grad)
+
+    # ── 3. Vignette en bordes (esquinas oscuras, efecto cinemático) ───────────
+    vig    = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    vd     = ImageDraw.Draw(vig)
+    radius = int(W * 0.55)
+    for px in range(0, W, 3):
+        for py in range(0, H, 3):
+            dx = px - W / 2
+            dy = py - H / 2
+            dist = (dx * dx / (W / 2) ** 2 + dy * dy / (H / 2) ** 2) ** 0.5
+            if dist > 0.75:
+                a = int(min(180, (dist - 0.75) / 0.55 * 180))
+                vd.point((px, py), fill=(0, 0, 0, a))
+    bg = Image.alpha_composite(bg, vig).convert("RGB")
     draw = ImageDraw.Draw(bg)
 
-    font_path = _find_font()
-    font_hook = _load_font(font_path, 86)
+    font_path    = _find_font()
+    font_channel = _load_font(font_path, 44)
+    font_label   = _load_font(font_path, 38)
+    font_hook    = _load_font(font_path, 90)
 
-    # Hook centrado verticalmente — máx 12 palabras
+    # ── 4. Franja roja de branding (top) ──────────────────────────────────────
+    stripe_h = 80
+    draw.rectangle([0, 0, W, stripe_h], fill=(*RED, 230))
+    # Barra dorada (5px) bajo la franja
+    draw.rectangle([0, stripe_h, W, stripe_h + 5], fill=GOLD)
+
+    channel = getattr(config, "CHANNEL_NAME", "GATA CURIOSA")
+    c_bbox  = draw.textbbox((0, 0), channel, font=font_channel)
+    c_w     = c_bbox[2] - c_bbox[0]
+    c_h     = c_bbox[3] - c_bbox[1]
+    draw.text(
+        ((W - c_w) // 2, (stripe_h - c_h) // 2),
+        channel, font=font_channel, fill=WHITE
+    )
+
+    # ── 5. Zona central: etiqueta + hook + línea de acento ────────────────────
     hook_words = hook.split()[:12]
     hook_short = " ".join(hook_words) + ("..." if len(hook.split()) > 12 else "")
-    hook_lines = _wrap_text(draw, hook_short, font_hook, W - 100)
-    line_h     = 100
+    hook_lines = _wrap_text(draw, hook_short, font_hook, W - 120)
+    line_h     = 108
     block_h    = len(hook_lines) * line_h
-    y_start    = H // 2 - block_h // 2
 
+    # Etiqueta dorada sobre el hook
+    label      = "HISTORIA REAL"
+    lbl_bbox   = draw.textbbox((0, 0), label, font=font_label)
+    lbl_w      = lbl_bbox[2] - lbl_bbox[0]
+    lbl_h      = lbl_bbox[3] - lbl_bbox[1]
+    label_gap  = 18   # espacio entre etiqueta y hook
+    total_h    = lbl_h + label_gap + block_h + 16 + 6  # +acento
+    y_center   = H // 2 + 60  # ligeramente bajo el centro (visualmente más dramático)
+    y_label    = y_center - total_h // 2
+
+    # Fondo semitransparente detrás de la etiqueta
+    pad = 12
+    draw.rectangle(
+        [(W - lbl_w) // 2 - pad, y_label - pad // 2,
+         (W + lbl_w) // 2 + pad, y_label + lbl_h + pad // 2],
+        fill=(*GOLD, 40)
+    )
+    draw.text(((W - lbl_w) // 2, y_label), label, font=font_label, fill=GOLD)
+
+    # Hook lines
+    y_hook = y_label + lbl_h + label_gap
     for i, line in enumerate(hook_lines):
         bbox = draw.textbbox((0, 0), line, font=font_hook)
         x    = (W - (bbox[2] - bbox[0])) // 2
-        _draw_text_with_stroke(draw, x, y_start + i * line_h, line, font_hook, WHITE, 5)
+        _draw_text_with_stroke(draw, x, y_hook + i * line_h, line, font_hook, WHITE, 5)
+
+    # Línea roja de acento bajo el hook
+    accent_y = y_hook + block_h + 16
+    accent_w = min(W - 160, 600)
+    draw.rectangle(
+        [(W - accent_w) // 2, accent_y,
+         (W + accent_w) // 2, accent_y + 6],
+        fill=RED
+    )
 
     return bg
 

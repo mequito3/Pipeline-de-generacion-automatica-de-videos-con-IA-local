@@ -124,8 +124,11 @@ async def _upload_async(
     title: str,
     description: str,
     tags: list,
-) -> bool:
-    """Logica asincrona completa de upload con nodriver (CDP)."""
+) -> tuple[bool, str]:
+    """
+    Logica asincrona completa de upload con nodriver (CDP).
+    Returns (success, youtube_url)  — url es "" si no se pudo capturar.
+    """
     profile_dir = Path(config.CHROME_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +155,7 @@ async def _upload_async(
                 "  Abre Chrome manualmente, entra a studio.youtube.com, "
                 "inicia sesion y cierra Chrome. El perfil guardara las cookies."
             )
-            return False
+            return False, ""
 
         logger.info(f"YouTube Studio cargado: {current_url[:60]}")
 
@@ -185,7 +188,7 @@ async def _upload_async(
 
         if not create_btn:
             logger.error("No se encontro el boton 'Crear'")
-            return False
+            return False, ""
 
         await _delay(1.5, 3.5)
         await create_btn.click()
@@ -204,7 +207,7 @@ async def _upload_async(
 
         if not upload_opt:
             logger.error("No se encontro la opcion 'Subir videos'")
-            return False
+            return False, ""
 
         await _delay(0.8, 1.8)
         await upload_opt.click()
@@ -307,7 +310,7 @@ async def _upload_async(
 
         if public_radio is None:
             logger.error("No se encontro el boton de visibilidad 'Publico'")
-            return False
+            return False, ""
 
         await _delay(2.0, 4.5)
         await public_radio.click()
@@ -321,10 +324,58 @@ async def _upload_async(
         save_btn = await page.select("ytcp-button#done-button", timeout=30)
         if save_btn is None:
             logger.error("No se encontro el boton Guardar")
-            return False
+            return False, ""
         await _delay(2.5, 5.0)
         await save_btn.click()
-        await _delay(4.0, 8.0)
+        await _delay(5.0, 10.0)
+
+        # -- Capturar URL del video publicado ----------------------------------
+        import re as _re
+        youtube_url = ""
+
+        # 1. Buscar enlace directo en el dialogo de confirmacion
+        for selector in [
+            "a[href*='/shorts/']",
+            "a[href*='watch?v=']",
+            "a[href*='youtu.be/']",
+        ]:
+            try:
+                link_el = await page.select(selector, timeout=5)
+                if link_el:
+                    href = await link_el.get_attribute("href")
+                    if href and ("shorts" in href or "watch" in href or "youtu.be" in href):
+                        youtube_url = href.strip()
+                        logger.info(f"URL capturada del dialogo: {youtube_url}")
+                        break
+            except Exception:
+                pass
+
+        # 2. Si no hubo dialogo, extraer video ID de la URL del Studio
+        if not youtube_url:
+            current_url_after = page.url or ""
+            m = _re.search(r'/video/([a-zA-Z0-9_-]{8,12})(?:/|$)', current_url_after)
+            if m:
+                vid_id = m.group(1)
+                youtube_url = f"https://www.youtube.com/shorts/{vid_id}"
+                logger.info(f"URL construida desde Studio URL: {youtube_url}")
+
+        # 3. Buscar texto con ID en el cuerpo de la pagina
+        if not youtube_url:
+            try:
+                body_text = await page.evaluate("document.body.innerText")
+                m = _re.search(r'youtu\.be/([a-zA-Z0-9_-]{8,12})', body_text or "")
+                if not m:
+                    m = _re.search(r'watch\?v=([a-zA-Z0-9_-]{8,12})', body_text or "")
+                if not m:
+                    m = _re.search(r'/shorts/([a-zA-Z0-9_-]{8,12})', body_text or "")
+                if m:
+                    youtube_url = f"https://www.youtube.com/shorts/{m.group(1)}"
+                    logger.info(f"URL extraida del DOM: {youtube_url}")
+            except Exception:
+                pass
+
+        if not youtube_url:
+            logger.warning("No se pudo capturar la URL del video — el video SI fue publicado")
 
         # -- Screenshot de confirmacion ----------------------------------------
         ts = time.strftime("%Y%m%d_%H%M%S")
@@ -333,7 +384,7 @@ async def _upload_async(
         logger.info(f"Screenshot guardado: {screenshot_path.name}")
 
         logger.info(f"Video subido exitosamente: '{title}'")
-        return True
+        return True, youtube_url
 
     except Exception as e:
         logger.error(f"Error durante upload: {e}")
@@ -345,7 +396,7 @@ async def _upload_async(
                 logger.info(f"Screenshot de error: {err_path.name}")
             except Exception:
                 pass
-        return False
+        return False, ""
 
     finally:
         try:
@@ -362,7 +413,7 @@ def upload_to_youtube(
     title: str,
     description: str,
     tags: list[str],
-) -> bool:
+) -> str | None:
     """
     Sube un video a YouTube Studio usando nodriver (CDP, sin WebDriver).
 
@@ -373,7 +424,9 @@ def upload_to_youtube(
         tags: Lista de hashtags (con o sin #)
 
     Returns:
-        True si se subio correctamente, False si fallo
+        URL del video en YouTube si se subio correctamente (puede ser "" si
+        no se capturo la URL pero el upload si se completo).
+        None si el upload fallo.
     """
     video_path = Path(video_path)
     if not video_path.exists():
@@ -383,11 +436,11 @@ def upload_to_youtube(
 
     for attempt in range(1, config.UPLOAD_MAX_RETRIES + 1):
         try:
-            result = asyncio.run(
+            ok, youtube_url = asyncio.run(
                 _upload_async(video_path, title, description, tags)
             )
-            if result:
-                return True
+            if ok:
+                return youtube_url  # "" si no se capturo URL, pero upload OK
             logger.warning(f"Intento {attempt} fallo sin excepcion")
         except Exception as e:
             logger.error(f"Excepcion en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {e}")
@@ -397,4 +450,4 @@ def upload_to_youtube(
             time.sleep(config.UPLOAD_RETRY_WAIT)
 
     logger.error(f"Upload fallo tras {config.UPLOAD_MAX_RETRIES} intentos")
-    return False
+    return None

@@ -363,21 +363,44 @@ def run_factory(topic: str | None = None) -> bool:
             youtube_step_label = "[6/6]"
 
         # ── PASO 7 (o 6): Subir a YouTube ─────────────────────────────────────
+        youtube_url = ""
         if not config.YOUTUBE_UPLOAD_ENABLED:
             logger.info(f"{youtube_step_label} Subida a YouTube: DESACTIVADA en .env")
             success = True
         else:
             t0 = time.time()
             logger.info(f"{youtube_step_label} Subiendo a YouTube...")
-            success = youtube_uploader.upload_to_youtube(
+            upload_result = youtube_uploader.upload_to_youtube(
                 video_path=video_path,
                 title=script["title"],
                 description=script["description"],
                 tags=script.get("tags", [])
             )
             step_times["upload"] = time.time() - t0
+            # upload_result: str (URL, puede ser "") = OK | None = fallo
+            success = upload_result is not None
             if success:
-                logger.info(f"      Video publicado en YouTube | Tardó: {step_times['upload']:.0f}s")
+                youtube_url = upload_result or ""
+                if youtube_url:
+                    logger.info(f"      Video publicado: {youtube_url} | Tardó: {step_times['upload']:.0f}s")
+                else:
+                    logger.info(f"      Video publicado en YouTube (URL no capturada) | Tardó: {step_times['upload']:.0f}s")
+
+                # Notificar por WhatsApp con el enlace del video
+                if getattr(config, "WHATSAPP_APPROVAL_ENABLED", False) or getattr(config, "WHATSAPP_TO", ""):
+                    try:
+                        from modules import whatsapp_notifier
+                        thumbnail_p = Path(run_dir / "thumbnail.jpg")
+                        whatsapp_notifier.send_upload_confirmation(
+                            title=script["title"],
+                            youtube_url=youtube_url,
+                            thumbnail_path=thumbnail_p if thumbnail_p.exists() else None,
+                            duration_s=audio_duration,
+                            video_size_mb=video_size_mb,
+                            word_count=len(script["script_text"].split()),
+                        )
+                    except Exception as e_wa:
+                        logger.warning(f"      Notificacion WhatsApp fallo (no critico): {e_wa}")
             else:
                 logger.error(f"      ERROR: No se pudo subir el video | Tardó: {step_times['upload']:.0f}s")
 
@@ -395,6 +418,8 @@ def run_factory(topic: str | None = None) -> bool:
         logger.info(f"  Duracion audio   : {audio_duration:.0f} segundos")
         logger.info(f"  Archivo          : {video_path}")
         logger.info(f"  Tamanio          : {video_size_mb:.1f} MB")
+        if youtube_url:
+            logger.info(f"  YouTube          : {youtube_url}")
         logger.info("")
         logger.info(f"  Buscar historia  : {step_times.get('scraping', 0):.0f}s")
         logger.info(f"  Narrar (Ollama)  : {step_times.get('script', 0):.0f}s")

@@ -217,6 +217,85 @@ def _build_message(
 # ─── API pública ──────────────────────────────────────────────────────────────
 
 
+def send_upload_confirmation(
+    title: str,
+    youtube_url: str,
+    thumbnail_path: Path | None = None,
+    duration_s: float = 0.0,
+    video_size_mb: float = 0.0,
+    word_count: int = 0,
+) -> None:
+    """
+    Envía un mensaje de WhatsApp confirmando que el video fue publicado en YouTube.
+    Incluye el enlace directo, thumbnail y estadísticas del video.
+
+    No bloquea — si Twilio falla, solo se loguea el error.
+    """
+    try:
+        from twilio.rest import Client  # type: ignore
+    except ImportError:
+        logger.warning("twilio no instalado — no se puede enviar confirmacion de upload")
+        return
+
+    account_sid = getattr(config, "TWILIO_ACCOUNT_SID", "")
+    auth_token  = getattr(config, "TWILIO_AUTH_TOKEN", "")
+    from_number = getattr(config, "TWILIO_WHATSAPP_FROM", "")
+    to_number   = getattr(config, "WHATSAPP_TO", "")
+
+    if not all([account_sid, auth_token, from_number, to_number]):
+        logger.warning("Faltan credenciales de Twilio — omitiendo confirmacion WhatsApp")
+        return
+
+    client  = Client(account_sid, auth_token)
+    from_ws = f"whatsapp:{from_number}"
+    to_ws   = f"whatsapp:{to_number}"
+
+    # Construir mensaje
+    url_line = f"🔗 {youtube_url}" if youtube_url else "🔗 URL no disponible (revisa YouTube Studio)"
+    dur_line  = f"⏱ {duration_s:.0f}s" if duration_s else ""
+    size_line = f"📁 {video_size_mb:.1f} MB" if video_size_mb else ""
+    words_line = f"📝 {word_count} palabras" if word_count else ""
+    stats = "   ".join(x for x in [dur_line, size_line, words_line] if x)
+
+    lines = [
+        f"✅ *VIDEO PUBLICADO* — {config.CHANNEL_NAME}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        f"📌 *{title}*",
+        "",
+        url_line,
+    ]
+    if stats:
+        lines += ["", stats]
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "_(Copia el enlace y compártelo)_",
+    ]
+    body = "\n".join(lines)
+
+    # Subir thumbnail para adjuntarlo
+    media_url_list = None
+    if thumbnail_path and thumbnail_path.exists():
+        try:
+            thumb_url = _upload_file(thumbnail_path)
+            if thumb_url:
+                media_url_list = [thumb_url]
+        except Exception as e:
+            logger.warning(f"No se pudo subir thumbnail para confirmacion: {e}")
+
+    try:
+        kwargs: dict = {"from_": from_ws, "to": to_ws, "body": body}
+        if media_url_list:
+            kwargs["media_url"] = media_url_list
+        client.messages.create(**kwargs)
+        logger.info(f"WhatsApp de confirmacion enviado a {to_number}")
+        if youtube_url:
+            logger.info(f"Enlace del video: {youtube_url}")
+    except Exception as e:
+        logger.error(f"Error enviando confirmacion WhatsApp: {e}")
+
+
 def send_approval_request(
     video_path: Path,
     thumbnail_path: Path | None,
