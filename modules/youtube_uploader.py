@@ -74,68 +74,124 @@ SELECTORS = {
 
 
 class HumanBehavior:
-    """Métodos para simular comportamiento humano en Selenium."""
+    """Simula comportamiento humano realista en Selenium para evitar detección de bots."""
 
     def __init__(self, driver):
         self.driver = driver
 
-    def random_delay(self, min_s: float = 1.5, max_s: float = 4.0) -> None:
-        """Espera aleatoria entre acciones."""
-        delay = random.uniform(min_s, max_s)
+    def random_delay(self, min_s: float = 2.0, max_s: float = 6.0) -> None:
+        """Pausa aleatoria entre acciones — distribución triangular para más realismo."""
+        delay = random.triangular(min_s, max_s, (min_s + max_s) / 2)
         time.sleep(delay)
 
-    def short_delay(self) -> None:
-        """Delay corto entre caracteres al escribir."""
-        time.sleep(random.uniform(0.05, 0.15))
+    def read_pause(self) -> None:
+        """Pausa larga simulando que el usuario lee la pantalla antes de actuar."""
+        time.sleep(random.triangular(2.5, 7.0, 4.0))
+
+    def random_mouse_move(self) -> None:
+        """Mueve el mouse a una posición aleatoria de la página (simula que el usuario mira)."""
+        try:
+            w = self.driver.execute_script("return window.innerWidth")
+            h = self.driver.execute_script("return window.innerHeight")
+            x = random.randint(int(w * 0.1), int(w * 0.9))
+            y = random.randint(int(h * 0.1), int(h * 0.8))
+            ActionChains(self.driver).move_by_offset(0, 0).perform()  # reset
+            ActionChains(self.driver).move_by_offset(x // 4, y // 4).perform()
+            time.sleep(random.uniform(0.3, 0.8))
+        except Exception:
+            pass
+
+    def random_scroll(self) -> None:
+        """Scroll aleatorio arriba/abajo simulando que el usuario revisa la página."""
+        try:
+            direction = random.choice([1, -1])
+            amount    = random.randint(100, 400)
+            self.driver.execute_script(f"window.scrollBy({{top: {direction * amount}, behavior: 'smooth'}})")
+            time.sleep(random.uniform(0.8, 2.0))
+        except Exception:
+            pass
 
     def move_to_element(self, element) -> None:
-        """Mueve el mouse al elemento antes de hacer click."""
+        """Mueve el mouse al elemento con trayectoria no lineal."""
         try:
             actions = ActionChains(self.driver)
+            # Dos movimientos intermedios para simular trayectoria natural
+            actions.move_by_offset(random.randint(-30, 30), random.randint(-20, 20))
             actions.move_to_element(element)
-            # Pequeño movimiento aleatorio adicional
-            actions.move_by_offset(
-                random.randint(-5, 5),
-                random.randint(-5, 5)
-            )
+            actions.move_by_offset(random.randint(-4, 4), random.randint(-4, 4))
             actions.perform()
-            time.sleep(random.uniform(0.2, 0.5))
+            time.sleep(random.uniform(0.3, 0.8))
         except Exception:
             pass
 
     def scroll_to_element(self, element) -> None:
-        """Hace scroll para que el elemento sea visible."""
+        """Scroll suave hasta el elemento y pausa como si lo leyera."""
         try:
             self.driver.execute_script(
                 "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
                 element
             )
-            time.sleep(random.uniform(0.3, 0.7))
+            time.sleep(random.uniform(0.6, 1.5))
         except Exception:
             pass
 
     def human_click(self, element) -> None:
-        """Click con comportamiento humano: scroll → mover → click."""
+        """Click humano: scroll → pausa de lectura → mover mouse → click."""
         self.scroll_to_element(element)
+        # Simular que el usuario lee/verifica antes de hacer click
+        time.sleep(random.uniform(0.5, 1.8))
         self.move_to_element(element)
         element.click()
-        self.random_delay(0.5, 1.5)
+        self.random_delay(1.0, 3.0)
 
     def human_type(self, element, text: str, clear_first: bool = True) -> None:
-        """Escribe texto letra por letra con delays variables."""
+        """
+        Escribe texto imitando velocidad humana real (~50-70 WPM).
+        - Velocidad por carácter: 0.08-0.32s (vs 0.05-0.15s anterior)
+        - Pausas de "pensar" frecuentes: cada 8-20 chars
+        - 2% de probabilidad de error tipográfico con corrección
+        - Pausa más larga en espacios (separación natural entre palabras)
+        """
         self.human_click(element)
+        # Pausa larga antes de empezar a escribir (el usuario lee el campo)
+        time.sleep(random.uniform(1.0, 2.5))
+
         if clear_first:
             element.send_keys(Keys.CONTROL + "a")
-            time.sleep(0.2)
+            time.sleep(random.uniform(0.3, 0.6))
             element.send_keys(Keys.DELETE)
-            time.sleep(0.3)
+            time.sleep(random.uniform(0.4, 0.8))
+
+        chars_since_pause = 0
+        next_pause_at     = random.randint(8, 20)
 
         for char in text:
+            # Error tipográfico ocasional (2%) con corrección inmediata
+            if random.random() < 0.02 and char.isalpha():
+                wrong = random.choice("qwertyuiopasdfghjklzxcvbnm")
+                element.send_keys(wrong)
+                time.sleep(random.uniform(0.1, 0.3))
+                element.send_keys(Keys.BACKSPACE)
+                time.sleep(random.uniform(0.15, 0.35))
+
             element.send_keys(char)
-            self.short_delay()
-            # Pausa más larga ocasionalmente (simula pensar)
-            if random.random() < 0.05:
-                time.sleep(random.uniform(0.3, 0.8))
+
+            # Velocidad base: ~50-70 WPM ≈ 0.08-0.32s por carácter
+            if char == " ":
+                # Pausa ligeramente más larga entre palabras
+                time.sleep(random.uniform(0.12, 0.35))
+            elif char in ".,;:!?\n":
+                # Pausa más larga en puntuación (el usuario "piensa" el siguiente)
+                time.sleep(random.uniform(0.2, 0.6))
+            else:
+                time.sleep(random.uniform(0.08, 0.28))
+
+            chars_since_pause += 1
+            if chars_since_pause >= next_pause_at:
+                # Pausa de "pensar/leer" cada cierta cantidad de chars
+                time.sleep(random.uniform(0.5, 2.2))
+                chars_since_pause = 0
+                next_pause_at     = random.randint(8, 22)
 
 
 def _init_driver() -> uc.Chrome:
@@ -324,62 +380,86 @@ def upload_to_youtube(
 
             # ── Navegar a YouTube Studio ───────────────────────────────────────
             driver.get(config.YOUTUBE_STUDIO_URL)
-            human.random_delay(2.0, 4.0)
+            # Pausa larga simulando que la página carga y el usuario la lee
+            human.random_delay(5.0, 10.0)
+            human.random_scroll()
+            human.random_mouse_move()
 
             # ── Login si es necesario ──────────────────────────────────────────
             if not _is_logged_in(driver, wait):
                 logger.info("No hay sesión activa, iniciando login...")
                 _login(driver, human, wait)
-
-                # Navegar de nuevo a Studio después del login
                 driver.get(config.YOUTUBE_STUDIO_URL)
-                human.random_delay(3.0, 5.0)
+                # Después del login el usuario suele tomarse un momento
+                human.random_delay(6.0, 12.0)
+                human.random_scroll()
+
+            # ── Exploración previa antes de hacer click en "Crear" ────────────
+            # Un humano mira el dashboard antes de ir directo al botón
+            human.random_mouse_move()
+            human.random_scroll()
+            human.random_delay(3.0, 7.0)
+            human.random_mouse_move()
 
             # ── Click "Crear" → "Subir videos" ────────────────────────────────
             logger.info("Haciendo click en 'Crear'...")
             create_btn = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, SELECTORS["create_btn"]))
             )
+            human.read_pause()   # el usuario "ve" el botón antes de clickearlo
             human.human_click(create_btn)
-            human.random_delay(1.0, 2.0)
+            human.random_delay(1.5, 3.5)
 
             upload_option = wait.until(
                 EC.element_to_be_clickable((By.XPATH, "//tp-yt-paper-item[contains(., 'Subir') or contains(., 'Upload')]"))
             )
+            human.read_pause()
             human.human_click(upload_option)
-            human.random_delay(2.0, 3.0)
+            human.random_delay(3.0, 6.0)
 
             # ── Seleccionar archivo ────────────────────────────────────────────
             logger.info("Seleccionando archivo de video...")
             file_input = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, SELECTORS["file_input"]))
             )
-            # send_keys directo al input file (no necesita click)
+            time.sleep(random.uniform(1.5, 3.0))
             file_input.send_keys(str(video_path.absolute()))
-            human.random_delay(3.0, 5.0)
+            # El upload comienza — el usuario observa mientras sube
+            human.random_delay(4.0, 8.0)
+            human.random_mouse_move()
 
-            # ── Esperar que aparezca el modal de detalles ──────────────────────
+            # ── Esperar modal de detalles ──────────────────────────────────────
             title_input = wait_long.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#title-textarea #child-input"))
             )
+            # El usuario tarda en leer el modal antes de empezar a editar
+            human.read_pause()
+            human.random_scroll()
+            human.random_delay(2.0, 5.0)
 
             # ── Título ────────────────────────────────────────────────────────
             logger.info("Escribiendo título...")
             human.human_type(title_input, title)
-            human.random_delay(1.0, 2.0)
+            # Pausa al terminar de escribir (el usuario revisa lo que escribió)
+            human.random_delay(2.0, 5.0)
+            human.random_mouse_move()
 
             # ── Descripción + hashtags ────────────────────────────────────────
             logger.info("Escribiendo descripción...")
             desc_input = driver.find_element(
                 By.CSS_SELECTOR, "#description-textarea #child-input"
             )
-            # Añadir hashtags al final de la descripción (estándar en YouTube Shorts)
             hashtags_str = " ".join(
                 t if t.startswith("#") else f"#{t}" for t in (tags or [])
             )
             full_description = f"{description}\n\n{hashtags_str}" if hashtags_str else description
+            # El usuario tarda más en leer el campo de descripción (es largo)
+            human.read_pause()
             human.human_type(desc_input, full_description)
-            human.random_delay(1.0, 2.0)
+            # Pausa larga después de escribir la descripción (revisión)
+            human.random_delay(3.0, 7.0)
+            human.random_scroll()
+            human.random_delay(2.0, 4.0)
 
             # ── No es para niños ──────────────────────────────────────────────
             logger.info("Seleccionando 'No es para niños'...")
@@ -390,33 +470,43 @@ def upload_to_youtube(
                         "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']"
                     ))
                 )
+                human.read_pause()
                 human.human_click(not_kids)
             except TimeoutException:
                 logger.warning("No se encontró botón 'No es para niños', continuando...")
 
-            human.random_delay(1.0, 2.0)
+            human.random_delay(2.0, 5.0)
+            human.random_mouse_move()
 
             # ── Siguiente (paso 1 → 2) ─────────────────────────────────────────
             logger.info("Avanzando al paso 2...")
             next_btn = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "ytcp-button#next-button"))
             )
+            human.read_pause()   # el usuario revisa todo antes de avanzar
             human.human_click(next_btn)
-            human.random_delay(1.5, 3.0)
+            human.random_delay(3.0, 7.0)
+            human.random_scroll()
+            human.random_mouse_move()
 
             # ── Siguiente (paso 2 → 3: Elementos del video) ───────────────────
             next_btn2 = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "ytcp-button#next-button"))
             )
+            human.read_pause()
             human.human_click(next_btn2)
-            human.random_delay(1.5, 3.0)
+            human.random_delay(3.0, 7.0)
+            human.random_mouse_move()
 
             # ── Siguiente (paso 3 → 4: Verificaciones) ────────────────────────
             next_btn3 = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "ytcp-button#next-button"))
             )
+            human.read_pause()
             human.human_click(next_btn3)
-            human.random_delay(1.5, 3.0)
+            human.random_delay(3.0, 8.0)
+            human.random_scroll()
+            human.random_mouse_move()
 
             # ── Visibilidad: Público ───────────────────────────────────────────
             logger.info("Estableciendo visibilidad: Público...")
@@ -426,8 +516,11 @@ def upload_to_youtube(
                     "tp-yt-paper-radio-button[name='PUBLIC']"
                 ))
             )
+            human.read_pause()
             human.human_click(public_radio)
-            human.random_delay(1.0, 2.0)
+            # Pausa larga — es la acción más importante, el usuario duda un momento
+            human.random_delay(4.0, 9.0)
+            human.random_mouse_move()
 
             # ── Esperar upload y guardar ───────────────────────────────────────
             _wait_for_upload_complete(driver, wait_long)
@@ -436,8 +529,12 @@ def upload_to_youtube(
             save_btn = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "ytcp-button#done-button"))
             )
+            # Pausa extra antes de guardar — acción irreversible, el usuario revisa
+            human.read_pause()
+            human.random_mouse_move()
+            human.read_pause()
             human.human_click(save_btn)
-            human.random_delay(3.0, 5.0)
+            human.random_delay(4.0, 8.0)
 
             # ── Screenshot de confirmación ─────────────────────────────────────
             screenshot_path = config.LOGS_DIR / f"upload_confirm_{time.strftime('%Y%m%d_%H%M%S')}.png"
