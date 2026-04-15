@@ -59,7 +59,7 @@ HISTORIA MAL ESCRITA — NUNCA HAGAS ESTO:
 → No hay conexión entre frases. No se entiende nada.
 
 HISTORIA BIEN ESCRITA — ASÍ DEBE SER:
-"Nunca debí revisar su celular. Llevábamos tres años juntos cuando empezó a llegar tarde cada noche sin explicación. Un martes, mientras cargaba su teléfono, vi un mensaje. Era de mi mejor amigo. Se veían desde hacía seis meses. Lo que me destrozó no fue la traición... sino que ese amigo estuvo en nuestra boda. ¿Perdonarías algo así?"
+"Nunca debí revisar su celular. Llevábamos tres años juntos cuando empezó a llegar tarde cada noche sin explicación. Un martes, mientras cargaba su teléfono, vi un mensaje. Era de mi mejor amigo. Se veían desde hacía seis meses. Lo que me destrozó no fue la traición... sino que ese amigo estuvo en nuestra boda. ¿Habrías podido seguir viviendo en el mismo vecindario que ellos dos?"
 → Cada frase responde por qué ocurrió la siguiente: situación → señal de alerta → descubrimiento → quién → revelación → emoción final.
 
 ═══ ESTRUCTURA CAUSAL OBLIGATORIA ═══
@@ -70,7 +70,14 @@ Cada parte conecta causalmente con la siguiente:
 - problema (8–20s): la primera señal de que algo no estaba bien → el momento del descubrimiento. 35–45 palabras.
 - giro (20–30s): la revelación que cambia todo. Lo más inesperado. 20–30 palabras.
 - final (30–40s): cómo reaccionó el narrador y qué consecuencia hubo. 15–20 palabras.
-- pregunta: una sola pregunta directa y específica al espectador.
+- pregunta: una sola pregunta MUY ESPECIFICA al dilema concreto de ESTA historia.
+  PROHIBIDO usar estas frases genericas que se repiten en todos los videos:
+  "¿Lo perdonarías?", "¿La perdonarías?", "¿Qué harías tú?", "¿Tú qué harías?",
+  "¿Lo hubieras perdonado?", "¿Qué habrías hecho?", "¿Harías lo mismo?".
+  La pregunta DEBE mencionar la acción o relación concreta de ESTA historia.
+  Ejemplo traición laboral: "¿Habrías contado el secreto a toda la empresa?"
+  Ejemplo secreto familiar: "¿Habrías confrontado a tu madre delante de todos?"
+  Ejemplo celular revisado: "¿Habrías seguido revisando o cerrado el teléfono?"
 
 REGLAS DE ESCRITURA:
 - Frases cortas (máx 12 palabras) pero SIEMPRE conectadas causalmente con la anterior
@@ -96,7 +103,7 @@ Genera una historia dramática anónima para YouTube Shorts con este JSON exacto
   "problema": "la primera señal de alerta → cómo descubrió el problema. 35-45 palabras. Cada frase conecta con la siguiente usando: entonces, pero, fue cuando, de repente.",
   "giro": "la revelación más inesperada que cambia todo. 20-30 palabras. Debe surgir lógicamente del problema.",
   "final": "reacción del narrador y consecuencia real. 15-20 palabras. Específico y creíble.",
-  "pregunta": "pregunta específica sobre EL DILEMA DE ESTA historia. NO genérica. Ej: '¿Hubieras perdonado después de cuatro años?'",
+  "pregunta": "pregunta MUY ESPECIFICA al dilema concreto. PROHIBIDO: 'perdonar', 'que harias', 'que hubieras hecho' en forma generica. Menciona la accion o relacion concreta de ESTA historia. Ej: '¿Habrias revisado el celular de tu pareja en ese momento?' o '¿Podrias seguir trabajando con esa persona despues de lo que hizo?'",
   "script_text": "LA HISTORIA COMPLETA narrada en primera persona como un relato fluido. REGLA CRÍTICA: cada frase debe explicar por qué ocurrió la siguiente — usa conectores: entonces, pero, de repente, fue cuando, lo que no sabía, sin embargo, hasta que. Entre 100 y 130 palabras. Empieza con el hook. Termina con la pregunta. NO es una lista de puntos — es una historia con inicio, desarrollo y final lógico."
 }}
 
@@ -889,10 +896,21 @@ El campo script_text DEBE tener esta estructura exacta:
 3. OUTRO_CTA (ultimos 5 segundos) — PREGUNTA ESPECIFICA + LLAMADA A LA ACCION:
    - La pregunta DEBE ser sobre el dilema concreto de ESTA historia, no una pregunta generica.
    - Luego: llamada a la accion corta y natural, como hablandole a un amigo.
-   - MALO: "¿Que harias tu?" (demasiado vaga)
-   - BUENO: crea una pregunta que solo tenga sentido para ESTA historia especifica.
-   - BUENO: cierra siempre con una llamada a la accion: "Dejamelo en los comentarios", "Cuentame abajo", "Dale like si te sorprendio".
-   - CRITICO: NUNCA copies ejemplos de otros scripts. Cada pregunta es unica para esta historia.
+
+   PREGUNTAS ABSOLUTAMENTE PROHIBIDAS (estas son genericas y aparecen en todos los videos):
+   - "¿Lo perdonarias?" / "¿La perdonarias?" / "¿Le perdonarias?"
+   - "¿Lo hubieras perdonado?" / "¿La hubieras perdonado?"
+   - "¿Que harias tu?" / "¿Tu que harias?" / "¿Que hubieras hecho tu?"
+   - "¿Lo hubieras hecho?" / "¿Harias lo mismo?"
+   - Cualquier variacion de PERDONAR o HACER en pregunta generica sin detalles especificos
+
+   PREGUNTAS BUENAS — especificas del conflicto de ESTA historia:
+   - Si la historia es de descubrir mensajes: "¿Hubiera revisado el telefono de tu pareja despues de tres años de relacion?"
+   - Si la historia es de una traicion en el trabajo: "¿Le habrias dicho a tu jefe lo que descubriste o te habrias quedado callado?"
+   - Si la historia es de un secreto familiar: "¿Habrias confrontado a tu madre delante de toda la familia?"
+   - Si la historia es de infidelidad con un amigo: "¿Podrias seguir viviendo en la misma ciudad que esa persona?"
+   - REGLA: la pregunta debe mencionar ALGO especifico de ESTA historia (la accion concreta, la relacion concreta, la decision concreta).
+   - Cierra siempre con: "Dejamelo en los comentarios", "Cuentame abajo", "Dale like si te paso algo asi".
 
 4. GENERO DEL NARRADOR:
    - Detectar si la historia la cuenta un hombre o una mujer por el contexto.
@@ -922,7 +940,7 @@ ESTRUCTURA OBLIGATORIA de script_text:
   3. outro_cta (pregunta específica + llamada a acción, máx 20 palabras)
 
 {{
-  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra los detalles clave: quien, que señales hubo, como se descubrio, como reaccionaron. MAXIMO ESTRICTO: 130 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
+  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra TODOS los detalles: quien, que señales hubo, como se descubrio, como reaccionaron, que consecuencias tuvo. Entre 150 y 250 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
   "title": "titulo clickbait en espanol, impactante, maximo 100 caracteres",
   "description": "descripcion SEO 200-400 caracteres con palabras clave de drama y emociones",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
@@ -930,8 +948,8 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "character_description": "descripcion fisica CONSISTENTE del narrador en ingles. Ej: 'Hispanic woman, late 20s, long dark wavy hair, wearing a white blouse and jeans'",
   "intro_hook": "pregunta retorica al espectador sobre el tema de esta historia. Ej: '¿Alguna vez creiste conocer bien a alguien y resultó que todo era mentira?'",
   "hook": "revelacion devastadora de la historia, maxima 12 palabras — primer impacto tras el intro_hook",
-  "pregunta": "pregunta ESPECIFICA al dilema de esta historia. Ej: '¿Lo hubieras perdonado despues de cinco anos?'",
-  "outro_cta": "pregunta especifica + llamada a accion natural. Ej: '¿Lo hubieras perdonado? Dejamelo en los comentarios y dale like si te sorprendio.'"
+  "pregunta": "pregunta MUY ESPECIFICA al dilema de ESTA historia (PROHIBIDO usar perdonar/que harias). Menciona la accion concreta. Ej: '¿Habrias confrontado a tu pareja enfrente de todos?'",
+  "outro_cta": "pregunta MUY ESPECIFICA del dilema de ESTA historia (PROHIBIDO usar perdonar/que harias) + llamada a accion. Ej infidelidad con amigo: '¿Podrias seguir viendo a esa persona en tu casa despues de lo que hizo? Cuentame abajo.' Ej secreto laboral: '¿Le habrias dicho a tu jefe la verdad o te hubieras quedado callado? Dejamelo en los comentarios.'"
 }}
 
 REGLAS:
@@ -946,7 +964,7 @@ FALLO ANTERIOR — responde SOLO JSON valido, sin markdown, empieza con {{ termi
 CAMPOS OBLIGATORIOS: title, description, tags, narrator_gender, character_description, intro_hook, hook, pregunta, outro_cta, script_text, scenes (minimo 5).
 
 {{
-  "script_text": "[INTRO_HOOK]. [HISTORIA_RESUMIDA_EN_80_PALABRAS_MAX]. [PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION].",
+  "script_text": "[INTRO_HOOK]. [HISTORIA_COMPLETA_CON_TODOS_LOS_DETALLES — 150 a 250 palabras]. [PREGUNTA_ESPECIFICA_SIN_PERDONAR_NI_QUE_HARIAS]? [LLAMADA_A_ACCION].",
   "title": "titulo impactante en espanol",
   "description": "descripcion SEO 200 caracteres",
   "tags": ["#confesion","#drama","#historia","#viral","#shorts","#traicion","#secreto","#real","#impactante","#emocional","#relaciones","#verdad"],
@@ -966,7 +984,7 @@ def _validate_story_script(script: dict) -> bool:
     Verificaciones:
     1. Campos requeridos (incluyendo narrator_gender y character_description)
     2. Mínimo 4 escenas
-    3. Word count: falla si <60 o >160 palabras (objetivo 100-130, máx 60s de audio)
+    3. Word count: falla si <60 o >350 palabras (objetivo 150-250 para videos de 1-2 min)
     4. narrator_gender válido; inferido de character_description si falta
     5. Consistencia género: character_description vs narrator_gender
     6. Heurística de coherencia: mínimo 1 conector en historias de 120+ palabras
@@ -1021,14 +1039,12 @@ def _validate_story_script(script: dict) -> bool:
         logger.warning(f"Script corto: {word_count} palabras (mínimo 60). Reintentando.")
         return False
 
-    if word_count > 160:
-        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 160 — Shorts < 60s). Reintentando.")
+    if word_count > 350:
+        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 350). Reintentando.")
         return False
 
-    if 60 <= word_count < 100:
-        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 100-130)")
-    elif 131 <= word_count <= 160:
-        logger.warning(f"Script algo largo: {word_count} palabras (objetivo 100-130)")
+    if 60 <= word_count < 120:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 150-250)")
     else:
         logger.info(f"Longitud OK: {word_count} palabras")
 
