@@ -343,10 +343,13 @@ def send_approval_request(
                 limit=10,
             )
             for m in messages:
-                # Ignorar mensajes anteriores al envío
-                if m.date_sent:
+                # Ignorar mensajes anteriores al envío.
+                # Twilio pone date_sent=None en mensajes ENTRANTES (los que tú
+                # envías al sandbox) — usar date_created como fallback.
+                msg_date = m.date_sent or m.date_created
+                if msg_date:
                     try:
-                        msg_ts = m.date_sent.timestamp()
+                        msg_ts = msg_date.timestamp()
                     except Exception:
                         msg_ts = sent_at_ts + 1
                     if msg_ts <= sent_at_ts:
