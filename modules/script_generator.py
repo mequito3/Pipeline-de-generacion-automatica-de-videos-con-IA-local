@@ -922,7 +922,7 @@ ESTRUCTURA OBLIGATORIA de script_text:
   3. outro_cta (pregunta específica + llamada a acción, máx 20 palabras)
 
 {{
-  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra TODOS los detalles: quien, que señales hubo, como se descubrio, como reaccionaron, que consecuencias tuvo. Minimo 180 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
+  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra los detalles clave: quien, que señales hubo, como se descubrio, como reaccionaron. MAXIMO ESTRICTO: 130 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
   "title": "titulo clickbait en espanol, impactante, maximo 100 caracteres",
   "description": "descripcion SEO 200-400 caracteres con palabras clave de drama y emociones",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
@@ -946,7 +946,7 @@ FALLO ANTERIOR — responde SOLO JSON valido, sin markdown, empieza con {{ termi
 CAMPOS OBLIGATORIOS: title, description, tags, narrator_gender, character_description, intro_hook, hook, pregunta, outro_cta, script_text, scenes (minimo 5).
 
 {{
-  "script_text": "[INTRO_HOOK]. [HISTORIA_COMPLETA_CON_TODOS_LOS_DETALLES_SIN_RESUMIR]. [PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION].",
+  "script_text": "[INTRO_HOOK]. [HISTORIA_RESUMIDA_EN_80_PALABRAS_MAX]. [PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION].",
   "title": "titulo impactante en espanol",
   "description": "descripcion SEO 200 caracteres",
   "tags": ["#confesion","#drama","#historia","#viral","#shorts","#traicion","#secreto","#real","#impactante","#emocional","#relaciones","#verdad"],
@@ -966,7 +966,7 @@ def _validate_story_script(script: dict) -> bool:
     Verificaciones:
     1. Campos requeridos (incluyendo narrator_gender y character_description)
     2. Mínimo 4 escenas
-    3. Word count: falla si <60 o >350 palabras (objetivo 180-300)
+    3. Word count: falla si <60 o >160 palabras (objetivo 100-130, máx 60s de audio)
     4. narrator_gender válido; inferido de character_description si falta
     5. Consistencia género: character_description vs narrator_gender
     6. Heurística de coherencia: mínimo 1 conector en historias de 120+ palabras
@@ -1021,12 +1021,14 @@ def _validate_story_script(script: dict) -> bool:
         logger.warning(f"Script corto: {word_count} palabras (mínimo 60). Reintentando.")
         return False
 
-    if word_count > 350:
-        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 350). Reintentando.")
+    if word_count > 160:
+        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 160 — Shorts < 60s). Reintentando.")
         return False
 
-    if 60 <= word_count < 150:
-        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 180-300)")
+    if 60 <= word_count < 100:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 100-130)")
+    elif 131 <= word_count <= 160:
+        logger.warning(f"Script algo largo: {word_count} palabras (objetivo 100-130)")
     else:
         logger.info(f"Longitud OK: {word_count} palabras")
 
