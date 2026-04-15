@@ -37,11 +37,11 @@ SD_TIMEOUT: int = int(os.getenv("SD_TIMEOUT", "180"))  # segundos máximos por i
 # ─── Z-Image Turbo (ComfyUI) — parámetros de rendimiento ─────────────────────
 # Resolución nativa de inferencia (se escala a 1080x1920 en el video)
 # 832 → sweet spot calidad/velocidad en portrait  |  768 → ~5-7s  |  1024 → ~20-30s
-SD_NATIVE_RES: int = int(os.getenv("SD_NATIVE_RES", "832"))
-# Pasos de muestreo (8=calidad real, 4=turbo rápido)
-SD_TURBO_STEPS: int = int(os.getenv("SD_TURBO_STEPS", "8"))
+SD_NATIVE_RES: int = int(os.getenv("SD_NATIVE_RES", "768"))
+# Pasos de muestreo (4=turbo rápido, 8=calidad)
+SD_TURBO_STEPS: int = int(os.getenv("SD_TURBO_STEPS", "4"))
 # Máximo de imágenes únicas por video (las escenas sobrantes reciclan imágenes existentes)
-SD_MAX_IMAGES: int = int(os.getenv("SD_MAX_IMAGES", "12"))
+SD_MAX_IMAGES: int = int(os.getenv("SD_MAX_IMAGES", "6"))
 # Negative prompt universal para todas las imágenes generadas
 SD_NEGATIVE_PROMPT: str = os.getenv(
     "SD_NEGATIVE_PROMPT",

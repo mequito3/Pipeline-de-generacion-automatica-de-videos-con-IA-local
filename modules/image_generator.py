@@ -435,13 +435,14 @@ def generate_images(
                     image_paths[idx] = _pil_fallback(scenes[idx].get("text", ""), out, idx)
                 continue
 
-            # ── Poll hasta completar (300s por imagen) ────────────────────────
-            img_timeout  = 300
+            # ── Poll hasta completar (120s por imagen) ────────────────────────
+            img_timeout  = 120
             poll_elapsed = 0
             done         = False
             while poll_elapsed < img_timeout:
-                time.sleep(2)
-                poll_elapsed += 2
+                poll_interval = 1 if poll_elapsed < 30 else 2
+                time.sleep(poll_interval)
+                poll_elapsed += poll_interval
                 try:
                     history = requests.get(
                         f"{config.SD_COMFYUI_URL}/history/{prompt_id}", timeout=10

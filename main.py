@@ -18,6 +18,7 @@ Flujo completo:
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import io
 import json
@@ -264,47 +265,54 @@ def run_factory(topic: str | None = None) -> bool:
         logger.info(f"      Palabras narradas : {len(script['script_text'].split())} palabras")
         logger.info(f"      Escenas generadas : {len(script['scenes'])} | Tardo: {step_times['script']:.0f}s")
 
-        # ── PASO 3: Voz narrativa (TTS) ────────────────────────────────────────
-        t0 = time.time()
-        # Ollama indica el género en narrator_gender; si no, detectar automáticamente
+        # ── PASOS 3+4: Voz narrativa (TTS) + Imágenes en PARALELO ────────────────
         narrator_gender = script.get("narrator_gender", "auto")
         if narrator_gender not in ("female", "male"):
             narrator_gender = "auto"
         gender_label = {"female": "Mujer", "male": "Hombre", "auto": "Auto-detectado"}.get(narrator_gender, "Auto")
-        logger.info(f"[3/6] Generando voz narradora ({gender_label})...")
-        audio_path = tts_engine.generate_audio(
-            script["script_text"],
-            output_path=str(run_dir / "narration.mp3"),
-            gender=narrator_gender,
-        )
-        step_times["tts"] = time.time() - t0
-        audio_duration = tts_engine.get_audio_duration(Path(audio_path))
-        logger.info(f"      Duracion del audio: {audio_duration:.1f} segundos | Tardó: {step_times['tts']:.0f}s")
 
-        # ── PASO 4: Imágenes cinematográficas (Stable Diffusion) ───────────────
-        t0 = time.time()
         char_desc = script.get("character_description", "") or ""
         if not isinstance(char_desc, str):
             char_desc = str(char_desc)
         img_gender = script.get("narrator_gender", "")
         if img_gender not in ("female", "male"):
             img_gender = ""
-        # Seed determinístico basado en post_id → mismo video = personaje consistente
         post_id_raw = script.get("_post_id", "") or ""
         post_seed = int(hashlib.md5(post_id_raw.encode()).hexdigest()[:8], 16) if post_id_raw else None
 
-        logger.info(f"[4/6] Generando {len(script['scenes'])} imagenes con Stable Diffusion...")
-        logger.info(f"      Personaje         : {char_desc[:60] or '(auto)'} | Genero: {img_gender or 'auto'}")
-        logger.info(f"      Seed visual       : {post_seed or 'aleatorio'}")
-        image_paths = image_generator.generate_images(
-            script["scenes"],
-            str(images_dir),
-            character_description=char_desc,
-            gender=img_gender,
-            post_seed=post_seed,
-        )
-        step_times["images"] = time.time() - t0
-        logger.info(f"      Imagenes creadas  : {len(image_paths)} | Tardó: {step_times['images']:.0f}s")
+        logger.info(f"[3+4/6] TTS ({gender_label}) + {len(script['scenes'])} imágenes SD en paralelo...")
+        logger.info(f"        Personaje: {char_desc[:60] or '(auto)'} | Genero: {img_gender or 'auto'}")
+
+        t0 = time.time()
+
+        def _run_tts():
+            return tts_engine.generate_audio(
+                script["script_text"],
+                output_path=str(run_dir / "narration.mp3"),
+                gender=narrator_gender,
+            )
+
+        def _run_images():
+            return image_generator.generate_images(
+                script["scenes"],
+                str(images_dir),
+                character_description=char_desc,
+                gender=img_gender,
+                post_seed=post_seed,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
+            _tts_f    = _pool.submit(_run_tts)
+            _images_f = _pool.submit(_run_images)
+            audio_path  = _tts_f.result()
+            image_paths = _images_f.result()
+
+        parallel_time = time.time() - t0
+        step_times["tts"]    = parallel_time
+        step_times["images"] = parallel_time
+        audio_duration = tts_engine.get_audio_duration(Path(audio_path))
+        logger.info(f"      TTS + Imágenes listos en {parallel_time:.0f}s (en paralelo)")
+        logger.info(f"      Audio: {audio_duration:.1f}s | Imagenes: {len(image_paths)}")
 
         # ── PASO 5: Ensamblar video final ──────────────────────────────────────
         t0 = time.time()
@@ -390,8 +398,7 @@ def run_factory(topic: str | None = None) -> bool:
         logger.info("")
         logger.info(f"  Buscar historia  : {step_times.get('scraping', 0):.0f}s")
         logger.info(f"  Narrar (Ollama)  : {step_times.get('script', 0):.0f}s")
-        logger.info(f"  Voz narradora    : {step_times.get('tts', 0):.0f}s")
-        logger.info(f"  Imagenes SD      : {step_times.get('images', 0):.0f}s")
+        logger.info(f"  TTS + Imagenes   : {step_times.get('images', 0):.0f}s (paralelo)")
         logger.info(f"  Ensamblar video  : {step_times.get('video', 0):.0f}s")
         if step_times.get("upload"):
             logger.info(f"  Subir YouTube    : {step_times.get('upload', 0):.0f}s")
