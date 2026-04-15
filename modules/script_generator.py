@@ -99,18 +99,18 @@ USER_PROMPT_TEMPLATE = """Tema de confesión: {topic}
 Genera una historia dramática anónima para YouTube Shorts con este JSON exacto:
 
 {{
-  "title": "título viral clickbait en español, máx 100 chars",
-  "description": "descripción SEO 200-400 chars en español",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
-  "narrator_gender": "female o male segun el genero del protagonista que narra la historia",
-  "character_description": "descripcion fisica CONSISTENTE del narrador: genero, edad, rasgos, ropa en ingles. Ej mujer: 'Hispanic woman, late 20s, dark hair, red blouse'. Ej hombre: 'Latino man, early 30s, short dark hair, grey t-shirt'",
-  "hook": "frase inicial impactante, máx 12 palabras. Que duela o sorprenda. Ej: 'Nunca debí abrir ese cajón.'",
-  "contexto": "quién narra, con quién, cuánto tiempo llevan, dónde. 15-20 palabras. Ej: 'Llevábamos cuatro años juntos cuando empezó a cambiar su actitud.'",
-  "problema": "la primera señal de alerta → cómo descubrió el problema. 35-45 palabras. Cada frase conecta con la siguiente usando: entonces, pero, fue cuando, de repente.",
-  "giro": "la revelación más inesperada que cambia todo. 20-30 palabras. Debe surgir lógicamente del problema.",
-  "final": "reacción del narrador y consecuencia real. 15-20 palabras. Específico y creíble.",
-  "pregunta": "pregunta MUY ESPECIFICA al dilema concreto. PROHIBIDO: 'perdonar', 'que harias', 'que hubieras hecho' en forma generica. Menciona la accion o relacion concreta de ESTA historia. Ej: '¿Habrias revisado el celular de tu pareja en ese momento?' o '¿Podrias seguir trabajando con esa persona despues de lo que hizo?'",
-  "script_text": "LA HISTORIA COMPLETA narrada en primera persona como un relato fluido. REGLA CRÍTICA: cada frase debe explicar por qué ocurrió la siguiente — usa conectores: entonces, pero, de repente, fue cuando, lo que no sabía, sin embargo, hasta que. Entre 100 y 130 palabras. Empieza con el hook. Termina con la pregunta. NO es una lista de puntos — es una historia con inicio, desarrollo y final lógico."
+  "narrator_gender": "female o male",
+  "character_description": "descripcion fisica del narrador en ingles",
+  "hook": "primera frase de impacto, máx 12 palabras, específica del conflicto de {topic}",
+  "contexto": "quién narra, con quién, cuánto tiempo llevan — 15-20 palabras",
+  "problema": "señal de alerta → descubrimiento — 35-45 palabras conectadas",
+  "giro": "revelación que cambia todo — 20-30 palabras",
+  "final": "reacción y consecuencia real — 15-20 palabras",
+  "pregunta": "pregunta especifica del dilema de {topic} (PROHIBIDO: perdonar/que harias en forma generica)",
+  "script_text": "historia completa narrada en primera persona, frases cortas conectadas causalmente, 100-130 palabras, empieza con hook, termina con pregunta",
+  "title": "titulo viral que describe EXACTAMENTE lo que pasa en el script_text, máx 100 chars",
+  "description": "descripción SEO 200-400 chars que resume el conflicto especifico narrado",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}
 
 REGLAS CRÍTICAS:
@@ -124,18 +124,18 @@ REGLA MAS IMPORTANTE: script_text debe ser una historia fluida con lógica inter
 Campos: title, description, tags (lista 12), narrator_gender, character_description, hook, contexto, problema, giro, final, pregunta, script_text (100-130 PALABRAS CONECTADAS).
 
 {{
-  "title": "título viral clickbait en español, máx 100 chars",
-  "description": "descripción SEO 200-400 chars en español",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
-  "hook": "[PRIMERA_FRASE_IMPACTANTE — máx 12 palabras, que duela o sorprenda]",
-  "contexto": "[SITUACION_INICIAL: quién, relación, cuánto tiempo — máx 20 palabras]",
-  "problema": "[EL DESCUBRIMIENTO: señal de alerta → cómo lo descubrió. Frases conectadas con: entonces, pero, de repente — 35-45 palabras]",
-  "giro": "[REVELACION_INESPERADA: lo que cambia todo, conectada lógicamente al problema — 20-30 palabras]",
-  "final": "[CONSECUENCIA y reaccion del narrador — 15-20 palabras concretas]",
-  "pregunta": "[PREGUNTA_ESPECIFICA al dilema de este tema: {topic}]",
-  "script_text": "[NARRACION FLUIDA: empieza con hook. Cada frase conecta causalmente. Usa: entonces, pero, de repente, fue cuando, lo que no sabia, hasta que. 100-130 palabras sobre {topic}. Termina con la pregunta.]"
+  "hook": "[primera frase impactante, máx 12 palabras]",
+  "contexto": "[quién, relación, cuánto tiempo — máx 20 palabras]",
+  "problema": "[señal de alerta → descubrimiento, frases conectadas — 35-45 palabras]",
+  "giro": "[revelación inesperada — 20-30 palabras]",
+  "final": "[consecuencia y reacción — 15-20 palabras]",
+  "pregunta": "[pregunta especifica del dilema de {topic}, NO generica]",
+  "script_text": "[narracion fluida, 100-130 palabras, empieza con hook, frases conectadas, termina con pregunta]",
+  "title": "[titulo viral que describe EXACTAMENTE lo narrado en script_text]",
+  "description": "[descripcion SEO 200-400 chars del conflicto especifico narrado]",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}"""
 
 
@@ -881,12 +881,13 @@ El campo script_text DEBE tener esta estructura exacta:
   [INTRO_HOOK] → [HISTORIA COMPLETA con todos los detalles] → [OUTRO_CTA]
 
 1. INTRO_HOOK (primeros 5 segundos) — PREGUNTA que paraliza al espectador:
-   - Una pregunta que lo haga sentir que le hablan A EL directamente.
-   - Debe estar relacionada con el drama especifico de ESTA historia.
-   - MALO: "Hoy les voy a contar una historia..." (aburrido, no es pregunta)
-   - BUENO: "¿Alguna vez llegaste a casa y descubriste que tu vida era una mentira?"
-   - BUENO: "¿Sabias que tu mejor amiga podia traicionarte de la peor manera posible?"
-   - BUENO: "¿Que harias si descubrieras que la persona que amas te estuvo miniendo durante anos?"
+   - Debe mencionar el OBJETO, LUGAR o ACCION CONCRETA de ESTA historia. No puede servir para otra historia.
+   - MALO (genérico, sirve para cualquier video): "¿Alguna vez llegaste a casa y descubriste que tu vida era una mentira?"
+   - BUENO (historia de celular): "¿Alguna vez encontraste algo en el celular de tu pareja que jamás debías ver?"
+   - BUENO (historia de mejor amigo): "¿Sabías que tu mejor amigo de diez años podía hacer algo así a tus espaldas?"
+   - BUENO (historia de trabajo): "¿Alguna vez descubriste que tu jefe usaba el dinero de la empresa para otra vida?"
+   - BUENO (historia de familia): "¿Qué harías si descubrieras que tu propio hermano te estuvo mintiendo durante años?"
+   - REGLA: si el hook puede usarse en otro video de otra historia, NO sirve. Escribe uno que solo funcione AQUI.
 
 2. HISTORIA COMPLETA (cuerpo de la narracion):
    - La PRIMERA frase despues del hook = el momento mas impactante de la historia. GOLPE DIRECTO.
@@ -951,16 +952,16 @@ ESTRUCTURA OBLIGATORIA de script_text:
   3. outro_cta (pregunta específica + llamada a acción, máx 20 palabras)
 
 {{
-  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra TODOS los detalles: quien, que señales hubo, como se descubrio, como reaccionaron, que consecuencias tuvo. Entre 150 y 250 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
-  "title": "titulo viral clickbait en espanol, maximo 100 caracteres",
-  "description": "descripcion SEO 200-400 caracteres en espanol",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "female o male segun quien cuenta la historia",
-  "character_description": "descripcion fisica CONSISTENTE del narrador en ingles. Ej: 'Hispanic woman, late 20s, long dark wavy hair, wearing a white blouse and jeans'",
-  "intro_hook": "pregunta retorica al espectador sobre el tema de esta historia. Ej: '¿Alguna vez creiste conocer bien a alguien y resultó que todo era mentira?'",
-  "hook": "revelacion devastadora de la historia, maxima 12 palabras — primer impacto tras el intro_hook",
-  "pregunta": "pregunta MUY ESPECIFICA al dilema de ESTA historia (PROHIBIDO usar perdonar/que harias). Menciona la accion concreta. Ej: '¿Habrias confrontado a tu pareja enfrente de todos?'",
-  "outro_cta": "pregunta MUY ESPECIFICA del dilema de ESTA historia (PROHIBIDO usar perdonar/que harias) + llamada a accion. Ej infidelidad con amigo: '¿Podrias seguir viendo a esa persona en tu casa despues de lo que hizo? Cuentame abajo.' Ej secreto laboral: '¿Le habrias dicho a tu jefe la verdad o te hubieras quedado callado? Dejamelo en los comentarios.'"
+  "character_description": "descripcion fisica CONSISTENTE del narrador en ingles",
+  "intro_hook": "pregunta especifica de ESTA historia — menciona el objeto/lugar/accion concreto. NO sirve para otra historia.",
+  "hook": "primera frase de impacto de la narracion, maxima 12 palabras",
+  "script_text": "[EMPIEZA con intro_hook. Luego narra TODA la historia en primera persona con todos los detalles, frases cortas conectadas causalmente. Entre 150 y 250 palabras. Termina con outro_cta.]",
+  "pregunta": "pregunta especifica del dilema de ESTA historia (PROHIBIDO: perdonar/que harias en forma generica)",
+  "outro_cta": "pregunta especifica de ESTE conflicto (no generica) + llamada a accion corta",
+  "title": "titulo viral que describe EXACTAMENTE lo que pasa en el script_text, maximo 100 caracteres",
+  "description": "descripcion SEO 200-400 caracteres que resume el conflicto especifico narrado en script_text",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}
 
 REGLAS:
@@ -976,15 +977,16 @@ CAMPOS OBLIGATORIOS: title, description, tags, narrator_gender, character_descri
 
 {{
   "script_text": "[INTRO_HOOK]. [HISTORIA_COMPLETA_CON_TODOS_LOS_DETALLES — 150 a 250 palabras]. [PREGUNTA_ESPECIFICA_SIN_PERDONAR_NI_QUE_HARIAS]? [LLAMADA_A_ACCION].",
-  "title": "titulo viral clickbait en espanol, maximo 100 caracteres",
-  "description": "descripcion SEO 200-400 caracteres en espanol",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
-  "intro_hook": "[PREGUNTA_RETORICA_ESPECIFICA_DE_ESTA_HISTORIA]",
-  "hook": "[PRIMERA_FRASE_DEVASTADORA_DE_ESTA_HISTORIA, maxima 12 palabras]",
-  "pregunta": "[PREGUNTA_ESPECIFICA_AL_DILEMA_DE_ESTA_HISTORIA]",
-  "outro_cta": "[PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION: Dejamelo en comentarios / Cuentame abajo / Dale like si te sorprendio]"
+  "intro_hook": "[pregunta especifica de ESTA historia — menciona el objeto/lugar/accion concreto]",
+  "hook": "[primera frase devastadora, maxima 12 palabras]",
+  "pregunta": "[pregunta especifica del dilema de ESTA historia, NO generica]",
+  "outro_cta": "[pregunta especifica de ESTE conflicto + llamada a accion]",
+  "script_text": "[narracion completa 150-250 palabras, empieza con intro_hook, termina con outro_cta]",
+  "title": "[titulo viral que describe EXACTAMENTE lo narrado en script_text]",
+  "description": "[descripcion SEO 200-400 chars del conflicto narrado]",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}"""
 
 
