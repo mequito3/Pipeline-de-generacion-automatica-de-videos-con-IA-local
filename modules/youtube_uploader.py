@@ -368,12 +368,17 @@ def upload_to_youtube(
             human.human_type(title_input, title)
             human.random_delay(1.0, 2.0)
 
-            # ── Descripción ───────────────────────────────────────────────────
+            # ── Descripción + hashtags ────────────────────────────────────────
             logger.info("Escribiendo descripción...")
             desc_input = driver.find_element(
                 By.CSS_SELECTOR, "#description-textarea #child-input"
             )
-            human.human_type(desc_input, description)
+            # Añadir hashtags al final de la descripción (estándar en YouTube Shorts)
+            hashtags_str = " ".join(
+                t if t.startswith("#") else f"#{t}" for t in (tags or [])
+            )
+            full_description = f"{description}\n\n{hashtags_str}" if hashtags_str else description
+            human.human_type(desc_input, full_description)
             human.random_delay(1.0, 2.0)
 
             # ── No es para niños ──────────────────────────────────────────────
