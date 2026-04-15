@@ -233,27 +233,25 @@ def format_ass_time(seconds: float) -> str:
     return f"{h:01d}:{m:02d}:{s:05.2f}"
 
 
-def _write_ass_file(words_data: list, output_path: Path):
+def _write_ass_file(words_data: list, output_path: Path, audio_duration: float = 0.0):
     """
-    Genera ASS con efecto MÁQUINA DE ESCRIBIR + POP final.
+    Genera ASS con efecto KARAOKE + POP (estilo CapCut viral 2025).
 
-    Por cada palabra:
-      1. Las letras aparecen una por una (40% del tiempo de la palabra)
-      2. Al completarse, la palabra entera hace el bounce POP (60% restante)
+    Muestra grupos de 2-3 palabras simultáneamente:
+    - Palabra activa (la que se está diciendo): amarillo brillante + bounce
+    - Palabras de contexto del mismo grupo: blanco
+    - Palabras de tensión dramática (traición, mentira...): rojo + tamaño mayor
 
-    Implementación:
-      - Se genera un Dialogue por cada "estado" del texto (acumulando letras)
-      - La transición es instantánea entre estados → efecto typewriter
-      - El estado final (palabra completa) lleva las tags \\t de scale bounce
-      - Compatible con libass (FFmpeg) sin librerías adicionales
+    Esto permite al espectador leer con contexto mientras sigue la palabra exacta,
+    mejorando la retención vs el typewriter donde solo hay una palabra visible.
+
+    Compatible con libass/FFmpeg sin dependencias adicionales.
     """
     if not words_data:
         return
 
-    font_size = getattr(config, "SUBTITLE_FONT_SIZE", 88)
-    margin_v = getattr(config, "SUBTITLE_MARGIN_V", 280)
-
-    # Fuente Impact: estándar de Shorts virales (más impactante que Arial Black)
+    font_size     = getattr(config, "SUBTITLE_FONT_SIZE", 88)
+    margin_v      = getattr(config, "SUBTITLE_MARGIN_V", 280)
     subtitle_font = getattr(config, "SUBTITLE_FONT", "Impact")
 
     header = f"""[Script Info]
@@ -264,13 +262,13 @@ YCbCr Matrix: TV.601
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{subtitle_font},{font_size},&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,10,4,5,10,10,{margin_v},1
+Style: Default,{subtitle_font},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,10,4,5,10,10,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    # Palabras de tensión dramática → color rojo brillante + tamaño mayor
+    # Palabras de tensión dramática → rojo brillante cuando son la palabra activa
     TENSION_WORDS = {
         "nunca", "jamás", "traición", "traicionó", "traicionada", "traicionado",
         "llorando", "lloré", "lloró", "destrozado", "destrozada", "destrozó",
@@ -281,81 +279,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "destruyó", "destruí", "perdí", "perdió",
     }
 
-    # Colores ASS: &HAABBGGRR
-    COLOR_NORMAL  = r"\c&H0000FFFF&"   # amarillo (R=FF G=FF B=00)
-    COLOR_TENSION = r"\c&H000000FF&"   # rojo brillante (R=FF G=00 B=00)
+    # Colores ASS: &H00BBGGRR& (AA=00 = completamente opaco)
+    COL_YELLOW = r"\c&H0000FFFF&"  # amarillo — palabra activa
+    COL_RED    = r"\c&H000000FF&"  # rojo     — palabras de tensión dramática
+    COL_WHITE  = r"\c&H00FFFFFF&"  # blanco   — palabras de contexto en el mismo grupo
 
-    MIN_TICK = 0.080  # mínimo 80ms por caracter (más legible)
-    TYPE_FRAC = 0.40  # fracción de la duración dedicada al typing (40%)
-    # WORD_GAP eliminado: _fix_word_timings ya calcula duraciones que terminan
-    # justo antes del inicio de la siguiente palabra. Añadir gap aquí causaba
-    # solapamientos cuando la duración ya era ajustada.
+    # Bounce ligero cuando la palabra activa cambia (110% → 100% en 80ms)
+    BOUNCE = r"\fscx110\fscy110\t(0,80,\fscx100\fscy100)"
 
+    # Borde negro grueso + sombra: legibles sobre cualquier imagen
+    BASE = r"\3c&H000000&\4c&H80000000&\b1\bord10\shad5"
+
+    # Agrupar palabras en chunks de 2-3 usando pausas y puntuación naturales
+    chunks = _group_words_for_display(words_data, max_group=3)
     lines: list[str] = []
 
-    for idx, (word, start, duration) in enumerate(words_data):
-        # end = start + duration exactamente — NO aplicar max(duration, 0.25) aquí.
-        # _fix_word_timings ya garantizó que cada palabra ocupa el espacio disponible
-        # hasta la siguiente. Forzar un mínimo aquí rompe esa garantía y genera
-        # solapamientos entre eventos ASS (dos palabras visibles al mismo tiempo).
-        end = start + duration
-        text = word.upper().strip()
-        if not text:
-            continue
+    for ci, chunk in enumerate(chunks):
+        chunk_upper = [w.upper().strip() for w, _s, _d in chunk]
+        chunk_end   = chunk[-1][1] + chunk[-1][2]
 
-        # Detectar si es palabra de tensión (comparar en minúsculas, sin tildes básicas)
-        word_lower = word.lower().strip(".,!?;:")
-        is_tension = word_lower in TENSION_WORDS
+        # El último subtitle debe cubrir hasta el final real del audio,
+        # porque Whisper/stable-ts subestima la duración de la última palabra
+        if ci == len(chunks) - 1 and audio_duration > 0:
+            chunk_end = max(chunk_end, audio_duration - 0.05)
 
-        # Tamaño: palabras de tensión 10% más grandes
-        fs = font_size + 8 if is_tension else font_size
-        color = COLOR_TENSION if is_tension else COLOR_NORMAL
+        for k, (word, start, _dur) in enumerate(chunk):
+            word_stripped = word.upper().strip()
+            if not word_stripped:
+                continue
 
-        TYPING = (
-            r"{\an2" + color + r"\3c&H000000&\4c&H80000000&\b1\fs" + str(fs) + r"\bord10\shad5}"
-        )
-        FULL = (
-            r"{\an2" + color + r"\3c&H000000&\4c&H80000000&\b1\fs" + str(fs) + r"\bord10\shad5"
-            r"\fscx130\fscy130\t(0,80,\fscx95\fscy95)\t(80,150,\fscx100\fscy100)}"
-        )
+            # Este slot dura hasta que empieza la siguiente palabra (o fin del chunk)
+            end = chunk[k + 1][1] if k + 1 < len(chunk) else chunk_end
 
-        n = len(text)
+            # Detectar si la palabra activa es de tensión dramática
+            word_lower = word.lower().strip(".,!?;:")
+            is_tension = word_lower in TENSION_WORDS
+            active_col = COL_RED if is_tension else COL_YELLOW
+            active_fs  = font_size + 8 if is_tension else font_size
 
-        # Palabras de 1-3 letras o duración corta: solo POP, sin typing
-        if n <= 3 or duration < 0.18:
+            # Construir el texto con colores por palabra:
+            # activa = amarillo/rojo + bounce, contexto = blanco sin bounce
+            parts = []
+            for j, cw in enumerate(chunk_upper):
+                if j == k:
+                    parts.append(f"{{\\fs{active_fs}{active_col}}}{cw}")
+                else:
+                    parts.append(f"{{\\fs{font_size}{COL_WHITE}}}{cw}")
+
+            # Tag de apertura: alineación inferior centro + borde + sombra + bounce
+            open_tag = "{\\an2" + BASE + BOUNCE + "}"
+
             lines.append(
                 f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},"
-                f"Default,,0,0,0,,{FULL}{text}"
+                f"Default,,0,0,0,,{open_tag}{' '.join(parts)}"
             )
-            continue
-
-        # Tiempo disponible para typing y tick por letra
-        type_time = duration * TYPE_FRAC
-        tick = type_time / (n - 1)
-
-        # Si el tick resulta demasiado corto, también sólo POP
-        if tick < MIN_TICK:
-            lines.append(
-                f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},"
-                f"Default,,0,0,0,,{FULL}{text}"
-            )
-            continue
-
-        # ── Frames de typing: letras acumulándose ────────────────────────────
-        for i in range(1, n):
-            t0 = start + (i - 1) * tick
-            t1 = start + i * tick
-            lines.append(
-                f"Dialogue: 0,{format_ass_time(t0)},{format_ass_time(t1)},"
-                f"Default,,0,0,0,,{TYPING}{text[:i]}"
-            )
-
-        # ── Frame final: palabra completa con POP ─────────────────────────────
-        full_start = start + (n - 1) * tick
-        lines.append(
-            f"Dialogue: 0,{format_ass_time(full_start)},{format_ass_time(end)},"
-            f"Default,,0,0,0,,{FULL}{text}"
-        )
 
     output_path.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")
 
@@ -615,8 +592,15 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str) -> None:
     # ── Post-procesar: eliminar solapamientos y garantizar duración mínima ─────
     timed_words = _fix_word_timings(timed_words)
 
+    # Duración real del audio para que el último subtítulo no se corte
+    try:
+        from pydub import AudioSegment as _AS
+        audio_dur = len(_AS.from_mp3(str(output_mp3))) / 1000.0
+    except Exception:
+        audio_dur = 0.0
+
     ass_path = output_mp3.with_suffix(".ass")
-    _write_ass_file(timed_words, ass_path)
+    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur)
     if timed_words:
         logger.info(f"ASS generado: {len(timed_words)} palabras sincronizadas")
 
@@ -645,14 +629,18 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     configured_voice = getattr(config, "TTS_EDGE_VOICE", None)
     if gender == "male":
         ordered = EDGE_VOICES_MALE + EDGE_VOICES_FEMALE
-        logger.info(f"Voz seleccionada: MASCULINA ({EDGE_VOICES_MALE[0]})")
     else:
         ordered = EDGE_VOICES_FEMALE + EDGE_VOICES_MALE
-        logger.info(f"Voz seleccionada: FEMENINA ({EDGE_VOICES_FEMALE[0]})")
 
-    # Si hay voz configurada manualmente, meterla primero
+    # Si hay voz configurada manualmente y NO está ya en la lista, meterla primero
     if configured_voice and configured_voice not in ordered:
         ordered = [configured_voice] + ordered
+
+    gender_label = "MASCULINO" if gender == "male" else "FEMENINO"
+    logger.info(
+        f"Narrador detectado: {gender_label} → voz principal: '{ordered[0]}' "
+        f"(fallbacks: {ordered[1:3]})"
+    )
 
     last_error = None
     for voice in ordered:
@@ -870,7 +858,7 @@ def generate_audio(
             words = text.split()
             w_dur = dur / max(1, len(words))
             mock_words = _fix_word_timings([(w, i * w_dur, w_dur) for i, w in enumerate(words)])
-            _write_ass_file(mock_words, ass_path)
+            _write_ass_file(mock_words, ass_path, audio_duration=dur)
 
     # Log duración
     try:

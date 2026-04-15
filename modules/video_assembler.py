@@ -39,6 +39,7 @@ def _find_font() -> str:
     for fp in config.FONTS_DIR.glob("*.ttf"):
         return str(fp)
     for fp in [
+        "C:/Windows/Fonts/impact.ttf",    # Impact — estándar viral de Shorts
         "C:/Windows/Fonts/arialbd.ttf",
         "C:/Windows/Fonts/verdanab.ttf",
         "C:/Windows/Fonts/calibrib.ttf",
@@ -256,15 +257,15 @@ def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image
     sep_y = q_y + block_h + 24
     draw.rectangle([80, sep_y, W - 80, sep_y + 3], fill=GOLD)
 
-    # CTA: comenta
-    cta1     = "Comenta tu respuesta abajo"
+    # CTA: comenta (rotativo)
+    cta1     = random.choice(getattr(config, "CTA_COMMENTS", ["Comenta tu respuesta abajo"]))
     c1_bbox  = draw.textbbox((0, 0), cta1, font=font_cta)
     c1_x     = (W - (c1_bbox[2] - c1_bbox[0])) // 2
     cta1_y   = sep_y + 36
     _draw_text_with_stroke(draw, c1_x, cta1_y, cta1, font_cta, WHITE, 2)
 
-    # CTA: sígueme
-    cta2    = "Sigueme para mas historias reales"
+    # CTA: sígueme (rotativo)
+    cta2    = random.choice(getattr(config, "CTA_FOLLOW", ["Sígueme para más historias reales"]))
     c2_bbox = draw.textbbox((0, 0), cta2, font=font_follow)
     c2_x    = (W - (c2_bbox[2] - c2_bbox[0])) // 2
     cta2_y  = cta1_y + 70
@@ -687,7 +688,18 @@ def assemble_video(
             str(padded_audio),
             desc="audio padding outro",
         )
-        final_audio = padded_audio
+        # Pre-delay audio: añadir silencio al inicio equivalente a la intro.
+        # Más confiable que -itsoffset, que falla con NVENC + filter chains.
+        intro_ms      = int(config.INTRO_DURATION * 1000)
+        audio_delayed = tmp_dir / "audio_delayed.aac"
+        _ffmpeg(
+            "-i", str(padded_audio),
+            "-af", f"adelay={intro_ms}:all=1",
+            "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+            str(audio_delayed),
+            desc="audio delay intro",
+        )
+        final_audio = audio_delayed
 
         ass_path  = audio_path.with_suffix(".ass")
         filters   = []          # lista de filtros vf que se unirán con coma
@@ -728,7 +740,7 @@ def assemble_video(
 
         _ffmpeg(
             "-i", str(concat_mp4),
-            "-itsoffset", str(config.INTRO_DURATION), "-i", str(final_audio),
+            "-i", str(final_audio),   # audio ya lleva silencio al inicio (adelay)
             *vf_args,
             "-map", "0:v", "-map", "1:a",
             "-c:v", "h264_nvenc", "-preset", "p6", "-cq", "20",

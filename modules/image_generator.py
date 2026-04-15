@@ -1,10 +1,9 @@
 """
 image_generator.py — Genera imágenes 1080x1920 para cada escena del script
 
-Dos rutas según el prompt:
-  1. Logo/marca detectada  → PIL composite (instantáneo, texto 100% correcto)
-  2. Escena visual         → ComfyUI Z-Image Turbo (~20-30s, IA local)
-  3. Sin ComfyUI disponible → PIL fallback con gradiente oscuro
+Rutas según disponibilidad:
+  1. Escena visual → ComfyUI Z-Image Turbo (~20-30s, IA local)
+  2. Sin ComfyUI   → PIL fallback con gradiente oscuro
 """
 
 import copy
@@ -44,6 +43,7 @@ def _find_font(size: int = 60) -> ImageFont.FreeTypeFont:
         except Exception:
             pass
     for fp in [
+        "C:/Windows/Fonts/impact.ttf",    # Impact — estándar viral de Shorts
         "C:/Windows/Fonts/arialbd.ttf",
         "C:/Windows/Fonts/verdanab.ttf",
         "C:/Windows/Fonts/calibrib.ttf",
@@ -56,465 +56,6 @@ def _find_font(size: int = 60) -> ImageFont.FreeTypeFont:
                 pass
     return ImageFont.load_default()
 
-
-# ─── PIL: Logos de marcas y criptomonedas ─────────────────────────────────────
-
-_LOGO_DATA: dict[str, dict] = {
-    # Criptomonedas
-    "bitcoin":    {"color": (247, 147,  26), "symbol": "₿", "name": "BITCOIN"},
-    "btc":        {"color": (247, 147,  26), "symbol": "₿", "name": "BTC"},
-    "ethereum":   {"color": ( 98, 126, 234), "symbol": "Ξ", "name": "ETHEREUM"},
-    "eth":        {"color": ( 98, 126, 234), "symbol": "Ξ", "name": "ETH"},
-    "solana":     {"color": (153,  69, 255), "symbol": "◎", "name": "SOLANA"},
-    "sol":        {"color": (153,  69, 255), "symbol": "◎", "name": "SOL"},
-    "bnb":        {"color": (243, 186,  47), "symbol": "◈", "name": "BNB"},
-    "xrp":        {"color": (  0, 170, 228), "symbol": "✕", "name": "XRP"},
-    "ripple":     {"color": (  0, 170, 228), "symbol": "✕", "name": "RIPPLE"},
-    "cardano":    {"color": (  0,  51, 173), "symbol": "₳", "name": "CARDANO"},
-    "ada":        {"color": (  0,  51, 173), "symbol": "₳", "name": "ADA"},
-    "dogecoin":   {"color": (195, 166,  52), "symbol": "Ð", "name": "DOGECOIN"},
-    "doge":       {"color": (195, 166,  52), "symbol": "Ð", "name": "DOGE"},
-    "polkadot":   {"color": (230,   0, 122), "symbol": "●", "name": "POLKADOT"},
-    "dot":        {"color": (230,   0, 122), "symbol": "●", "name": "DOT"},
-    "litecoin":   {"color": (191, 187, 187), "symbol": "Ł", "name": "LITECOIN"},
-    "ltc":        {"color": (191, 187, 187), "symbol": "Ł", "name": "LTC"},
-    "avalanche":  {"color": (232,  65,  66), "symbol": "▲", "name": "AVALANCHE"},
-    "avax":       {"color": (232,  65,  66), "symbol": "▲", "name": "AVAX"},
-    "polygon":    {"color": (130,  71, 229), "symbol": "◆", "name": "POLYGON"},
-    "matic":      {"color": (130,  71, 229), "symbol": "◆", "name": "MATIC"},
-    "chainlink":  {"color": ( 55,  91, 210), "symbol": "⬡", "name": "CHAINLINK"},
-    "link":       {"color": ( 55,  91, 210), "symbol": "⬡", "name": "LINK"},
-    "tether":     {"color": ( 38, 161, 123), "symbol": "₮", "name": "TETHER"},
-    "usdt":       {"color": ( 38, 161, 123), "symbol": "₮", "name": "USDT"},
-    "usdc":       {"color": ( 39, 117, 202), "symbol": "$", "name": "USDC"},
-    # Monedas fiat (inglés y español)
-    "dollar":     {"color": (133, 187, 101), "symbol": "$", "name": "DOLLAR"},
-    "dolar":      {"color": (133, 187, 101), "symbol": "$", "name": "DÓLAR"},
-    "dolares":    {"color": (133, 187, 101), "symbol": "$", "name": "DÓLARES"},
-    "usd":        {"color": (133, 187, 101), "symbol": "$", "name": "USD"},
-    "euro":       {"color": (  0,  82, 162), "symbol": "€", "name": "EURO"},
-    "euros":      {"color": (  0,  82, 162), "symbol": "€", "name": "EUROS"},
-    # Exchanges y wallets
-    "binance":    {"color": (243, 186,  47), "symbol": "◈", "name": "BINANCE"},
-    "coinbase":   {"color": (  0,  82, 255), "symbol": "◉", "name": "COINBASE"},
-    "kraken":     {"color": ( 87,  65, 217), "symbol": "◈", "name": "KRAKEN"},
-    "kucoin":     {"color": (  0, 168, 107), "symbol": "◈", "name": "KUCOIN"},
-    "bybit":      {"color": (247, 166,   0), "symbol": "◈", "name": "BYBIT"},
-    "okx":        {"color": (255, 255, 255), "symbol": "◈", "name": "OKX"},
-    "uniswap":    {"color": (255,   0, 122), "symbol": "◈", "name": "UNISWAP"},
-    "metamask":   {"color": (232, 131,  29), "symbol": "M", "name": "METAMASK"},
-    "ledger":     {"color": (200, 200, 200), "symbol": "⬡", "name": "LEDGER"},
-    "trezor":     {"color": (  0, 133,  77), "symbol": "⬡", "name": "TREZOR"},
-}
-
-# Pre-ordenado de más largo a más corto para que "ethereum" match antes que "eth"
-_LOGO_KEYS: list[str] = sorted(_LOGO_DATA, key=len, reverse=True)
-
-# ─── Logos PNG reales (cryptocurrency-icons) ──────────────────────────────────
-
-# Mapeo clave → símbolo en el repo spothq/cryptocurrency-icons
-# None = sin PNG disponible (usa fallback círculo mejorado)
-_ICON_SYMBOL: dict[str, str | None] = {
-    "bitcoin":   "btc",   "btc":       "btc",
-    "ethereum":  "eth",   "eth":       "eth",
-    "solana":    "sol",   "sol":       "sol",
-    "bnb":       "bnb",
-    "xrp":       "xrp",   "ripple":    "xrp",
-    "cardano":   "ada",   "ada":       "ada",
-    "dogecoin":  "doge",  "doge":      "doge",
-    "polkadot":  "dot",   "dot":       "dot",
-    "litecoin":  "ltc",   "ltc":       "ltc",
-    "avalanche": "avax",  "avax":      "avax",
-    "polygon":   "matic", "matic":     "matic",
-    "chainlink": "link",  "link":      "link",
-    "tether":    "usdt",  "usdt":      "usdt",
-    "usdc":      "usdc",
-    # Sin PNG en cryptocurrency-icons — círculo mejorado
-    "dollar":    None, "dolar":  None, "dolares": None,
-    "usd":       None, "euro":   None, "euros":   None,
-    "binance":   None, "coinbase": None, "kraken": None,
-    "kucoin":    None, "bybit":  None, "okx":     None,
-    "uniswap":   None, "metamask": None, "ledger": None,
-    "trezor":    None,
-}
-
-_ICON_BASE_URL = (
-    "https://raw.githubusercontent.com/spothq/cryptocurrency-icons"
-    "/master/128/color/{symbol}.png"
-)
-# Logos de exchanges y fiat desde CoinGecko CDN (no están en cryptocurrency-icons)
-_COINGECKO_URLS: dict[str, str] = {
-    # Exchanges — imagen large (200px) vía coins API cuando disponible
-    "binance":  "https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png",   # BNB = Binance
-    "coinbase": "https://assets.coingecko.com/markets/images/23/large/Coinbase_Coin_Primary.png",
-    "kraken":   "https://assets.coingecko.com/markets/images/29/large/kraken.jpg",
-    "kucoin":   "https://assets.coingecko.com/markets/images/61/large/kucoin.jpg",
-    "okx":      "https://assets.coingecko.com/markets/images/96/large/WeChat_Image_20220117220452.png",
-    "uniswap":  "https://assets.coingecko.com/coins/images/12504/large/uniswap-uni.png",
-}
-_LOGOS_DIR = config.ASSETS_DIR / "logos"
-_logo_cache: dict[str, "Image.Image | None"] = {}
-
-
-def _get_logo_png(key: str) -> "Image.Image | None":
-    """
-    Retorna el logo PNG oficial (RGBA).
-    Fuentes por prioridad:
-      1. Disco local (assets/logos/)
-      2. cryptocurrency-icons (GitHub) — coins principales
-      3. CoinGecko CDN — exchanges y otros
-    Retorna None si ninguna fuente tiene el logo.
-    """
-    if key in _logo_cache:
-        return _logo_cache[key]
-
-    symbol   = _ICON_SYMBOL.get(key)
-    cg_url   = _COINGECKO_URLS.get(key)
-    filename = f"{symbol or key}.png"
-
-    _LOGOS_DIR.mkdir(parents=True, exist_ok=True)
-    local = _LOGOS_DIR / filename
-
-    # ── Cargar desde disco ────────────────────────────────────────────────────
-    if local.exists():
-        try:
-            img = Image.open(str(local)).convert("RGBA")
-            _logo_cache[key] = img
-            return img
-        except Exception:
-            local.unlink(missing_ok=True)
-
-    # ── Descargar desde cryptocurrency-icons ──────────────────────────────────
-    if symbol:
-        url = _ICON_BASE_URL.format(symbol=symbol)
-        img = _download_logo(url, local, key)
-        if img:
-            return img
-
-    # ── Descargar desde CoinGecko CDN ─────────────────────────────────────────
-    if cg_url:
-        img = _download_logo(cg_url, local, key)
-        if img:
-            return img
-
-    _logo_cache[key] = None
-    return None
-
-
-def _download_logo(url: str, local: Path, key: str) -> "Image.Image | None":
-    """Descarga un logo desde `url`, lo guarda en `local` y lo retorna como RGBA."""
-    try:
-        resp = requests.get(url, timeout=12)
-        if resp.status_code == 200:
-            local.write_bytes(resp.content)
-            img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-            _logo_cache[key] = img
-            logger.info(f"Logo descargado: {local.name} ({len(resp.content)//1024}KB)")
-            return img
-        logger.warning(f"Logo {key}: HTTP {resp.status_code} ({url[:60]})")
-    except Exception as e:
-        logger.warning(f"No se pudo descargar logo {key}: {e}")
-    return None
-
-
-def _parse_logos(prompt: str) -> list[str]:
-    """
-    Detecta marcas/cryptos en el prompt → PIL (texto siempre correcto).
-    Usa word-boundary para evitar falsos positivos: "sol" no matchea "solar".
-    """
-    pl = prompt.lower()
-    found, seen = [], set()
-    for kw in _LOGO_KEYS:
-        if re.search(r'\b' + re.escape(kw) + r'\b', pl):
-            name = _LOGO_DATA[kw]["name"]
-            if name not in seen:
-                found.append(kw)
-                seen.add(name)
-    return found[:4]
-
-
-def _draw_logo_composite(brands: list[str], output_path: Path) -> str:
-    """
-    Genera imagen estilo motion graphics profesional — 14 capas.
-
-      1.  Fondo degradado profundo
-      2.  Spotlight radial (color promedio de marcas)
-      3.  Partículas bokeh deterministas
-      4.  Grid tech blockchain
-      5.  Anillos ripple/radar por logo
-      6.  Glow exterior amplio
-      7.  Glow interior (halo tight)
-      8.  Glassmorphism card
-      9.  Logo PNG (o círculo fallback)
-      10. Shine diagonal recortado al alpha del logo
-      11. Reflejo inferior (n=1 únicamente)
-      12. Badge broadcast (pill gradiente)
-      13. Corner bracket accents
-      14. Conector "+" estilizado (n=2)
-    """
-    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    n    = len(brands)
-    rng  = random.Random(sum(ord(c) for c in "".join(brands)))
-
-    # ── 1. Fondo: degradado azul-negro profundo ───────────────────────────────
-    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
-    draw   = ImageDraw.Draw(canvas)
-    for y in range(H):
-        t = y / H
-        draw.line([(0, y), (W, y)], fill=(
-            int(2  + 8  * t),
-            int(2  + 7  * t),
-            int(12 + 22 * t), 255,
-        ))
-
-    # ── 2. Spotlight radial global ────────────────────────────────────────────
-    avg_col = tuple(
-        sum(_LOGO_DATA.get(b, {"color": (150, 150, 150)})["color"][i]
-            for b in brands) // n
-        for i in range(3)
-    )
-    spotlight = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sl_d = ImageDraw.Draw(spotlight)
-    for r_sp, a_sp in [(700, 28), (500, 22), (320, 15)]:
-        sl_d.ellipse([W//2 - r_sp, H//2 - r_sp, W//2 + r_sp, H//2 + r_sp],
-                     fill=(*avg_col, a_sp))
-    spotlight = spotlight.filter(ImageFilter.GaussianBlur(radius=120))
-    canvas = Image.alpha_composite(canvas, spotlight)
-
-    # ── 3. Partículas bokeh (deterministas — mismo brand = mismo patrón) ──────
-    bokeh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    bk_d  = ImageDraw.Draw(bokeh)
-    for _ in range(55):
-        bx  = rng.randint(0, W)
-        by  = rng.randint(0, H)
-        br  = rng.randint(3, 18)
-        ba  = rng.randint(18, 75)
-        bc  = _LOGO_DATA.get(brands[rng.randint(0, n - 1)],
-                              {"color": avg_col})["color"]
-        bk_d.ellipse([bx - br, by - br, bx + br, by + br], fill=(*bc, ba))
-    bokeh = bokeh.filter(ImageFilter.GaussianBlur(radius=5))
-    canvas = Image.alpha_composite(canvas, bokeh)
-
-    # ── 4. Grid tech: líneas + nodos ─────────────────────────────────────────
-    grid = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd   = ImageDraw.Draw(grid)
-    gs   = 88
-    for x in range(0, W + gs, gs):
-        gd.line([(x, 0), (x, H)], fill=(255, 255, 255, 12), width=1)
-    for y in range(0, H + gs, gs):
-        gd.line([(0, y), (W, y)], fill=(255, 255, 255, 12), width=1)
-    for xi in range(0, W + gs, gs):
-        for yi in range(0, H + gs, gs):
-            if (xi // gs + yi // gs) % 3 == 0:
-                gd.ellipse([xi - 3, yi - 3, xi + 3, yi + 3],
-                           fill=(255, 255, 255, 30))
-    canvas = Image.alpha_composite(canvas, grid)
-
-    # ── Layout según cantidad de marcas ───────────────────────────────────────
-    if n == 1:
-        slots     = [(W // 2, H // 2 - 60)]
-        logo_size = 480
-        card_w    = 620
-        card_h    = 720
-    elif n == 2:
-        slots     = [(W // 3, H // 2), (2 * W // 3, H // 2)]
-        logo_size = 340
-        card_w    = 390
-        card_h    = 530
-    elif n == 3:
-        slots     = [(W // 4, H // 2), (W // 2, H // 2), (3 * W // 4, H // 2)]
-        logo_size = 260
-        card_w    = 290
-        card_h    = 420
-    else:
-        slots     = [(W//4, H//3), (3*W//4, H//3),
-                     (W//4, 2*H//3), (3*W//4, 2*H//3)]
-        logo_size = 230
-        card_w    = 260
-        card_h    = 380
-
-    badge_font = _find_font(max(36, logo_size // 8))
-
-    for (cx, cy), key in zip(slots, brands):
-        d   = _LOGO_DATA.get(key, {"color": (150, 150, 150),
-                                   "symbol": "?", "name": key.upper()})
-        col = d["color"]
-
-        # ── 5. Anillos ripple/radar ────────────────────────────────────────────
-        rings = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        rr_d  = ImageDraw.Draw(rings)
-        for i, factor in enumerate([0.65, 0.92, 1.28, 1.65, 2.08]):
-            rr    = int(logo_size * factor)
-            r_alp = max(5, 55 - i * 10)
-            r_thk = max(1, 3 - i)
-            rr_d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
-                         outline=(*col, r_alp), width=r_thk)
-        rings = rings.filter(ImageFilter.GaussianBlur(radius=2))
-        canvas = Image.alpha_composite(canvas, rings)
-
-        # ── 6. Glow exterior amplio ────────────────────────────────────────────
-        glow_out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        go_d     = ImageDraw.Draw(glow_out)
-        for g_rad, g_alp in [
-            (int(logo_size * 1.8), 55),
-            (int(logo_size * 1.3), 42),
-            (int(logo_size * 0.9), 28),
-        ]:
-            go_d.ellipse([cx - g_rad, cy - g_rad, cx + g_rad, cy + g_rad],
-                         fill=(*col, g_alp))
-        glow_out = glow_out.filter(ImageFilter.GaussianBlur(radius=55))
-        canvas = Image.alpha_composite(canvas, glow_out)
-
-        # ── 7. Glow interior (halo tight) ─────────────────────────────────────
-        glow_in = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        gi_d    = ImageDraw.Draw(glow_in)
-        hr = logo_size // 2 + 30
-        gi_d.ellipse([cx - hr, cy - hr, cx + hr, cy + hr], fill=(*col, 70))
-        glow_in = glow_in.filter(ImageFilter.GaussianBlur(radius=18))
-        canvas  = Image.alpha_composite(canvas, glow_in)
-
-        # ── 8. Glassmorphism card ──────────────────────────────────────────────
-        logo_y = cy - 35
-        x0 = cx - card_w // 2
-        y0 = cy - card_h // 2
-        x1 = cx + card_w // 2
-        y1 = cy + card_h // 2
-
-        card = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        cd   = ImageDraw.Draw(card)
-        cd.rounded_rectangle([x0, y0, x1, y1], radius=38,
-                              fill=(8, 10, 24, 160))
-        cd.rounded_rectangle([x0, y0, x1, y1], radius=38,
-                              outline=(255, 255, 255, 40), width=1)
-        # Accent bar superior
-        cd.rounded_rectangle([x0 + 6, y0 + 6, x1 - 6, y0 + 54], radius=32,
-                              fill=(*col, 80))
-        # Left neon stripe
-        cd.rounded_rectangle([x0, y0 + 24, x0 + 5, y1 - 24], radius=4,
-                              fill=(*col, 210))
-        # Interior shine highlight
-        cd.rounded_rectangle([x0 + 6, y0 + 6, x1 - 6, y0 + 55], radius=34,
-                              fill=(255, 255, 255, 18))
-        canvas = Image.alpha_composite(canvas, card)
-
-        # ── 9. Logo PNG real (o círculo fallback) ──────────────────────────────
-        logo_png = _get_logo_png(key)
-        px = cx - logo_size // 2
-        py = logo_y - logo_size // 2
-
-        if logo_png is not None:
-            sized = logo_png.resize((logo_size, logo_size), Image.LANCZOS)
-            canvas.paste(sized, (px, py), sized)
-
-            # ── 10. Shine diagonal recortado al alpha del logo ─────────────────
-            shine = Image.new("RGBA", (logo_size, logo_size), (0, 0, 0, 0))
-            sh_d  = ImageDraw.Draw(shine)
-            for sx in range(0, logo_size, 6):
-                sa = max(0, int(155 * (
-                    1 - abs(sx - logo_size * 0.35) / (logo_size * 0.45)
-                )))
-                sh_d.line([(sx, 0), (sx, logo_size)],
-                          fill=(255, 255, 255, sa), width=3)
-            shine = shine.rotate(-38, expand=False)
-            shine = shine.filter(ImageFilter.GaussianBlur(radius=3))
-            logo_alpha = sized.split()[3]
-            shine_alpha = ImageChops.multiply(shine.split()[3], logo_alpha)
-            shine.putalpha(shine_alpha)
-            shine_full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            shine_full.paste(shine, (px, py), shine)
-            canvas = Image.alpha_composite(canvas, shine_full)
-
-            # ── 11. Reflejo inferior (solo n=1) ────────────────────────────────
-            if n == 1:
-                reflect = sized.transpose(Image.FLIP_TOP_BOTTOM)
-                fade_mask = Image.new("L", (logo_size, logo_size), 0)
-                fm_d = ImageDraw.Draw(fade_mask)
-                half = logo_size // 2
-                for fy in range(half):
-                    fm_d.line([(0, fy), (logo_size, fy)],
-                              fill=int(65 * (1 - fy / half)))
-                reflect.putalpha(fade_mask)
-                ry = logo_y + logo_size // 2 + 8
-                ref_full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-                ref_full.paste(reflect, (px, ry), reflect)
-                canvas = Image.alpha_composite(canvas, ref_full)
-        else:
-            # Fallback: círculo mejorado + símbolo Unicode
-            r      = logo_size // 2
-            circ   = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            circ_d = ImageDraw.Draw(circ)
-            circ_d.ellipse([cx - r, logo_y - r, cx + r, logo_y + r],
-                           fill=(*col, 255), outline=(255, 255, 255, 200), width=5)
-            canvas = Image.alpha_composite(canvas, circ)
-            f_sym  = _find_font(int(r * 0.70))
-            sym    = d["symbol"]
-            sym_d  = ImageDraw.Draw(canvas)
-            sb     = sym_d.textbbox((0, 0), sym, font=f_sym)
-            sym_d.text(
-                (cx - (sb[2] - sb[0]) // 2 - sb[0],
-                 logo_y - (sb[3] - sb[1]) // 2 - sb[1]),
-                sym, fill=(255, 255, 255, 255), font=f_sym,
-            )
-
-        # ── 12. Badge broadcast (pill con color de marca) ──────────────────────
-        name   = d["name"]
-        bd_d   = ImageDraw.Draw(canvas)
-        nb     = bd_d.textbbox((0, 0), name, font=badge_font)
-        nw, nh = nb[2] - nb[0], nb[3] - nb[1]
-        bpad_x, bpad_y = 32, 14
-        bx0 = cx - nw // 2 - bpad_x
-        by0 = logo_y + logo_size // 2 + 32
-        bx1 = cx + nw // 2 + bpad_x
-        by1 = by0 + nh + bpad_y * 2
-
-        pill_lyr = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ImageDraw.Draw(pill_lyr).rounded_rectangle(
-            [bx0, by0, bx1, by1], radius=28,
-            fill=(*col, 210), outline=(255, 255, 255, 65), width=2,
-        )
-        canvas = Image.alpha_composite(canvas, pill_lyr)
-        ImageDraw.Draw(canvas).text(
-            (cx - nw // 2 - nb[0], by0 + bpad_y - nb[1]),
-            name, fill=(255, 255, 255, 255), font=badge_font,
-        )
-
-        # ── 13. Corner bracket accents ─────────────────────────────────────────
-        brk   = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        bk_d  = ImageDraw.Draw(brk)
-        arm   = 28
-        thk   = 3
-        ba_c  = (*col, 200)
-        for (bkx, bky), (sx, sy) in zip(
-            [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
-            [(1, 1),   (-1, 1),  (1, -1),  (-1, -1)],
-        ):
-            bk_d.line([(bkx, bky), (bkx + sx * arm, bky)],
-                      fill=ba_c, width=thk)
-            bk_d.line([(bkx, bky), (bkx, bky + sy * arm)],
-                      fill=ba_c, width=thk)
-        canvas = Image.alpha_composite(canvas, brk)
-
-    # ── 14. Conector "+" estilizado (n=2) ─────────────────────────────────────
-    if n == 2:
-        f_plus = _find_font(100)
-        pd     = ImageDraw.Draw(canvas)
-        pb     = pd.textbbox((0, 0), "+", font=f_plus)
-        c1     = _LOGO_DATA.get(brands[0], {"color": (200, 200, 200)})["color"]
-        c2     = _LOGO_DATA.get(brands[1], {"color": (200, 200, 200)})["color"]
-        avg2   = tuple((a + b) // 2 for a, b in zip(c1, c2))
-        pcx    = W // 2 - (pb[2] - pb[0]) // 2 - pb[0]
-        pcy    = H // 2 - (pb[3] - pb[1]) // 2 - pb[1]
-        pd.text((pcx + 4, pcy + 4), "+", fill=(0, 0, 0, 160), font=f_plus)
-        pd.text((pcx, pcy),         "+", fill=(*avg2, 240),    font=f_plus)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("RGB").save(str(output_path), "PNG", optimize=True)
-    names = [_LOGO_DATA.get(b, {}).get("name", b) for b in brands]
-    logger.info(f"Logo composite → {output_path.name} ({' + '.join(names)})")
-    return str(output_path)
-
-
-# ─── ComfyUI Z-Image Turbo ────────────────────────────────────────────────────
 
 def detect_sd_backend() -> str:
     """
@@ -632,7 +173,7 @@ def _enrich_prompt(raw: str, character_description: str = "", gender: str = "") 
     )
 
 
-_WORKFLOW_JSON = Path(r"C:\Users\ameri\Downloads\generador_imagnes_correcot.json")
+_WORKFLOW_JSON = config.COMFYUI_WORKFLOW_PATH
 
 def _build_z_image_workflow(prompt: str, seed: int) -> dict:
     """Workflow Z-Image Turbo para ComfyUI API — cargado desde el JSON del usuario."""
@@ -802,12 +343,10 @@ def generate_images(
 
     Optimizaciones:
       - Deduplicación de prompts: escenas con el mismo prompt comparten la imagen generada
-      - Submit-all-then-poll: todos los prompts ComfyUI se encolan a la vez y se sondean en paralelo
 
     Rutas por escena:
-      1. Prompt con logo/marca → PIL composite (instantáneo, texto correcto)
-      2. Prompt visual         → ComfyUI batch (dedup + poll simultáneo)
-      3. Sin ComfyUI           → PIL fallback con gradiente oscuro
+      1. Prompt visual → ComfyUI batch (dedup + poll simultáneo)
+      2. Sin ComfyUI   → PIL fallback con gradiente oscuro
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -826,12 +365,10 @@ def generate_images(
     )
     start = time.time()
 
-    # ── Paso 1: PIL (logos e fallback) + clasificar cuáles van a ComfyUI ─────
-    # prompt_cache: prompt_str → ruta PNG ya generada (evita duplicados PIL también)
-    prompt_cache: dict[str, str] = {}
+    # ── Paso 1: Clasificar escenas → ComfyUI o PIL fallback ───────────────────
     # comfyui_jobs: prompt → [(scene_idx, output_path)] — agrupa duplicados
     comfyui_jobs: dict[str, list[tuple[int, Path]]] = {}
-    # unique_count: cuántos prompts ÚNICOS llevamos (para el cap de SD_MAX_IMAGES)
+    # unique_prompts_seen: control del cap de SD_MAX_IMAGES
     unique_prompts_seen: list[str] = []
 
     for i, scene in enumerate(scenes):
@@ -845,40 +382,21 @@ def generate_images(
         raw    = scene.get("image_prompt") or scene.get("text") or "dark background"
         prompt = raw.strip()
 
-        # ── Cap de imágenes únicas: si ya tenemos max_unique prompts distintos,
-        #    reciclar la imagen más cercana ya encolada (evita N×SD_TURBO_STEPS extra)
+        # ── Cap de imágenes únicas: reciclar si ya alcanzamos el máximo ───────
         if prompt not in unique_prompts_seen and prompt not in comfyui_jobs:
             if len(unique_prompts_seen) >= max_unique and unique_prompts_seen:
-                # Asignar al primer prompt ya registrado (round-robin)
                 recycled = unique_prompts_seen[i % len(unique_prompts_seen)]
                 comfyui_jobs.setdefault(recycled, []).append((i, out))
                 logger.debug(f"Escena {i}: prompt reciclado (límite {max_unique} alcanzado)")
                 continue
             unique_prompts_seen.append(prompt)
 
-        # ── Ruta 1: PIL logos ─────────────────────────────────────────────────
-        logos = _parse_logos(prompt)
-        if logos:
-            if prompt in prompt_cache:
-                shutil.copy2(prompt_cache[prompt], str(out))
-                image_paths[i] = str(out)
-                logger.info(f"Logo reutilizado: {out.name}")
-            else:
-                try:
-                    result = _draw_logo_composite(logos, out)
-                    image_paths[i] = result
-                    prompt_cache[prompt] = result
-                except Exception as e:
-                    logger.error(f"Error logo escena {i}: {e}")
-                    image_paths[i] = _pil_fallback(scene.get("text", ""), out, i)
-            continue
-
-        # ── Ruta 2: ComfyUI — acumular para batch ─────────────────────────────
+        # ── Ruta 1: ComfyUI — acumular para batch ─────────────────────────────
         if backend == "comfyui":
             comfyui_jobs.setdefault(prompt, []).append((i, out))
             continue
 
-        # ── Ruta 3: PIL fallback ──────────────────────────────────────────────
+        # ── Ruta 2: PIL fallback ──────────────────────────────────────────────
         try:
             image_paths[i] = _pil_fallback(scene.get("text", prompt), out, i)
         except Exception as e:
