@@ -363,6 +363,60 @@ def _try_parse_json(text: str) -> dict:
     )
 
 
+def _call_groq(
+    prompt_user: str,
+    attempt: int,
+    system_prompt: str,
+    max_tokens: int,
+) -> str:
+    """
+    Llama a Groq (cloud gratuito) via API OpenAI-compatible.
+
+    Tier gratuito: 500k tokens/día, 6000 tokens/min, 30 req/min.
+    Lanza RuntimeError si la cuota se agota (status 429) o hay error de red,
+    para que el caller pueda caer a Ollama local.
+    """
+    api_key    = getattr(config, "GROQ_API_KEY", "")
+    groq_model = getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    logger.info(f"Llamando a Groq [{groq_model}] — intento {attempt} — max_tokens={max_tokens}")
+    print(f"   Generando con Groq ({groq_model})... ", end="", flush=True)
+
+    start_ts = time.time()
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": groq_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": prompt_user},
+            ],
+            "temperature": 0.8,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=60,
+    )
+
+    elapsed = time.time() - start_ts
+
+    if resp.status_code == 429:
+        retry_after = resp.headers.get("retry-after", "?")
+        raise RuntimeError(
+            f"Groq: límite de tasa o cuota agotada (retry-after: {retry_after}s) — usando Ollama local"
+        )
+
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    print(f" {len(content)} chars ({elapsed:.0f}s) — Groq")
+    logger.info(f"Groq respondió: {len(content)} chars en {elapsed:.0f}s")
+    return content
+
+
 def _call_ollama(
     prompt_user: str,
     attempt: int = 1,
@@ -371,18 +425,31 @@ def _call_ollama(
     max_tokens: int = 650,
 ) -> str:
     """
-    Llama a Ollama con streaming para mostrar progreso en tiempo real.
+    Intenta Groq (cloud gratuito) primero; si falla, usa Ollama local.
 
     Args:
         prompt_user: Prompt del usuario
         attempt: Numero de intento (para logging)
-        model: Nombre exacto del modelo. Si es None usa config.OLLAMA_MODEL.
-        system_prompt: System prompt a usar. Si es None usa SYSTEM_PROMPT global.
-        max_tokens: Tokens maximos a generar. 900 es suficiente para JSON completo.
+        model: Modelo Ollama. Si es None usa config.OLLAMA_MODEL.
+        system_prompt: System prompt. Si es None usa SYSTEM_PROMPT global.
+        max_tokens: Tokens maximos a generar.
 
     Returns:
         Texto completo de respuesta del modelo
     """
+    sys_prompt = system_prompt or SYSTEM_PROMPT
+
+    # ── Groq primero (cloud gratuito, más rápido y capaz) ──────────────────────
+    groq_key = getattr(config, "GROQ_API_KEY", "")
+    if groq_key:
+        try:
+            return _call_groq(prompt_user, attempt, sys_prompt, max_tokens)
+        except RuntimeError as e:
+            logger.warning(str(e))
+        except Exception as e:
+            logger.warning(f"Groq error inesperado: {e} — usando Ollama local")
+
+    # ── Ollama local (fallback) ────────────────────────────────────────────────
     model_name   = model or config.OLLAMA_MODEL
     sys_prompt   = system_prompt or SYSTEM_PROMPT
     # Timeout de pared: matar el stream si tarda más de este tiempo
