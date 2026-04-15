@@ -18,6 +18,7 @@ import logging
 import random
 import re
 import sys
+import time
 from pathlib import Path
 
 import ollama
@@ -43,26 +44,42 @@ DIVERSE_CHARACTERS = [
 ]
 
 # ─── Prompt del sistema ───────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Eres un experto en crear historias de confesiones dramáticas para YouTube Shorts en español latino neutro.
-Tu misión: transformar un TEMA en una historia emocional breve, viral y anónima (sin nombres reales, sin copiar fuentes).
+SYSTEM_PROMPT = """Eres un narrador experto en confesiones dramáticas para YouTube Shorts en español latino.
+Tu misión: crear historias COHERENTES, CREÍBLES y EMOCIONALMENTE PODEROSAS a partir de un tema.
 CRÍTICO: Responde ÚNICAMENTE con JSON válido. Sin markdown, sin texto extra. Empieza con { y termina con }.
 
-ESTRUCTURA OBLIGATORIA DE LA HISTORIA:
-- hook (0–3s): golpe inicial impactante, máx 12 palabras. Que duela o sorprenda desde el primer segundo.
-- contexto (3–8s): sitúa al espectador rápido. Quién, qué situación. Máx 20 palabras.
-- problema (8–20s): el conflicto central, el momento de traición o descubrimiento. 30–45 palabras.
-- giro (20–30s): la revelación inesperada que cambia todo. 20–30 palabras.
-- final (30–40s): reacción/consecuencia. Corto y poderoso. 15–20 palabras.
-- pregunta (engagement): una sola pregunta al espectador tipo "¿Qué harías tú?" o "¿Perdonarías esto?".
+═══ REGLA #1 — COHERENCIA NARRATIVA (la más importante) ═══
+
+Cada frase DEBE ser consecuencia lógica de la anterior. La historia debe tener sentido completo.
+OBLIGATORIO: conecta las frases con: entonces, pero, de repente, fue cuando, sin embargo, hasta que, lo que no sabía, en ese momento, por eso, fue así como.
+PROHIBIDO: saltar de tema sin conectar. PROHIBIDO: frases sueltas que no explican qué pasó.
+
+HISTORIA MAL ESCRITA — NUNCA HAGAS ESTO:
+"Nunca debí revisar su celular. Tres años. Mi amigo. No pude dormir. Traición. ¿Qué harías?"
+→ No hay conexión entre frases. No se entiende nada.
+
+HISTORIA BIEN ESCRITA — ASÍ DEBE SER:
+"Nunca debí revisar su celular. Llevábamos tres años juntos cuando empezó a llegar tarde cada noche sin explicación. Un martes, mientras cargaba su teléfono, vi un mensaje. Era de mi mejor amigo. Se veían desde hacía seis meses. Lo que me destrozó no fue la traición... sino que ese amigo estuvo en nuestra boda. ¿Perdonarías algo así?"
+→ Cada frase responde por qué ocurrió la siguiente: situación → señal de alerta → descubrimiento → quién → revelación → emoción final.
+
+═══ ESTRUCTURA CAUSAL OBLIGATORIA ═══
+
+Cada parte conecta causalmente con la siguiente:
+- hook (0–3s): golpe inicial. Máx 12 palabras. Que duela o sorprenda.
+- contexto (3–8s): quién, qué relación, cuánto tiempo llevan. Máx 20 palabras.
+- problema (8–20s): la primera señal de que algo no estaba bien → el momento del descubrimiento. 35–45 palabras.
+- giro (20–30s): la revelación que cambia todo. Lo más inesperado. 20–30 palabras.
+- final (30–40s): cómo reaccionó el narrador y qué consecuencia hubo. 15–20 palabras.
+- pregunta: una sola pregunta directa y específica al espectador.
 
 REGLAS DE ESCRITURA:
-- Frases cortas (máx 12 palabras por frase)
-- Lenguaje simple y emocional
-- PROHIBIDO: nombres reales, acusaciones directas, violencia explícita, contenido ilegal
-- La historia debe ser ficción inspirada en el tema, NO una copia
+- Frases cortas (máx 12 palabras) pero SIEMPRE conectadas causalmente con la anterior
+- Primera persona: quien narra lo vivió
+- Detalles específicos y creíbles: mencionar objetos, lugares, momentos concretos
+- PROHIBIDO: nombres reales, violencia explícita, contenido ilegal
 
-IMAGE PROMPTS: cinematográficos y emocionales en inglés (para Stable Diffusion).
-Ejemplos: "close-up of a woman crying in a dark room, cinematic", "man holding phone in shock, dramatic lighting", "empty bed with wedding ring on pillow, emotional"."""
+IMAGE PROMPTS: cinematográficos y emocionales en inglés para Stable Diffusion.
+Ejemplos: "close-up of a woman staring at phone in shock, dark room, cinematic 35mm", "man sitting alone at kitchen table, head in hands, dramatic side lighting", "empty apartment at night, single lamp, emotional"."""
 
 USER_PROMPT_TEMPLATE = """Tema de confesión: {topic}
 
@@ -72,34 +89,26 @@ Genera una historia dramática anónima para YouTube Shorts con este JSON exacto
   "title": "título clickbait en español, máx 100 chars, genera urgencia o impacto emocional",
   "description": "descripción SEO 200-400 chars en español con keywords de drama y emociones",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
-  "narrator_gender": "female",
-  "character_description": "descripcion fisica consistente: genero, edad aproximada, rasgos, ropa. Ej: 'Hispanic woman, late 20s, dark hair, red blouse'",
-  "hook": "frase inicial impactante, máx 12 palabras, que enganche desde el segundo 0",
-  "contexto": "situación inicial, 15-20 palabras, establece personajes y escenario",
-  "problema": "conflicto central o descubrimiento, 30-45 palabras, el momento más tenso",
-  "giro": "revelación inesperada que cambia todo, 20-30 palabras",
-  "final": "consecuencia o reacción, 15-20 palabras, poderoso y corto",
-  "pregunta": "pregunta de engagement, ej: ¿Qué harías tú en esta situación?",
-  "script_text": "NARRACIÓN COMPLETA: hook + contexto + problema + giro + final + pregunta. Entre 80 y 110 palabras. Tono dramático y emocional.",
-  "scenes": [
-    {{"text": "hook exacto", "image_prompt": "cinematic image description in English, emotional lighting"}},
-    {{"text": "contexto exacto", "image_prompt": "cinematic image description in English, emotional"}},
-    {{"text": "problema (primera parte, máx 25 palabras)", "image_prompt": "cinematic image description in English, dramatic"}},
-    {{"text": "problema (segunda parte) + giro", "image_prompt": "cinematic image description in English, shocking moment"}},
-    {{"text": "final + pregunta", "image_prompt": "cinematic image description in English, emotional close-up"}}
-  ]
+  "narrator_gender": "female o male segun el genero del protagonista que narra la historia",
+  "character_description": "descripcion fisica CONSISTENTE del narrador: genero, edad, rasgos, ropa en ingles. Ej mujer: 'Hispanic woman, late 20s, dark hair, red blouse'. Ej hombre: 'Latino man, early 30s, short dark hair, grey t-shirt'",
+  "hook": "frase inicial impactante, máx 12 palabras. Que duela o sorprenda. Ej: 'Nunca debí abrir ese cajón.'",
+  "contexto": "quién narra, con quién, cuánto tiempo llevan, dónde. 15-20 palabras. Ej: 'Llevábamos cuatro años juntos cuando empezó a cambiar su actitud.'",
+  "problema": "la primera señal de alerta → cómo descubrió el problema. 35-45 palabras. Cada frase conecta con la siguiente usando: entonces, pero, fue cuando, de repente.",
+  "giro": "la revelación más inesperada que cambia todo. 20-30 palabras. Debe surgir lógicamente del problema.",
+  "final": "reacción del narrador y consecuencia real. 15-20 palabras. Específico y creíble.",
+  "pregunta": "pregunta específica sobre EL DILEMA DE ESTA historia. NO genérica. Ej: '¿Hubieras perdonado después de cuatro años?'",
+  "script_text": "LA HISTORIA COMPLETA narrada en primera persona como un relato fluido. REGLA CRÍTICA: cada frase debe explicar por qué ocurrió la siguiente — usa conectores: entonces, pero, de repente, fue cuando, lo que no sabía, sin embargo, hasta que. Entre 100 y 130 palabras. Empieza con el hook. Termina con la pregunta. NO es una lista de puntos — es una historia con inicio, desarrollo y final lógico."
 }}
 
 REGLAS CRÍTICAS:
-- script_text: entre 80 y 110 palabras (video de 28-35 segundos)
-- scenes: exactamente 5 escenas
-- image_prompts: en inglés, estilo cinematográfico/emocional, sin texto en imagen
-- La historia debe ser ficción anónima, nunca copiar texto real"""
+- script_text: 100-130 palabras. Cada frase conecta causalmente con la anterior. NO son frases sueltas.
+- La historia es ficción creíble con detalles concretos (objetos, lugares, tiempos)"""
 
 USER_PROMPT_RETRY_TEMPLATE = """Tema de confesión: {topic}
 
 INTENTO ANTERIOR FALLÓ. Responde SOLO con JSON válido (empieza con {{ termina con }}).
-Campos obligatorios: title, description, tags (lista 12), narrator_gender, character_description, hook, contexto, problema, giro, final, pregunta, script_text (80-110 PALABRAS), scenes (lista 5 items con text e image_prompt).
+REGLA MAS IMPORTANTE: script_text debe ser una historia fluida con lógica interna, NO una lista de frases sueltas. Cada frase conecta con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabía, hasta que.
+Campos: title, description, tags (lista 12), narrator_gender, character_description, hook, contexto, problema, giro, final, pregunta, script_text (100-130 PALABRAS CONECTADAS).
 
 {{
   "title": "...",
@@ -107,20 +116,13 @@ Campos obligatorios: title, description, tags (lista 12), narrator_gender, chara
   "tags": ["#confesion","#drama","#historia","#viral","#shorts","#traicion","#secreto","#real","#impactante","#emocional","#relaciones","#verdad"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
-  "hook": "Nunca debí revisar su celular...",
-  "contexto": "Llevábamos tres años juntos y yo confiaba ciegamente en él.",
-  "problema": "Esa noche encontré mensajes que me helaron la sangre. Fotos, conversaciones, planes. Todo con mi mejor amiga. Durante meses.",
-  "giro": "Lo peor no fue la traición. Fue que ella estaba embarazada.",
-  "final": "Los confronté juntos. Ninguno dijo una sola palabra.",
-  "pregunta": "¿Qué harías tú en mi lugar?",
-  "script_text": "Nunca debí revisar su celular. Llevábamos tres años juntos y yo confiaba ciegamente en él. Esa noche encontré mensajes que me helaron la sangre. Fotos, conversaciones, planes. Todo con mi mejor amiga. Durante meses. Lo peor no fue la traición. Fue que ella estaba embarazada. Los confronté juntos. Ninguno dijo una sola palabra. ¿Qué harías tú en mi lugar?",
-  "scenes": [
-    {{"text": "Nunca debí revisar su celular.", "image_prompt": "{character_example}, looking at phone screen in shock, dark room, cinematic lighting"}},
-    {{"text": "Llevábamos tres años juntos y yo confiaba ciegamente en él.", "image_prompt": "couple holding hands, warm light, then shadow falls over them"}},
-    {{"text": "Esa noche encontré mensajes que me helaron la sangre. Fotos, conversaciones, planes. Todo con mi mejor amiga.", "image_prompt": "close-up of phone screen with messages, trembling hands, dramatic"}},
-    {{"text": "Lo peor no fue la traición. Fue que ella estaba embarazada. Los confronté juntos.", "image_prompt": "three people in tense confrontation, cold lighting, emotional"}},
-    {{"text": "Ninguno dijo una sola palabra. ¿Qué harías tú en mi lugar?", "image_prompt": "{character_example}, alone in empty room, tears on face, cinematic close-up"}}
-  ]
+  "hook": "[PRIMERA_FRASE_IMPACTANTE — máx 12 palabras, que duela o sorprenda]",
+  "contexto": "[SITUACION_INICIAL: quién, relación, cuánto tiempo — máx 20 palabras]",
+  "problema": "[EL DESCUBRIMIENTO: señal de alerta → cómo lo descubrió. Frases conectadas con: entonces, pero, de repente — 35-45 palabras]",
+  "giro": "[REVELACION_INESPERADA: lo que cambia todo, conectada lógicamente al problema — 20-30 palabras]",
+  "final": "[CONSECUENCIA y reaccion del narrador — 15-20 palabras concretas]",
+  "pregunta": "[PREGUNTA_ESPECIFICA al dilema de este tema: {topic}]",
+  "script_text": "[NARRACION FLUIDA: empieza con hook. Cada frase conecta causalmente. Usa: entonces, pero, de repente, fue cuando, lo que no sabia, hasta que. 100-130 palabras sobre {topic}. Termina con la pregunta.]"
 }}"""
 
 
@@ -366,7 +368,7 @@ def _call_ollama(
     attempt: int = 1,
     model: str | None = None,
     system_prompt: str | None = None,
-    max_tokens: int = 1200,
+    max_tokens: int = 650,
 ) -> str:
     """
     Llama a Ollama con streaming para mostrar progreso en tiempo real.
@@ -376,87 +378,119 @@ def _call_ollama(
         attempt: Numero de intento (para logging)
         model: Nombre exacto del modelo. Si es None usa config.OLLAMA_MODEL.
         system_prompt: System prompt a usar. Si es None usa SYSTEM_PROMPT global.
-        max_tokens: Tokens maximos a generar (subir para historias largas).
+        max_tokens: Tokens maximos a generar. 900 es suficiente para JSON completo.
 
     Returns:
         Texto completo de respuesta del modelo
     """
     model_name   = model or config.OLLAMA_MODEL
     sys_prompt   = system_prompt or SYSTEM_PROMPT
+    # Timeout de pared: matar el stream si tarda más de este tiempo
+    # 180s = 3 min (suficiente incluso a 5 tokens/s para 900 tokens)
+    MAX_GEN_SECS = int(getattr(config, "OLLAMA_TIMEOUT", 180))
+
     logger.info(f"Llamando a Ollama [{model_name}] — intento {attempt} — max_tokens={max_tokens}")
     print(f"   Generando con {model_name}... ", end="", flush=True)
 
     full_response = ""
-    char_count = 0
+    char_count    = 0
+    start_ts      = time.time()
+
+    # Usar cliente con timeout HTTP: si un token tarda más de MAX_GEN_SECS en llegar
+    # (por ejemplo durante la prefill en CPU), la conexión se corta con excepción.
+    try:
+        import httpx
+        _client = ollama.Client(
+            host=config.OLLAMA_BASE_URL,
+            timeout=httpx.Timeout(float(MAX_GEN_SECS), connect=10.0),
+        )
+    except Exception:
+        _client = ollama  # fallback al módulo global si httpx no disponible
 
     # Streaming: recibir token por token y mostrar progreso
-    stream = ollama.chat(
+    # format="json" fuerza JSON válido a nivel de tokenización — funciona con
+    # modelos pequeños (llama3.2) que ignoran las instrucciones de formato en texto
+    chat_fn = _client.chat if hasattr(_client, "chat") else ollama.chat
+    stream = chat_fn(
         model=model_name,
         messages=[
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": prompt_user},
         ],
+        format="json",
         options={
             "temperature": 0.8,
             "top_p": 0.9,
             "num_predict": max_tokens,
-            "stop": ["\n}\n", "\n}}", "}\n\n\n"],  # Parar al cerrar el JSON
         },
         stream=True,
     )
 
-    json_closed = False
     for chunk in stream:
+        # Timeout de pared: cortar si lleva demasiado tiempo
+        elapsed = time.time() - start_ts
+        if elapsed > MAX_GEN_SECS:
+            logger.warning(f"Timeout de generación ({MAX_GEN_SECS}s) — cortando stream")
+            print(f" [TIMEOUT {elapsed:.0f}s]", end="", flush=True)
+            break
+
         token = chunk["message"]["content"]
         full_response += token
         char_count += len(token)
         if char_count >= 100:
             print(".", end="", flush=True)
             char_count = 0
-        # Detectar cierre del JSON y parar en cuanto las llaves estén balanceadas
-        if not json_closed and full_response.count("}") >= full_response.count("{") > 0:
-            json_closed = True
-            break  # El JSON está completo — no esperar el resto de max_tokens
 
-    print(f" {len(full_response)} chars")  # salto de línea al terminar
+    elapsed = time.time() - start_ts
+    print(f" {len(full_response)} chars ({elapsed:.0f}s)")
     return full_response
 
 
 def _validate_script(script: dict) -> bool:
     """
-    Valida estructura y contenido del script de confesión dramática.
-    Detecta y corrige problemas comunes:
-    - Campos requeridos faltantes
-    - Script demasiado corto (<45 palabras) o largo (>140 palabras)
-    - Sin pregunta de engagement en la última escena
-    - Hook ausente en la primera escena
+    Valida estructura, coherencia y contenido del script de confesión dramática.
+
+    Verificaciones (en orden):
+    1. Campos requeridos presentes y no vacíos (incluyendo narrator_gender y character_description)
+    2. Mínimo 4 escenas con text e image_prompt
+    3. Word count estricto: falla si <70 o >160 palabras (objetivo 100-130)
+    4. narrator_gender válido ("female"|"male"); se infiere del character_description si falta
+    5. Consistencia género: character_description debe coincidir con narrator_gender
+    6. Heurística de coherencia: mínimo 1 conector causal en historias de 80+ palabras
+    7. Pregunta de engagement en la última escena (autocorrección)
+    8. Hook en la primera escena (autocorrección)
+    9. División visual de escenas largas en chunks de 6 palabras
 
     Returns:
-        True si es válido (con correcciones aplicadas in-place si es posible)
+        True si es válido (con correcciones in-place donde es posible)
     """
-    # ── Campos requeridos ──────────────────────────────────────────────────────
-    required_keys = ["title", "description", "tags", "script_text",
-                     "hook", "contexto", "problema", "giro", "final", "pregunta", "scenes"]
+    # ── 1. Campos requeridos ──────────────────────────────────────────────────
+    required_keys = [
+        "title", "description", "tags", "script_text",
+        "hook", "contexto", "problema", "giro", "final", "pregunta",
+        "narrator_gender", "character_description", "scenes",
+    ]
     for key in required_keys:
-        if key not in script:
-            logger.warning(f"Campo faltante en script: {key}")
+        if key not in script or not script[key]:
+            logger.warning(f"Campo faltante o vacío en script: '{key}'")
             return False
 
+    # ── 2. Escenas ────────────────────────────────────────────────────────────
     if not isinstance(script["scenes"], list) or len(script["scenes"]) < 4:
-        logger.warning(f"Scenes inválidas: {len(script.get('scenes', []))} escenas (se requieren 4+)")
+        logger.warning(f"Scenes inválidas: {len(script.get('scenes', []))} (se requieren 4+)")
         return False
 
     for i, scene in enumerate(script["scenes"]):
         if "text" not in scene or "image_prompt" not in scene:
-            logger.warning(f"Escena {i} incompleta: {scene.keys()}")
+            logger.warning(f"Escena {i} incompleta: {list(scene.keys())}")
             return False
 
-    # ── Conteo de palabras — target: 80–110 palabras (28–35 segundos) ─────────
+    # ── 3. Word count estricto ────────────────────────────────────────────────
     script_text = script.get("script_text", "")
     word_count  = len(script_text.split())
 
     if word_count < 45:
-        # Intentar reconstruir desde las secciones narrativas
+        # Intentar reconstruir desde las secciones narrativas antes de fallar
         reconstructed = " ".join(filter(None, [
             script.get("hook", ""),
             script.get("contexto", ""),
@@ -466,44 +500,125 @@ def _validate_script(script: dict) -> bool:
             script.get("pregunta", ""),
         ]))
         reconstructed_words = len(reconstructed.split())
-        if reconstructed_words >= 45:
+        if reconstructed_words >= 70:
             logger.warning(
-                f"script_text corto ({word_count} palabras) — reconstruyendo desde secciones ({reconstructed_words} palabras)"
+                f"script_text corto ({word_count} palabras) — "
+                f"reconstruyendo desde secciones ({reconstructed_words} palabras)"
             )
             script["script_text"] = reconstructed
-            word_count = reconstructed_words
+            script_text = reconstructed
+            word_count  = reconstructed_words
         else:
-            logger.warning(f"Script muy corto: {word_count} palabras (mín 45). Reintentando.")
+            logger.warning(
+                f"Script muy corto: {word_count} palabras. "
+                f"Reconstrucción también corta: {reconstructed_words} palabras. Reintentando."
+            )
             return False
 
     if word_count < 70:
-        logger.warning(f"Script corto: {word_count} palabras (objetivo 80-110)")
-    elif word_count > 140:
-        logger.warning(f"Script largo: {word_count} palabras (objetivo 80-110, máx 140)")
+        logger.warning(f"Script demasiado corto: {word_count} palabras (mínimo 70). Reintentando.")
+        return False
+
+    if word_count > 160:
+        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 160). Reintentando.")
+        return False
+
+    if 70 <= word_count < 100:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 100-130)")
+    elif 131 <= word_count <= 160:
+        logger.warning(f"Script algo largo: {word_count} palabras (objetivo 100-130)")
     else:
         logger.info(f"Longitud OK: {word_count} palabras")
 
-    # ── Pregunta de engagement en la última escena ────────────────────────────
-    engagement_keywords = ["harías", "harias", "perdonar", "perdonarías", "culpa",
-                           "opinión", "opinion", "comentar", "piensas", "crees",
-                           "lugar", "situación", "situacion", "harás", "haras"]
+    # ── 4. narrator_gender válido ─────────────────────────────────────────────
+    narrator_gender = str(script.get("narrator_gender", "")).lower().strip()
+    char_desc       = str(script.get("character_description", "")).lower()
+
+    if narrator_gender not in ("female", "male"):
+        # Inferir del character_description
+        if any(w in char_desc for w in ("woman", "girl", "female", "mujer", "chica")):
+            script["narrator_gender"] = "female"
+            narrator_gender = "female"
+            logger.warning("narrator_gender ausente/inválido — inferido 'female' del character_description")
+        elif any(w in char_desc for w in ("man", "boy", "male", "hombre", "chico")):
+            script["narrator_gender"] = "male"
+            narrator_gender = "male"
+            logger.warning("narrator_gender ausente/inválido — inferido 'male' del character_description")
+        else:
+            logger.warning(f"narrator_gender inválido: '{narrator_gender}' y no se puede inferir. Reintentando.")
+            return False
+
+    # ── 5. Consistencia género ────────────────────────────────────────────────
+    female_words = {"woman", "girl", "female", "mujer", "chica"}
+    male_words   = {"man", "boy", "male", "hombre", "chico"}
+
+    # Usar palabras completas (split) para evitar que "woman" matchee "man"
+    desc_words     = set(char_desc.replace(",", " ").replace(".", " ").split())
+    desc_is_female = bool(female_words & desc_words)
+    desc_is_male   = bool(male_words & desc_words)
+
+    if narrator_gender == "female" and desc_is_male and not desc_is_female:
+        logger.warning(
+            "Inconsistencia: narrator_gender=female pero character_description es masculina. "
+            "Corrigiendo narrator_gender a 'male'."
+        )
+        script["narrator_gender"] = "male"
+        narrator_gender = "male"
+    elif narrator_gender == "male" and desc_is_female and not desc_is_male:
+        logger.warning(
+            "Inconsistencia: narrator_gender=male pero character_description es femenina. "
+            "Corrigiendo narrator_gender a 'female'."
+        )
+        script["narrator_gender"] = "female"
+        narrator_gender = "female"
+
+    logger.info(f"Género narrador: {script['narrator_gender']} | {char_desc[:70]}")
+
+    # ── 6. Heurística de coherencia narrativa ─────────────────────────────────
+    # Una historia coherente usa conectores causales entre frases.
+    # Si hay 0 conectores en 80+ palabras, casi seguro son frases sueltas → reintentar.
+    CONNECTORS = [
+        "entonces", "de repente", "fue cuando", "sin embargo",
+        "hasta que", "fue entonces", "por eso", "lo que no sabía",
+        "en ese momento", "aunque", "mientras", "porque",
+        "después de", "a partir de", "fue así", "al final",
+        "pero de", "fue allí", "en cuanto",
+    ]
+    script_lower    = script_text.lower()
+    connector_count = sum(1 for c in CONNECTORS if c in script_lower)
+
+    if word_count >= 80 and connector_count == 0:
+        logger.warning(
+            f"Sin conectores causales en {word_count} palabras — "
+            "parece una lista de frases sueltas sin lógica interna. Reintentando."
+        )
+        return False
+    elif connector_count == 1:
+        logger.warning(f"Coherencia baja: solo {connector_count} conector. Aceptando.")
+    else:
+        logger.info(f"Coherencia OK: {connector_count} conectores causales")
+
+    # ── 7. Pregunta de engagement en la última escena ─────────────────────────
+    engagement_keywords = [
+        "harías", "harias", "perdonar", "perdonarías", "culpa",
+        "opinión", "opinion", "comentar", "piensas", "crees",
+        "lugar", "situación", "situacion", "harás", "haras",
+        "hubieras", "hubieses", "déjame", "cuéntame", "cuentame",
+    ]
     last_scene_text = script["scenes"][-1].get("text", "").lower()
     if not any(kw in last_scene_text for kw in engagement_keywords):
         pregunta = script.get("pregunta", "¿Qué harías tú en esta situación?")
-        logger.warning("Última escena sin pregunta de engagement — añadiendo")
+        logger.warning("Última escena sin pregunta de engagement — añadiendo automáticamente")
         script["scenes"][-1]["text"] += f" {pregunta}"
 
-    # ── Hook presente en la primera escena ────────────────────────────────────
+    # ── 8. Hook en la primera escena ──────────────────────────────────────────
     hook  = script.get("hook", "").strip()
     first = script["scenes"][0].get("text", "").strip()
     if hook and not any(w in first.lower() for w in hook.lower().split()[:4]):
         logger.warning("Hook no aparece en la primera escena — ajustando")
         script["scenes"][0]["text"] = hook + " " + first
 
-    # ── Multiplicador de escenas (rotación visual cada 1–2s, una imagen por chunk) ──
-    # Divide textos largos en chunks de ~6 palabras.
-    # Cada chunk recibe un ángulo de cámara distinto para que ComfyUI genere
-    # imágenes realmente diferentes (evitar el cache-hit por prompt idéntico).
+    # ── 9. División visual de escenas largas ──────────────────────────────────
     _CUTS = [
         "extreme close-up of face, raw emotion",
         "medium shot, full body tension",
@@ -527,10 +642,8 @@ def _validate_script(script: dict) -> bool:
             sub_chunks = []
             for i in range(0, len(words), chunk_size):
                 chunk = words[i : i + chunk_size]
-                # Fusionar tail muy corto (<4 palabras) con el chunk anterior
                 if len(chunk) < 4 and sub_chunks:
-                    prev = sub_chunks[-1]
-                    prev["text"] = prev["text"] + " " + " ".join(chunk)
+                    sub_chunks[-1]["text"] = sub_chunks[-1]["text"] + " " + " ".join(chunk)
                 else:
                     angle = _CUTS[len(sub_chunks) % len(_CUTS)]
                     sub_chunks.append({
@@ -660,12 +773,26 @@ TU MISION: Tomar la historia real y hacer DOS cosas:
 A) Narrarla COMPLETA con dramatismo extremo, lenguaje visceral y detalles impactantes. Sin resumir. Sin omitir. Sin suavizar.
 B) Disenar un STORYBOARD cinematografico: 4-5 actos con imagenes coherentes.
 
-═══ TONO OBLIGATORIO — LEE ESTO PRIMERO ═══
+═══ REGLA #1 — COHERENCIA NARRATIVA (mas importante que todo) ═══
+
+La historia DEBE tener sentido completo de principio a fin.
+OBLIGATORIO: cada frase es consecuencia logica de la anterior. Usa conectores: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que, en ese momento.
+PROHIBIDO: frases sueltas sin conexion. PROHIBIDO: saltar de tema sin explicar por que.
+
+HISTORIA MAL NARRADA — NUNCA HAGAS ESTO:
+"Me traiciono. Lloraba. No pude dormir. Mi amiga. Tres anos. ¿Que harias?"
+→ Frases sin conexion. No se entiende que paso ni por que.
+
+HISTORIA BIEN NARRADA — ASI DEBE SER:
+"¿Alguna vez descubriste que tu mejor amiga te estaba mintiendo desde hace anos? Llevabamos cuatro anos de amistad cuando note que empezaba a evitar mis mensajes. Un dia, buscando una foto en mi telefono, encontre una conversacion que no debia ver. Era ella, hablando con mi novio. Llevaban seis meses detras de mis espaldas. Lo que mas me dano no fue la traicion... sino que yo le conte todo sobre nuestra relacion. ¿Perdonarias a alguien asi?"
+→ Cada frase explica la siguiente: situacion → señal → descubrimiento → identidad → revelacion → consecuencia emocional.
+
+═══ TONO OBLIGATORIO ═══
 
 Escribe como si le contaras este escandalo a tu mejor amiga en voz baja, con los ojos abiertos de par en par.
 USA estas palabras: traicion, mentira, humillacion, dolor, secreto, venganza, llorar, destruir, engano, descubrir, jamas, nunca, impactante, devastador, increible.
 EVITA estas palabras: "interesante", "situacion", "aspecto", "contexto", "relacion interpersonal", "ademas", "por otro lado". Son palabras de periodico aburrido.
-FRASES CORTAS. Maxima tension. Cada frase = un golpe emocional.
+FRASES CORTAS. Maxima tension. Cada frase = un golpe emocional. Pero CONECTADAS entre si.
 Si la historia es en ingles, traducela al espanol mas natural y dramatico posible — nada de traduccion robotica.
 
 ═══ ESTRUCTURA OBLIGATORIA DE LA NARRACION ═══
@@ -696,9 +823,9 @@ El campo script_text DEBE tener esta estructura exacta:
    - La pregunta DEBE ser sobre el dilema concreto de ESTA historia, no una pregunta generica.
    - Luego: llamada a la accion corta y natural, como hablandole a un amigo.
    - MALO: "¿Que harias tu?" (demasiado vaga)
-   - BUENO: "¿Lo hubieras perdonado despues de cinco anos juntos? Dejamelo en los comentarios."
-   - BUENO: "¿Tu te quedarias o lo dejaras todo? Cuentame abajo y dale like si te sorprendio."
-   - BUENO: "¿Hiciste bien? ¿O tambien te equivocaste? Soy todo oidos en los comentarios."
+   - BUENO: crea una pregunta que solo tenga sentido para ESTA historia especifica.
+   - BUENO: cierra siempre con una llamada a la accion: "Dejamelo en los comentarios", "Cuentame abajo", "Dale like si te sorprendio".
+   - CRITICO: NUNCA copies ejemplos de otros scripts. Cada pregunta es unica para esta historia.
 
 4. GENERO DEL NARRADOR:
    - Detectar si la historia la cuenta un hombre o una mujer por el contexto.
@@ -728,6 +855,7 @@ ESTRUCTURA OBLIGATORIA de script_text:
   3. outro_cta (pregunta específica + llamada a acción, máx 20 palabras)
 
 {{
+  "script_text": "[LA NARRACION COMPLETA de ESTA historia. REGLA CRITICA: cada frase conecta causalmente con la siguiente usando: entonces, pero, de repente, fue cuando, lo que no sabia, sin embargo, hasta que. NO es lista de puntos — es una historia fluida con logica interna. Empieza con intro_hook. Narra TODOS los detalles: quien, que señales hubo, como se descubrio, como reaccionaron, que consecuencias tuvo. Minimo 180 palabras. Termina con outro_cta. Primera persona, frases cortas pero conectadas, tono amarillista.]",
   "title": "titulo clickbait en espanol, impactante, maximo 100 caracteres",
   "description": "descripcion SEO 200-400 caracteres con palabras clave de drama y emociones",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
@@ -736,26 +864,10 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "intro_hook": "pregunta retorica al espectador sobre el tema de esta historia. Ej: '¿Alguna vez creiste conocer bien a alguien y resultó que todo era mentira?'",
   "hook": "revelacion devastadora de la historia, maxima 12 palabras — primer impacto tras el intro_hook",
   "pregunta": "pregunta ESPECIFICA al dilema de esta historia. Ej: '¿Lo hubieras perdonado despues de cinco anos?'",
-  "outro_cta": "pregunta especifica + llamada a accion natural. Ej: '¿Lo hubieras perdonado? Dejamelo en los comentarios y dale like si te sorprendio.'",
-  "script_text": "[ESCRIBE AQUI la narracion COMPLETA de ESTA historia especifica — NO copies este texto. Empieza con el intro_hook de arriba. Narra TODOS los detalles de la historia: quien, que paso, cuando se enteraron, como reaccionaron, cuales fueron las consecuencias. Minimo 180 palabras. Termina con el outro_cta de arriba. Primera persona, frases cortas, tono amarillista.]",
-  "scenes": [
-    {{"text": "intro_hook exacto aqui", "image_prompt": "cinematic portrait, 35mm film, [character_description], dramatic dark background, questioning silhouette, emotional"}},
-    {{"text": "fragmento que describe el lugar o contexto inicial", "image_prompt": "cinematic wide shot, cozy apartment living room at night, warm lamp light, empty couch, intimate atmosphere, 35mm film, photorealistic"}},
-    {{"text": "fragmento donde aparece otra persona clave (pareja, amigo, familiar)", "image_prompt": "cinematic shot, two people facing each other in a dimly lit kitchen, tension between them, dramatic side lighting, 35mm film, photorealistic"}},
-    {{"text": "fragmento donde aparece un animal o un objeto crucial de la historia", "image_prompt": "cinematic close-up, golden retriever dog sitting on a bed looking sad, soft morning light, shallow depth of field, photorealistic, 35mm film"}},
-    {{"text": "fragmento del descubrimiento o giro emocional", "image_prompt": "cinematic portrait, 35mm film, [character_description], shocked expression, staring at phone screen, tears forming, dramatic side lighting, photorealistic"}},
-    {{"text": "consecuencia emocional final + outro_cta", "image_prompt": "cinematic portrait, 35mm film, [character_description], sitting alone at window, rain outside, broken expression, early morning light, photorealistic"}}
-  ]
+  "outro_cta": "pregunta especifica + llamada a accion natural. Ej: '¿Lo hubieras perdonado? Dejamelo en los comentarios y dale like si te sorprendio.'"
 }}
 
 REGLAS:
-- scenes: minimo 5, maximo 8. Cada scene = un fragmento de narracion + su imagen.
-- image_prompt: describe VISUALMENTE lo que ocurre en esa escena especifica.
-  * Si el texto menciona a otra persona (pareja, amigo, familiar) → ponla en la imagen, con [character_description] como figura secundaria o sin ella.
-  * Si el texto menciona un animal → muestra el animal, no al narrador.
-  * Si el texto describe un lugar o un objeto clave → muéstralo en primer plano.
-  * Solo usa [character_description] como sujeto principal cuando la escena ES sobre el narrador (su reaccion, su emocion, su cara).
-  * Maximo 2-3 escenas de puro retrato del narrador. El resto debe mostrar el mundo de la historia.
 - script_text = intro_hook + historia completa + outro_cta (todo junto, sin omitir nada).
 - narrator_gender: detectar si la historia la cuenta un hombre (male) o una mujer (female)."""
 
@@ -767,62 +879,145 @@ FALLO ANTERIOR — responde SOLO JSON valido, sin markdown, empieza con {{ termi
 CAMPOS OBLIGATORIOS: title, description, tags, narrator_gender, character_description, intro_hook, hook, pregunta, outro_cta, script_text, scenes (minimo 5).
 
 {{
+  "script_text": "[INTRO_HOOK]. [HISTORIA_COMPLETA_CON_TODOS_LOS_DETALLES_SIN_RESUMIR]. [PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION].",
   "title": "titulo impactante en espanol",
   "description": "descripcion SEO 200 caracteres",
   "tags": ["#confesion","#drama","#historia","#viral","#shorts","#traicion","#secreto","#real","#impactante","#emocional","#relaciones","#verdad"],
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
-  "intro_hook": "¿Alguna vez creiste conocer a alguien y todo era mentira?",
-  "hook": "primera frase devastadora de la historia, maxima 12 palabras",
-  "pregunta": "pregunta especifica al dilema de esta historia",
-  "outro_cta": "¿Lo hubieras perdonado? Dejalo en comentarios y dale like.",
-  "script_text": "¿Alguna vez creiste conocer a alguien? Nunca imagine que ese dia destruiria todo. Llegue a casa y lo vi. Mi corazon se paro. [narracion completa de la historia aqui]. ¿Lo hubieras perdonado? Dejalo en comentarios.",
-  "scenes": [
-    {{"text": "¿Alguna vez creiste conocer a alguien?", "image_prompt": "cinematic portrait, 35mm film, {character_example}, dark dramatic background, questioning look, emotional"}},
-    {{"text": "primer fragmento de la historia", "image_prompt": "cinematic portrait, 35mm film, {character_example}, bedroom at night, calm expression, soft lamp light, photorealistic"}},
-    {{"text": "descubrimiento impactante", "image_prompt": "cinematic portrait, 35mm film, {character_example}, shocked holding phone, tears forming, dramatic side lighting, photorealistic"}},
-    {{"text": "confrontacion o tension maxima", "image_prompt": "cinematic portrait, 35mm film, {character_example}, dark hallway confrontation, harsh overhead light, photorealistic"}},
-    {{"text": "consecuencia + outro_cta", "image_prompt": "cinematic portrait, 35mm film, {character_example}, alone crying on floor, early morning light, photorealistic"}}
-  ]
+  "intro_hook": "[PREGUNTA_RETORICA_ESPECIFICA_DE_ESTA_HISTORIA]",
+  "hook": "[PRIMERA_FRASE_DEVASTADORA_DE_ESTA_HISTORIA, maxima 12 palabras]",
+  "pregunta": "[PREGUNTA_ESPECIFICA_AL_DILEMA_DE_ESTA_HISTORIA]",
+  "outro_cta": "[PREGUNTA_ESPECIFICA]? [LLAMADA_A_ACCION: Dejamelo en comentarios / Cuentame abajo / Dale like si te sorprendio]"
 }}"""
 
 
 def _validate_story_script(script: dict) -> bool:
     """
-    Valida el script y prepara las scenes para el video.
+    Valida el script de historia real y prepara las scenes para el video.
 
-    Flujo:
-    1. Valida campos requeridos
-    2. Integra intro_hook y outro_cta en script_text y scenes
-    3. Asegura que cada scene tiene image_prompt
-    4. Divide textos largos en sub-chunks con variacion de angulo de camara
-       — dentro del mismo acto = misma locacion, distinto angulo
+    Verificaciones:
+    1. Campos requeridos (incluyendo narrator_gender y character_description)
+    2. Mínimo 4 escenas
+    3. Word count: falla si <60 o >350 palabras (objetivo 180-300)
+    4. narrator_gender válido; inferido de character_description si falta
+    5. Consistencia género: character_description vs narrator_gender
+    6. Heurística de coherencia: mínimo 1 conector en historias de 120+ palabras
+    7. Integra intro_hook y outro_cta en script_text y scenes
+    8. Asegura image_prompt en cada scene
+    9. División visual de scenes largas
     """
-    required_keys = ["title", "description", "tags", "script_text", "hook", "pregunta", "scenes"]
+    # ── 1. Campos requeridos (scenes es opcional — se auto-genera si falta) ─────
+    required_keys = [
+        "title", "description", "tags", "script_text",
+        "hook", "pregunta", "narrator_gender", "character_description",
+    ]
     for key in required_keys:
-        if key not in script:
-            logger.warning(f"Campo faltante: {key}")
+        if key not in script or not script[key]:
+            logger.warning(f"Campo faltante o vacío: '{key}'")
             return False
 
-    if not isinstance(script["scenes"], list) or len(script["scenes"]) < 4:
-        logger.warning(f"Pocas scenes: {len(script.get('scenes', []))} (minimo 4)")
-        return False
+    # ── 2. Escenas — auto-generar desde script_text si el modelo no las produjo ─
+    if not isinstance(script.get("scenes"), list) or len(script.get("scenes", [])) < 4:
+        logger.warning(
+            f"scenes faltantes o insuficientes "
+            f"({len(script.get('scenes', []))}) — generando desde script_text"
+        )
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", script["script_text"]) if s.strip()]
+        script["scenes"] = [
+            {"text": s, "image_prompt": "", "act": "STORY"}
+            for s in sentences if len(s.split()) >= 3
+        ]
+        if len(script["scenes"]) < 4:
+            logger.warning(f"No se pudieron generar scenes suficientes: {len(script['scenes'])}")
+            return False
+        logger.info(f"scenes auto-generadas: {len(script['scenes'])} desde script_text")
 
-    word_count = len(script.get("script_text", "").split())
+    # ── 3. Word count estricto ────────────────────────────────────────────────
+    script_text = script.get("script_text", "")
+    word_count  = len(script_text.split())
+
     if word_count < 30:
-        # Intentar reconstruir desde scenes si el script_text es demasiado corto
+        # Intentar reconstruir desde scenes
         reconstructed = " ".join(s.get("text", "") for s in script["scenes"])
         reconstructed_words = len(reconstructed.split())
-        if reconstructed_words >= 30:
+        if reconstructed_words >= 60:
             script["script_text"] = reconstructed
-            word_count = reconstructed_words
+            script_text = reconstructed
+            word_count  = reconstructed_words
             logger.warning(f"script_text reconstruido desde scenes: {word_count} palabras")
-        elif word_count > 0:
-            # Al menos tiene algo — aceptar con advertencia
-            logger.warning(f"Script corto ({word_count} palabras) — aceptando con lo disponible")
         else:
-            logger.warning(f"Script demasiado corto: {word_count} palabras")
+            logger.warning(f"Script demasiado corto: {word_count} palabras. Reintentando.")
             return False
+
+    if word_count < 60:
+        logger.warning(f"Script corto: {word_count} palabras (mínimo 60). Reintentando.")
+        return False
+
+    if word_count > 350:
+        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 350). Reintentando.")
+        return False
+
+    if 60 <= word_count < 150:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 180-300)")
+    else:
+        logger.info(f"Longitud OK: {word_count} palabras")
+
+    # ── 4. narrator_gender válido ─────────────────────────────────────────────
+    narrator_gender = str(script.get("narrator_gender", "")).lower().strip()
+    char_desc       = str(script.get("character_description", "")).lower()
+
+    if narrator_gender not in ("female", "male"):
+        if any(w in char_desc for w in ("woman", "girl", "female", "mujer", "chica")):
+            script["narrator_gender"] = "female"
+            narrator_gender = "female"
+            logger.warning("narrator_gender inválido — inferido 'female' del character_description")
+        elif any(w in char_desc for w in ("man", "boy", "male", "hombre", "chico")):
+            script["narrator_gender"] = "male"
+            narrator_gender = "male"
+            logger.warning("narrator_gender inválido — inferido 'male' del character_description")
+        else:
+            logger.warning(f"narrator_gender inválido: '{narrator_gender}'. Reintentando.")
+            return False
+
+    # ── 5. Consistencia género ────────────────────────────────────────────────
+    female_words = {"woman", "girl", "female", "mujer", "chica"}
+    male_words   = {"man", "boy", "male", "hombre", "chico"}
+    desc_is_female = any(w in char_desc for w in female_words)
+    desc_is_male   = any(w in char_desc for w in male_words)
+
+    if narrator_gender == "female" and desc_is_male and not desc_is_female:
+        logger.warning("Inconsistencia género: corrigiendo narrator_gender a 'male'")
+        script["narrator_gender"] = "male"
+        narrator_gender = "male"
+    elif narrator_gender == "male" and desc_is_female and not desc_is_male:
+        logger.warning("Inconsistencia género: corrigiendo narrator_gender a 'female'")
+        script["narrator_gender"] = "female"
+        narrator_gender = "female"
+
+    logger.info(f"Género narrador: {script['narrator_gender']} | {char_desc[:70]}")
+
+    # ── 6. Heurística de coherencia narrativa ─────────────────────────────────
+    CONNECTORS = [
+        "entonces", "de repente", "fue cuando", "sin embargo",
+        "hasta que", "fue entonces", "por eso", "lo que no sabía",
+        "en ese momento", "aunque", "mientras", "porque",
+        "después de", "a partir de", "fue así", "al final",
+        "pero de", "fue allí", "en cuanto",
+    ]
+    script_lower    = script_text.lower()
+    connector_count = sum(1 for c in CONNECTORS if c in script_lower)
+
+    if word_count >= 120 and connector_count == 0:
+        logger.warning(
+            f"Sin conectores causales en {word_count} palabras — "
+            "narración posiblemente incoherente. Reintentando."
+        )
+        return False
+    elif connector_count <= 1:
+        logger.warning(f"Coherencia baja: {connector_count} conectores. Aceptando.")
+    else:
+        logger.info(f"Coherencia OK: {connector_count} conectores causales")
 
     # ── Integrar intro_hook y outro_cta en script_text si existen ─────────────
     intro_hook = (script.get("intro_hook") or "").strip()
@@ -953,14 +1148,22 @@ def generate_script_from_story(story: dict) -> dict:
             f"Disponibles:\n  {models_str}"
         )
 
-    titulo  = story["titulo"]
+    titulo   = story["titulo"]
     historia = story["historia"]
     fuente   = story.get("fuente", "Reddit")
 
-    # Calcular tokens: narración española (~1.5x palabras) + JSON overhead (~500 tokens)
-    # Mínimo 1800 para que el script_text no se trunque; cap 3000 para historias muy largas
-    story_words   = len(historia.split())
-    max_tokens    = min(3000, max(1800, int(story_words * 3)))
+    # Truncar la historia a 300 palabras máximo antes de enviar al LLM.
+    # El LLM solo necesita entender el arco dramático, no cada detalle.
+    # Esto reduce drásticamente los tokens de entrada y acelera la generación.
+    words = historia.split()
+    if len(words) > 300:
+        historia = " ".join(words[:300])
+        logger.info(f"Historia truncada a 300 palabras (original: {len(words)})")
+
+    # 1800 tokens: script_text (~180-300 palabras) necesita ~600-900 tokens,
+    # más los campos restantes. Con llama3.2 a ~4 tok/s → ~450s worst case.
+    story_words = len(historia.split())
+    max_tokens  = 1800
     logger.info(f"Historia: {story_words} palabras — max_tokens={max_tokens}")
 
     last_error = None

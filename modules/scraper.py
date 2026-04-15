@@ -51,7 +51,7 @@ def _load_used_ids() -> set:
     return set()
 
 
-def _mark_as_used(post_id: str) -> None:
+def mark_as_used(post_id: str) -> None:
     """Marca un post como usado para no repetirlo."""
     used = _load_used_ids()
     used.add(post_id)
@@ -59,6 +59,10 @@ def _mark_as_used(post_id: str) -> None:
         json.dumps({"used_ids": list(used)}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+# Alias privado para compatibilidad interna
+_mark_as_used = mark_as_used
 
 
 # ─── Filtros de contenido ─────────────────────────────────────────────────────
@@ -360,9 +364,9 @@ def _fetch_confesiones_anonimas() -> list[dict]:
                 if any(kw in texto_lower for kw in _CA_BLOCKED):
                     continue
 
-                # Filtro de longitud minima (80 palabras ~ 480 chars a ~6 chars/palabra)
+                # Filtro de longitud minima — consistente con STORY_MIN_CHARS global
                 word_count = len(texto.split())
-                if word_count < 80:
+                if len(texto) < config.STORY_MIN_CHARS:
                     continue
 
                 # ID unico basado en hash del contenido (no hay ID nativo)
@@ -441,7 +445,6 @@ def _try_post(post: dict, used_ids: set) -> dict | None:
         texto = texto[:config.STORY_MAX_CHARS]
 
     texto_limpio = _clean_text(texto)
-    _mark_as_used(post_id)
 
     return {
         "titulo":   titulo or texto_limpio[:80],
@@ -502,6 +505,7 @@ def get_story() -> dict | None:
                     post["_source"] = f"r/{subreddit}"
                     story = _try_post(post, used_ids)
                     if story:
+                        mark_as_used(story["post_id"])
                         logger.info(
                             f"Historia seleccionada (Reddit): '{story['titulo'][:60]}' "
                             f"| {len(story['historia'])} chars | {story['upvotes']} upvotes"
@@ -525,6 +529,7 @@ def get_story() -> dict | None:
             for post in top_ca:
                 story = _try_post(post, used_ids)
                 if story:
+                    mark_as_used(story["post_id"])
                     logger.info(
                         f"Historia seleccionada (confesionesanonimas.org): "
                         f"'{story['titulo'][:60]}' | {len(story['historia'])} chars"
@@ -541,6 +546,7 @@ def get_story() -> dict | None:
             for post in gh_posts:
                 story = _try_post(post, used_ids)
                 if story:
+                    mark_as_used(story["post_id"])
                     logger.info(
                         f"Historia seleccionada (grouphug.us): "
                         f"{len(story['historia'])} chars"

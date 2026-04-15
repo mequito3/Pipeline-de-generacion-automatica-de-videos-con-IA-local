@@ -19,7 +19,7 @@ OLLAMA_MODEL: str = os.getenv(
 # Modelo de fallback si el principal falla o genera JSON inválido 3 veces
 # Opciones más capaces: "mistral:7b", "llama3.1:8b", "gemma2:9b"
 OLLAMA_FALLBACK_MODEL: str = os.getenv("OLLAMA_FALLBACK_MODEL", "")
-OLLAMA_TIMEOUT: int = 120  # segundos máximos esperando respuesta
+OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # lee del .env
 
 # ─── Stable Diffusion (imágenes locales) ─────────────────────────────────────
 SD_BACKEND: str = os.getenv("SD_BACKEND", "auto")  # "a1111" | "comfyui" | "auto"
@@ -28,7 +28,7 @@ SD_COMFYUI_URL: str = os.getenv("SD_COMFYUI_URL", "http://localhost:8000")
 SD_STEPS: int = int(os.getenv("SD_STEPS", "20"))  # más pasos = más calidad, más lento
 SD_CFG_SCALE: float = float(os.getenv("SD_CFG_SCALE", "7.0"))
 SD_SAMPLER: str = "DPM++ 2M Karras"
-SD_TIMEOUT: int = 180  # segundos máximos por imagen
+SD_TIMEOUT: int = int(os.getenv("SD_TIMEOUT", "180"))  # segundos máximos por imagen
 
 # ─── Z-Image Turbo (ComfyUI) — parámetros de rendimiento ─────────────────────
 # Resolución nativa de inferencia (se escala a 1080x1920 en el video)
@@ -62,6 +62,20 @@ TTS_BACKEND: str = os.getenv("TTS_BACKEND", "edge")
 TTS_EDGE_VOICE: str = os.getenv("TTS_EDGE_VOICE", "es-MX-DaliaNeural")
 TTS_VOICE_RATE: int = int(os.getenv("TTS_VOICE_RATE", "175"))
 TTS_VOLUME: float = 1.0
+
+# ─── WhatsApp / Aprobación manual ────────────────────────────────────────────
+# Si es true, el pipeline pausa y espera tu SI/NO en WhatsApp antes de publicar
+WHATSAPP_APPROVAL_ENABLED: bool = (
+    os.getenv("WHATSAPP_APPROVAL_ENABLED", "false").lower() == "true"
+)
+TWILIO_ACCOUNT_SID: str  = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN: str   = os.getenv("TWILIO_AUTH_TOKEN", "")
+# Número de Twilio con prefijo whatsapp (sandbox: +14155238886)
+TWILIO_WHATSAPP_FROM: str = os.getenv("TWILIO_WHATSAPP_FROM", "")
+# Tu número personal con código de país (ej. +521234567890)
+WHATSAPP_TO: str = os.getenv("WHATSAPP_TO", "")
+# Segundos máximos esperando respuesta (default: 2 horas)
+WHATSAPP_APPROVAL_TIMEOUT: int = int(os.getenv("WHATSAPP_APPROVAL_TIMEOUT", "7200"))
 
 # ─── YouTube (Selenium) ───────────────────────────────────────────────────────
 YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
@@ -139,10 +153,32 @@ TOPICS: list[str] = [
 ]
 
 # ─── Branding del canal ───────────────────────────────────────────────────────
-CHANNEL_NAME: str = os.getenv("CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
+CHANNEL_NAME: str = os.getenv("CHANNEL_NAME", "GATA CURIOSA")
 MUSIC_VOLUME: float = float(
-    os.getenv("MUSIC_VOLUME", "0.10")
-)  # 0.0–1.0 (10% = fondo suave)
+    os.getenv("MUSIC_VOLUME", "0.13")
+)  # 0.0–1.0 (13% = +30% sobre el anterior)
+
+# ─── CTAs del outro (se elige uno al azar en cada video) ──────────────────────
+CTA_COMMENTS: list[str] = [
+    "Comenta tu respuesta abajo",
+    "Cuéntame qué piensas en los comentarios",
+    "Deja tu opinión abajo",
+    "¿Qué hubieras hecho tú? Comenta",
+    "Respóndeme en los comentarios",
+]
+CTA_FOLLOW: list[str] = [
+    "Sígueme para más historias reales",
+    "Suscríbete para más confesiones",
+    "No te pierdas las próximas historias",
+    "Dale like y sígueme para más",
+    "Sígueme, hay muchas más historias así",
+]
+
+# ─── Ruta del workflow de ComfyUI (configurable por usuario) ──────────────────
+COMFYUI_WORKFLOW_PATH: Path = Path(os.getenv(
+    "COMFYUI_WORKFLOW_PATH",
+    r"C:\Users\ameri\Downloads\generador_imagnes_correcot.json"
+))
 
 # ─── Subtítulos ───────────────────────────────────────────────────────────────
 SUBTITLE_FONT_SIZE: int = 88

@@ -331,13 +331,36 @@ def run_factory(topic: str | None = None) -> bool:
         except Exception as e_thumb:
             logger.warning(f"      Thumbnail no generado: {e_thumb}")
 
-        # ── PASO 6: Subir a YouTube ────────────────────────────────────────────
+        # ── PASO 6: Aprobación vía WhatsApp (opcional) ────────────────────────
+        if config.WHATSAPP_APPROVAL_ENABLED:
+            from modules import whatsapp_notifier
+            thumbnail_p = Path(run_dir / "thumbnail.jpg")
+            logger.info("[6/7] Enviando video a WhatsApp para aprobacion...")
+            approved = whatsapp_notifier.send_approval_request(
+                video_path=Path(video_path),
+                thumbnail_path=thumbnail_p if thumbnail_p.exists() else None,
+                title=script["title"],
+                duration_s=audio_duration,
+                description=script.get("description", ""),
+                tags=script.get("tags", []),
+                narrator_gender=script.get("narrator_gender", "auto"),
+            )
+            if not approved:
+                logger.info("      Video RECHAZADO — no se sube a YouTube")
+                _cleanup_temp_files(run_dir, keep_final=True)
+                return False
+            logger.info("      Video APROBADO via WhatsApp — continuando...")
+            youtube_step_label = "[7/7]"
+        else:
+            youtube_step_label = "[6/6]"
+
+        # ── PASO 7 (o 6): Subir a YouTube ─────────────────────────────────────
         if not config.YOUTUBE_UPLOAD_ENABLED:
-            logger.info("[6/6] Subida a YouTube: DESACTIVADA en .env")
+            logger.info(f"{youtube_step_label} Subida a YouTube: DESACTIVADA en .env")
             success = True
         else:
             t0 = time.time()
-            logger.info("[6/6] Subiendo a YouTube...")
+            logger.info(f"{youtube_step_label} Subiendo a YouTube...")
             success = youtube_uploader.upload_to_youtube(
                 video_path=video_path,
                 title=script["title"],
@@ -582,7 +605,7 @@ Prerequisitos:
     args = parser.parse_args()
 
     print("\n" + "="*60)
-    print("  CONFESIONES DRAMATICAS — Generador de YouTube Shorts")
+    print(f"  {config.CHANNEL_NAME} — Generador de YouTube Shorts")
     print("  100% local, sin costo de APIs")
     print("="*60)
     print(f"  Modelo de IA   : {config.OLLAMA_MODEL}")
