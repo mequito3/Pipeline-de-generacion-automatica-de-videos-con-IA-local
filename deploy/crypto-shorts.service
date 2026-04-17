@@ -1,0 +1,30 @@
+[Unit]
+Description=Crypto Shorts Factory — YouTube automation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/crypto_shorts_factory
+
+# Xvfb crea pantalla virtual para que Chrome no corra en modo headless real
+# (headless real es detectable; pantalla virtual no)
+ExecStartPre=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 &
+Environment=DISPLAY=:99
+EnvironmentFile=/home/pi/crypto_shorts_factory/.env
+
+ExecStart=/home/pi/crypto_shorts_factory/venv/bin/python main.py
+
+# Reiniciar automáticamente si cae (máx 3 intentos en 5 min)
+Restart=on-failure
+RestartSec=30s
+StartLimitInterval=300
+StartLimitBurst=3
+
+# Logs via journald (ver con: journalctl -u crypto-shorts -f)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

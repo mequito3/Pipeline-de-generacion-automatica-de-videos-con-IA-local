@@ -280,13 +280,39 @@ async def _upload_async(
     profile_dir = Path(config.CHROME_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
+    # En Linux sin display físico (Raspberry Pi) usamos Xvfb como pantalla virtual.
+    # Xvfb no es detectable como headless — Chrome cree que hay una pantalla real.
+    import platform
+    import os
+    extra_args: list[str] = []
+    if platform.system() == "Linux" and not os.environ.get("DISPLAY"):
+        # Sin DISPLAY configurado: forzar pantalla virtual :99 (levantada por systemd)
+        os.environ["DISPLAY"] = ":99"
+        logger.info("Linux sin display físico — usando DISPLAY=:99 (Xvfb)")
+
+    # Detectar binario de Chrome/Chromium según SO
+    chrome_bin = getattr(config, "CHROME_BINARY", "")
+    if not chrome_bin:
+        candidates = [
+            "/usr/bin/chromium-browser",   # Raspberry Pi OS
+            "/usr/bin/chromium",           # Debian/Ubuntu
+            "/usr/bin/google-chrome",      # Ubuntu con Chrome
+        ]
+        for c in candidates:
+            if Path(c).exists():
+                chrome_bin = c
+                break
+
     browser = await uc.start(
         user_data_dir=str(profile_dir),
+        browser_executable_path=chrome_bin or None,
         browser_args=[
             "--start-maximized",
             "--window-size=1920,1080",
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",   # Necesario en Pi (poca memoria compartida)
+            *extra_args,
         ],
     )
 
