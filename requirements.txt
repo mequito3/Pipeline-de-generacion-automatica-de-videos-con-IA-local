@@ -1,44 +1,42 @@
 # ─── Shorts Factory — requirements.txt ──────────────────────────────────────
 # Instalación: pip install -r requirements.txt
 # Python 3.10+ requerido
-# COSTO TOTAL DE APIs: $0 — todo corre localmente
 
-# ─── LLM Local ───────────────────────────────────────────────────────────────
-ollama>=0.1.8                   # Cliente para Ollama (llama3, mistral, etc.)
+# ─── LLM ─────────────────────────────────────────────────────────────────────
+ollama>=0.6.1                   # Cliente Ollama (llama3, mistral, etc.)
+httpx>=0.28.0                   # HTTP async — llamadas a Groq API
 
-# ─── TTS Local ────────────────────────────────────────────────────────────────
-edge-tts>=6.1.9                 # Microsoft Edge TTS neural (gratis, requiere internet)
-pyttsx3>=2.90                   # Text-to-Speech offline con voces del sistema
+# ─── TTS ──────────────────────────────────────────────────────────────────────
+edge-tts>=7.0.0                 # Microsoft Edge TTS neural (gratis, requiere internet)
+pyttsx3>=2.90                   # TTS offline con voces del sistema (fallback)
+pydub>=0.25.1                   # Conversión y mezcla de audio (requiere ffmpeg en PATH)
 
-# ─── Sincronización de subtítulos ─────────────────────────────────────────────
-faster-whisper>=1.0.0           # Timestamps exactos por palabra (CTranslate2)
-stable-ts>=2.14.0               # Forced alignment con Whisper (más preciso para TTS)
+# ─── Subtítulos sincronizados ────────────────────────────────────────────────
+faster-whisper>=1.2.0           # Transcripción rápida con CTranslate2
+stable-ts>=2.19.0               # Forced alignment palabra a palabra
 openai-whisper>=20231117        # Modelo base requerido por stable-ts
 
-# ─── Video / Audio ────────────────────────────────────────────────────────────
-moviepy>=1.0.3                  # Edición y ensamblaje de video
-pydub>=0.25.1                   # Conversión WAV → MP3 (requiere ffmpeg en PATH)
-numpy>=1.24.0                   # Arrays de frames para moviepy
-
 # ─── Imágenes ─────────────────────────────────────────────────────────────────
-Pillow>=10.0.0                  # Procesamiento de imágenes, upscale, fallback
+Pillow>=12.0.0                  # Procesamiento de imágenes, thumbnails, overlays
 
-# ─── HTTP / APIs locales ──────────────────────────────────────────────────────
-requests>=2.31.0                # Llamadas a A1111, ComfyUI y Ollama
+# ─── Scraping de historias ────────────────────────────────────────────────────
+beautifulsoup4>=4.12.0          # Parsing HTML para scraper de confesiones
+requests>=2.31.0                # HTTP síncrono — Pexels, SD, scraping
 
-# ─── Selenium (YouTube upload) ────────────────────────────────────────────────
-selenium>=4.18.0                # Automatización del navegador
-undetected-chromedriver>=3.5.5  # ChromeDriver anti-detección de bots
+# ─── Upload a YouTube ─────────────────────────────────────────────────────────
+nodriver>=0.48.0                # Automatización Chrome sin detección (reemplaza Selenium)
 
-# ─── Configuración ────────────────────────────────────────────────────────────
-python-dotenv>=1.0.0            # Cargar .env con credenciales de YouTube
+# ─── Notificaciones WhatsApp ──────────────────────────────────────────────────
+twilio>=9.0.0                   # API de WhatsApp vía Twilio sandbox
 
-# ─── Scheduler ────────────────────────────────────────────────────────────────
-schedule>=1.2.1                 # Ejecutar el pipeline cada N horas
+# ─── Utilidades ───────────────────────────────────────────────────────────────
+numpy>=1.22.0                   # Arrays numéricos (dependencia de whisper)
+python-dotenv>=1.0.0            # Cargar .env con credenciales
+schedule>=1.2.1                 # Scheduler automático cada N horas
+json5>=0.9.0                    # Parser JSON permisivo (fallback para output del LLM)
 
 # ─── Dependencias del sistema (NO pip) — instalar manualmente ─────────────────
-# ffmpeg: winget install ffmpeg  (requerido por moviepy y pydub)
-# Chrome: https://www.google.com/chrome/ (requerido por Selenium)
-# Ollama: https://ollama.ai (servidor LLM local)
-# Stable Diffusion A1111: https://github.com/AUTOMATIC1111/stable-diffusion-webui
-# Stable Diffusion ComfyUI: https://github.com/comfyanonymous/ComfyUI
+# ffmpeg  : winget install ffmpeg          (requerido para video y audio)
+# Chrome  : https://www.google.com/chrome/ (requerido por nodriver)
+# Ollama  : https://ollama.ai              (servidor LLM local)
+# ComfyUI : https://github.com/comfyanonymous/ComfyUI  (opcional, imágenes IA)
