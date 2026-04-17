@@ -488,6 +488,40 @@ async def _wait_upload_complete(page, timeout: int = 360) -> None:
 
 # ─── Pipeline principal ───────────────────────────────────────────────────────
 
+def _cleanup_chrome_profile(profile_dir: Path) -> None:
+    """
+    Mata Chrome y limpia locks del perfil para evitar
+    'Failed to connect to browser' cuando quedó una instancia colgada.
+    """
+    import subprocess
+
+    # Siempre matar Chrome antes de empezar — evita conflictos de perfil
+    if platform.system() == "Windows":
+        try:
+            result = subprocess.run(
+                ["taskkill", "//F", "//IM", "chrome.exe"],
+                capture_output=True, timeout=8
+            )
+            if result.returncode == 0:
+                logger.info("Chrome anterior terminado para liberar el perfil")
+                time.sleep(2.0)
+        except Exception:
+            pass
+    else:
+        try:
+            subprocess.run(["pkill", "-f", "chrome"], capture_output=True, timeout=5)
+            time.sleep(1.5)
+        except Exception:
+            pass
+
+    # Eliminar archivos de bloqueo que Chrome deja si no cierra bien
+    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        try:
+            (profile_dir / lock).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 async def _upload_async(
     video_path: Path,
     title: str,
@@ -505,6 +539,9 @@ async def _upload_async(
         os.environ["DISPLAY"] = ":99"
         logger.info("Linux sin display físico — usando DISPLAY=:99 (Xvfb)")
 
+    # Limpiar bloqueos del perfil antes de iniciar Chrome
+    _cleanup_chrome_profile(profile_dir)
+
     # Detectar binario de Chrome/Chromium según SO
     chrome_bin = getattr(config, "CHROME_BINARY", "")
     if not chrome_bin:
@@ -517,25 +554,22 @@ async def _upload_async(
                 chrome_bin = candidate
                 break
 
-    browser = await uc.start(
-        user_data_dir=str(profile_dir),
-        browser_executable_path=chrome_bin or None,
-        browser_args=[
-            "--start-maximized",
-            "--window-size=1920,1080",
-            "--no-sandbox",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--disable-infobars",
-            "--disable-extensions",
-            "--disable-popup-blocking",
-            "--lang=es-419",
-        ],
-    )
-
+    browser = None
     page = None
     try:
-        # Obtener la pestaña principal y aplicar stealth ANTES de navegar
+        browser = await uc.start(
+            user_data_dir=str(profile_dir),
+            browser_executable_path=chrome_bin or None,
+            browser_args=[
+                "--start-maximized",
+                "--window-size=1920,1080",
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ],
+        )
+
+        # Aplicar stealth ANTES de navegar a ninguna URL real
         page = await browser.get("about:blank")
         await _inject_stealth(page)
 
@@ -781,7 +815,7 @@ async def _upload_async(
         return True, youtube_url
 
     except Exception as e:
-        logger.error(f"Error durante upload: {e}")
+        logger.error(f"Error durante upload: {type(e).__name__}: {e}", exc_info=True)
         if page:
             try:
                 ts = time.strftime("%Y%m%d_%H%M%S")
@@ -791,10 +825,11 @@ async def _upload_async(
         return False, ""
 
     finally:
-        try:
-            browser.stop()
-        except Exception:
-            pass
+        if browser is not None:
+            try:
+                browser.stop()
+            except Exception:
+                pass
 
 
 # ─── API pública (síncrona) ───────────────────────────────────────────────────
@@ -828,7 +863,7 @@ def upload_to_youtube(
                 return youtube_url
             logger.warning(f"Intento {attempt} falló sin excepción")
         except Exception as e:
-            logger.error(f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {e}")
+            logger.error(f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {type(e).__name__}: {e}", exc_info=True)
 
         if attempt < config.UPLOAD_MAX_RETRIES:
             logger.info(f"Reintentando en {config.UPLOAD_RETRY_WAIT}s...")
