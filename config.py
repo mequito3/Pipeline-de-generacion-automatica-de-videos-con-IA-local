@@ -181,7 +181,7 @@ CTA_FOLLOW: list[str] = [
 # ─── Ruta del workflow de ComfyUI (configurable por usuario) ──────────────────
 COMFYUI_WORKFLOW_PATH: Path = Path(os.getenv(
     "COMFYUI_WORKFLOW_PATH",
-    r"C:\Users\ameri\Downloads\generador_imagnes_correcot.json"
+    str(Path(__file__).parent / "assets" / "comfyui_workflow.json")
 ))
 
 # ─── Subtítulos ───────────────────────────────────────────────────────────────

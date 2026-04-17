@@ -828,7 +828,7 @@ def generate_script(topic: str) -> dict:
         except json.JSONDecodeError as e:
             last_error = f"JSON inválido (intento {attempt}): {e}"
             logger.warning(last_error)
-            logger.warning(f"Raw Ollama (primeros 300 chars): {raw[:300]!r}")
+            logger.warning(f"Raw Ollama (primeros 300 chars): {raw_response[:300]!r}")
         except ValueError as e:
             last_error = f"Validación fallida (intento {attempt}): {e}"
             logger.warning(last_error)
