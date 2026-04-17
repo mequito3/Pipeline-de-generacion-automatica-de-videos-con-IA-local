@@ -714,34 +714,34 @@ def assemble_video(
         clip_paths: list[Path] = []
         scenes = script.get("scenes", [])
 
-        # ── 2. Intro ───────────────────────────────────────────────────────────
-        logger.info("Renderizando intro...")
-        t0 = time.time()
-        # El intro muestra el TÍTULO (clickbait de YouTube), no el hook.
-        # El hook se narra y aparece como subtítulo en la primera escena —
-        # mostrarlo también en el intro causaba que se leyera dos veces.
-        intro_img = _render_intro_png(
-            hook=script.get("title", script.get("hook", "")),
-            title=script.get("title", ""),
-            first_image_path=valid_images[0] if valid_images else None,
-        )
-        intro_png  = tmp_dir / "intro.png"
-        intro_clip = tmp_dir / "clip_000_intro.mp4"
-        intro_img.save(str(intro_png), "PNG")
+        # ── 2. Intro (opcional — 0 = desactivado para Shorts) ────────────────
+        if config.INTRO_DURATION > 0:
+            logger.info("Renderizando intro...")
+            t0 = time.time()
+            intro_img = _render_intro_png(
+                hook=script.get("title", script.get("hook", "")),
+                title=script.get("title", ""),
+                first_image_path=valid_images[0] if valid_images else None,
+            )
+            intro_png  = tmp_dir / "intro.png"
+            intro_clip = tmp_dir / "clip_000_intro.mp4"
+            intro_img.save(str(intro_png), "PNG")
 
-        intro_frames  = int(config.INTRO_DURATION * config.FPS)
-        intro_fade_in = 0.5
-        intro_fade_out_start = round(config.INTRO_DURATION - 0.4, 3)
-        _ffmpeg(
-            "-loop", "1", "-framerate", str(config.FPS), "-i", str(intro_png),
-            "-vf", f"fade=t=in:st=0:d={intro_fade_in},fade=t=out:st={intro_fade_out_start}:d=0.4",
-            "-frames:v", str(intro_frames),
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            str(intro_clip),
-            desc="intro",
-        )
-        clip_paths.append(intro_clip)
-        logger.info(f"Intro lista en {time.time()-t0:.1f}s")
+            intro_frames         = int(config.INTRO_DURATION * config.FPS)
+            intro_fade_in        = min(0.5, config.INTRO_DURATION * 0.2)
+            intro_fade_out_start = round(max(0.1, config.INTRO_DURATION - 0.4), 3)
+            _ffmpeg(
+                "-loop", "1", "-framerate", str(config.FPS), "-i", str(intro_png),
+                "-vf", f"fade=t=in:st=0:d={intro_fade_in},fade=t=out:st={intro_fade_out_start}:d=0.4",
+                "-frames:v", str(intro_frames),
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                str(intro_clip),
+                desc="intro",
+            )
+            clip_paths.append(intro_clip)
+            logger.info(f"Intro lista en {time.time()-t0:.1f}s")
+        else:
+            logger.info("Intro desactivada (INTRO_DURATION=0) — video empieza directo con la historia")
 
         # ── 3. Pre-renderizar subtítulos ──────────────────────────────────────
         # REMOVIDO: Ahora se inyecta directamente vía FFmpeg ASS en el paso 6.

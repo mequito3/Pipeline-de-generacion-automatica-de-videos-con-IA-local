@@ -60,7 +60,7 @@ VIDEO_WIDTH: int = 1080
 VIDEO_HEIGHT: int = 1920
 VIDEO_DURATION: int = 35  # segundos objetivo del Short (confesiones: 20–40s ideal)
 FPS: int = 30
-INTRO_DURATION: float = 2.5   # tiempo en pantalla de la intro (hook legible por el usuario)
+INTRO_DURATION: float = 0.0   # 0 = sin intro (recomendado Shorts: viewers hacen swipe si no ven historia en <2s)
 OUTRO_DURATION: float = 4.0   # CTA final con pregunta de engagement
 
 # ─── TTS (Text-to-Speech) ─────────────────────────────────────────────────────
