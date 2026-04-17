@@ -98,8 +98,8 @@ def _render_intro_png(hook: str, title: str, first_image_path: str | None) -> Im
     GOLD   = (255, 210, 40)
 
     # ── 1. Fondo ──────────────────────────────────────────────────────────────
-    if first_image_path and Path(first_image_path).exists():
-        bg = Image.open(first_image_path).convert("RGB").resize((W, H), Image.LANCZOS)
+    if first_image_path:
+        bg = _open_as_image(first_image_path, (W, H))
     else:
         bg = Image.new("RGB", (W, H), (10, 10, 20))
 
@@ -232,34 +232,9 @@ def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str
 
     bg_path = images[best_idx] if best_idx < len(images) else (images[0] if images else None)
 
-    # Fondo — si es video, extraer frame con ffmpeg
-    def _frame_from_video(vpath: str) -> Image.Image | None:
-        import subprocess, tempfile as _tf
-        try:
-            dur = _get_audio_duration(vpath)
-            ts  = round(dur * 0.35, 2)
-            with _tf.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                tmp_path = tmp.name
-            subprocess.run(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                 "-ss", str(ts), "-i", vpath,
-                 "-frames:v", "1", "-q:v", "2", tmp_path],
-                check=True,
-            )
-            img = Image.open(tmp_path).convert("RGB")
-            Path(tmp_path).unlink(missing_ok=True)
-            return img
-        except Exception:
-            return None
-
-    if bg_path and Path(bg_path).exists():
-        if _is_video(bg_path):
-            frame = _frame_from_video(bg_path)
-            bg = (frame or Image.new("RGB", (W_T, H_T), (10, 10, 20))).resize(
-                (W_T, H_T), Image.LANCZOS
-            )
-        else:
-            bg = Image.open(bg_path).convert("RGB").resize((W_T, H_T), Image.LANCZOS)
+    # Fondo — soporta tanto imagen como clip de video (Pexels)
+    if bg_path:
+        bg = _open_as_image(bg_path, (W_T, H_T))
     else:
         bg = Image.new("RGB", (W_T, H_T), (10, 10, 20))
 
@@ -330,9 +305,9 @@ def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image
     GRAY   = (200, 200, 200)
     GOLD   = (255, 210, 40)
 
-    # Fondo: última imagen de escena
-    if last_image_path and Path(last_image_path).exists():
-        bg = Image.open(last_image_path).convert("RGB").resize((W, H), Image.LANCZOS)
+    # Fondo: último clip/imagen de escena
+    if last_image_path:
+        bg = _open_as_image(last_image_path, (W, H))
     else:
         bg = Image.new("RGB", (W, H), (10, 10, 20))
 
@@ -424,6 +399,35 @@ _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 def _is_video(path: str) -> bool:
     return Path(path).suffix.lower() in _VIDEO_EXTS
+
+
+def _open_as_image(path: str, size: tuple[int, int]) -> Image.Image:
+    """
+    Abre un path como imagen PIL, sea PNG/JPG o un clip MP4 (extrae frame al 35%).
+    Siempre devuelve una imagen RGB del tamaño pedido.
+    """
+    p = Path(path)
+    if not p.exists():
+        return Image.new("RGB", size, (10, 10, 20))
+    if _is_video(path):
+        try:
+            dur = _get_audio_duration(path)
+            ts  = round(dur * 0.35, 2)
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", str(ts), "-i", path,
+                 "-frames:v", "1", "-q:v", "2", tmp_path],
+                check=True,
+            )
+            img = Image.open(tmp_path).convert("RGB").resize(size, Image.LANCZOS)
+            Path(tmp_path).unlink(missing_ok=True)
+            return img
+        except Exception as e:
+            logger.warning(f"No se pudo extraer frame de {p.name}: {e}")
+            return Image.new("RGB", size, (10, 10, 20))
+    return Image.open(path).convert("RGB").resize(size, Image.LANCZOS)
 
 
 # ─── Clip de escena desde stock video (Pexels) ────────────────────────────────
