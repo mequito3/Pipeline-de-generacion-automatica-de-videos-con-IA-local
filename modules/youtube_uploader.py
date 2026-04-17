@@ -862,14 +862,37 @@ def upload_to_youtube(
 
     for attempt in range(1, config.UPLOAD_MAX_RETRIES + 1):
         try:
-            ok, youtube_url = asyncio.run(
-                _upload_async(video_path, title, description, tags, thumbnail_path)
-            )
+            # En Windows, asyncio.run() puede dejar el event loop en SelectorEventLoop
+            # después de que edge-tts u otras corrutinas corran. nodriver necesita
+            # ProactorEventLoop para lanzar subprocesos (Chrome). Lo creamos explícitamente.
+            if platform.system() == "Windows":
+                loop = asyncio.ProactorEventLoop()
+                asyncio.set_event_loop(loop)
+                try:
+                    ok, youtube_url = loop.run_until_complete(
+                        _upload_async(video_path, title, description, tags, thumbnail_path)
+                    )
+                finally:
+                    try:
+                        loop.run_until_complete(loop.shutdown_asyncgens())
+                    except Exception:
+                        pass
+                    loop.close()
+                    asyncio.set_event_loop(None)
+            else:
+                ok, youtube_url = asyncio.run(
+                    _upload_async(video_path, title, description, tags, thumbnail_path)
+                )
+
             if ok:
                 return youtube_url
             logger.warning(f"Intento {attempt} falló sin excepción")
         except Exception as e:
-            logger.error(f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
 
         if attempt < config.UPLOAD_MAX_RETRIES:
             logger.info(f"Reintentando en {config.UPLOAD_RETRY_WAIT}s...")
