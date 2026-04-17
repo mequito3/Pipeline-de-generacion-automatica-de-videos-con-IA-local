@@ -388,7 +388,11 @@ async def _upload_async(
         hashtags_str = " ".join(
             t if t.startswith("#") else f"#{t}" for t in (tags or [])
         )
-        full_desc = f"{description}\n\n{hashtags_str}" if hashtags_str else description
+        # Hashtags al inicio Y al final: mejor SEO y YouTube los muestra encima del título
+        if hashtags_str:
+            full_desc = f"{hashtags_str}\n\n{description}\n\n{hashtags_str}"
+        else:
+            full_desc = description
         # Click en el campo de descripcion y pausa antes de escribir
         await _human_click(desc_input)
         await _delay(1.2, 2.8)
