@@ -232,9 +232,34 @@ def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str
 
     bg_path = images[best_idx] if best_idx < len(images) else (images[0] if images else None)
 
-    # Fondo
+    # Fondo — si es video, extraer frame con ffmpeg
+    def _frame_from_video(vpath: str) -> Image.Image | None:
+        import subprocess, tempfile as _tf
+        try:
+            dur = _get_audio_duration(vpath)
+            ts  = round(dur * 0.35, 2)
+            with _tf.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", str(ts), "-i", vpath,
+                 "-frames:v", "1", "-q:v", "2", tmp_path],
+                check=True,
+            )
+            img = Image.open(tmp_path).convert("RGB")
+            Path(tmp_path).unlink(missing_ok=True)
+            return img
+        except Exception:
+            return None
+
     if bg_path and Path(bg_path).exists():
-        bg = Image.open(bg_path).convert("RGB").resize((W_T, H_T), Image.LANCZOS)
+        if _is_video(bg_path):
+            frame = _frame_from_video(bg_path)
+            bg = (frame or Image.new("RGB", (W_T, H_T), (10, 10, 20))).resize(
+                (W_T, H_T), Image.LANCZOS
+            )
+        else:
+            bg = Image.open(bg_path).convert("RGB").resize((W_T, H_T), Image.LANCZOS)
     else:
         bg = Image.new("RGB", (W_T, H_T), (10, 10, 20))
 
@@ -390,6 +415,74 @@ def _get_audio_duration(audio_path: str) -> float:
         raise RuntimeError(
             f"No se pudo leer duración del audio: {audio_path}\n"
             "Verifica que FFmpeg/ffprobe está instalado."
+        )
+
+
+# ─── Detección de tipo de entrada ────────────────────────────────────────────
+
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+def _is_video(path: str) -> bool:
+    return Path(path).suffix.lower() in _VIDEO_EXTS
+
+
+# ─── Clip de escena desde stock video (Pexels) ────────────────────────────────
+
+def _build_scene_clip_from_video(
+    video_path: str,
+    duration: float,
+    fps: int,
+    out_path: Path,
+    scene_idx: int,
+) -> None:
+    """
+    Prepara un clip de stock video para una escena:
+    - Escala y recorta a 1080x1920 (portrait center-crop)
+    - Toma un segmento aleatorio dentro del clip (variedad entre runs)
+    - Si el clip es más corto que duration, lo loopea
+    - Añade fade in/out suave
+    Usa libx264 (CPU) porque los clips ya tienen movimiento real — no necesitan GPU.
+    """
+    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    fade_d = round(min(0.30, duration * 0.12), 3)
+    fade_out_start = round(max(0.0, duration - fade_d), 3)
+
+    vf = (
+        f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+        f"crop={W}:{H},"
+        f"fade=t=in:st=0:d={fade_d},"
+        f"fade=t=out:st={fade_out_start}:d={fade_d}"
+    )
+
+    clip_dur = _get_audio_duration(video_path)
+    # Offset aleatorio para variedad cuando el mismo clip se reutiliza
+    max_offset = max(0.0, clip_dur - duration - 0.5)
+    start_offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 0 else 0.0
+
+    if clip_dur < duration:
+        # Clip corto: loopeamos antes de recortar
+        _ffmpeg(
+            "-stream_loop", "-1",
+            "-i", video_path,
+            "-t", str(duration),
+            "-vf", vf,
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an",
+            str(out_path),
+            desc=f"escena {scene_idx} (stock video, loop)",
+        )
+    else:
+        _ffmpeg(
+            "-ss", str(start_offset),
+            "-i", video_path,
+            "-t", str(duration),
+            "-vf", vf,
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an",
+            str(out_path),
+            desc=f"escena {scene_idx} (stock video)",
         )
 
 
@@ -650,7 +743,9 @@ def assemble_video(
         # REMOVIDO: Ahora se inyecta directamente vía FFmpeg ASS en el paso 6.
 
         # ── 4. Generar clips de escena en paralelo ─────────────────────────────
-        logger.info(f"Generando {len(valid_images)} clips con FFmpeg zoompan dinámico (NVENC)...")
+        using_video = any(_is_video(p) for p in valid_images)
+        clip_mode = "stock video (Pexels)" if using_video else "zoompan + NVENC (SD)"
+        logger.info(f"Generando {len(valid_images)} clips — modo: {clip_mode}...")
         t0 = time.time()
 
         scene_clip_paths = [tmp_dir / f"clip_{i+1:03d}_scene.mp4"
@@ -659,14 +754,24 @@ def assemble_video(
         def build_scene(idx):
             t_s  = time.time()
             act  = scenes[idx].get("act", "") if idx < len(scenes) else ""
-            _build_scene_clip(
-                image_path=valid_images[idx],
-                duration=scene_duration,
-                fps=config.FPS,
-                out_path=scene_clip_paths[idx],
-                scene_idx=idx,
-                act=act,
-            )
+            src  = valid_images[idx]
+            if _is_video(src):
+                _build_scene_clip_from_video(
+                    video_path=src,
+                    duration=scene_duration,
+                    fps=config.FPS,
+                    out_path=scene_clip_paths[idx],
+                    scene_idx=idx,
+                )
+            else:
+                _build_scene_clip(
+                    image_path=src,
+                    duration=scene_duration,
+                    fps=config.FPS,
+                    out_path=scene_clip_paths[idx],
+                    scene_idx=idx,
+                    act=act,
+                )
             logger.info(
                 f"  Escena {idx+1}/{len(valid_images)} [{act or '-'}] lista "
                 f"({time.time()-t_s:.1f}s)"

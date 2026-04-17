@@ -25,6 +25,12 @@ OLLAMA_MODEL: str = os.getenv(
 OLLAMA_FALLBACK_MODEL: str = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # lee del .env
 
+# ─── Pexels (stock videos gratuitos) ─────────────────────────────────────────
+# Regístrate gratis en https://www.pexels.com/api/ (200 req/hora, 20k/mes)
+PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
+# True → usa clips de stock de Pexels en vez de imágenes con IA
+USE_PEXELS: bool = os.getenv("USE_PEXELS", "false").lower() in ("true", "1", "yes")
+
 # ─── Stable Diffusion (imágenes locales) ─────────────────────────────────────
 SD_BACKEND: str = os.getenv("SD_BACKEND", "auto")  # "a1111" | "comfyui" | "auto"
 SD_A1111_URL: str = os.getenv("SD_A1111_URL", "http://localhost:7860")

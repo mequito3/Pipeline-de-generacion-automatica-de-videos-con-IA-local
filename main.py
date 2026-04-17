@@ -280,8 +280,11 @@ def run_factory(topic: str | None = None) -> bool:
         post_id_raw = script.get("_post_id", "") or ""
         post_seed = int(hashlib.md5(post_id_raw.encode()).hexdigest()[:8], 16) if post_id_raw else None
 
-        logger.info(f"[3+4/6] TTS ({gender_label}) + {len(script['scenes'])} imágenes SD en paralelo...")
-        logger.info(f"        Personaje: {char_desc[:60] or '(auto)'} | Genero: {img_gender or 'auto'}")
+        use_pexels = getattr(config, "USE_PEXELS", False)
+        visual_src = "Pexels (stock video)" if use_pexels else "Stable Diffusion (IA)"
+        logger.info(f"[3+4/6] TTS ({gender_label}) + {len(script['scenes'])} clips [{visual_src}] en paralelo...")
+        if not use_pexels:
+            logger.info(f"        Personaje: {char_desc[:60] or '(auto)'} | Genero: {img_gender or 'auto'}")
 
         t0 = time.time()
 
@@ -293,6 +296,12 @@ def run_factory(topic: str | None = None) -> bool:
             )
 
         def _run_images():
+            if use_pexels:
+                from modules import pexels_fetcher
+                return pexels_fetcher.fetch_videos(
+                    script["scenes"],
+                    str(images_dir),
+                )
             return image_generator.generate_images(
                 script["scenes"],
                 str(images_dir),
