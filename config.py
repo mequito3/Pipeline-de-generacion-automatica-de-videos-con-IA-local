@@ -193,7 +193,7 @@ COMFYUI_WORKFLOW_PATH: Path = Path(os.getenv(
 # ─── Subtítulos ───────────────────────────────────────────────────────────────
 SUBTITLE_FONT_SIZE: int = 88
 SUBTITLE_POSITION_Y: float = 0.75  # 75% desde arriba (tercio inferior)
-SUBTITLE_MARGIN_V: int = 280  # margen vertical desde abajo (más espacio visual)
+SUBTITLE_MARGIN_V: int = 800  # px desde abajo — pone el sub a ~58% desde arriba (justo bajo el centro)
 SUBTITLE_FONT_COLOR: str = "white"
 SUBTITLE_STROKE_COLOR: str = "black"
 SUBTITLE_STROKE_WIDTH: int = 2
