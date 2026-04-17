@@ -694,6 +694,55 @@ def run_tests() -> None:
     print("="*60 + "\n")
 
 
+# ─── Scheduler diario con hora aleatoria ─────────────────────────────────────
+
+def _next_run_time() -> "datetime.datetime":
+    """
+    Calcula la hora del próximo video: mañana a una hora aleatoria
+    dentro de la ventana configurada (SCHEDULE_MIN_HOUR – SCHEDULE_MAX_HOUR).
+    Añade también minutos aleatorios para que nunca sea hora exacta.
+    """
+    import datetime as _dt
+    min_h = getattr(config, "SCHEDULE_MIN_HOUR", 18)
+    max_h = getattr(config, "SCHEDULE_MAX_HOUR", 22)
+    tomorrow = _dt.date.today() + _dt.timedelta(days=1)
+    hour     = random.randint(min_h, max_h)
+    minute   = random.randint(0, 59)
+    return _dt.datetime.combine(tomorrow, _dt.time(hour, minute))
+
+
+def _run_scheduler(topic: str | None = None) -> None:
+    """
+    Publica 1 video/día a una hora aleatoria dentro de la ventana configurada.
+    Nunca a la misma hora dos días seguidos.
+    """
+    import datetime as _dt
+
+    min_h = getattr(config, "SCHEDULE_MIN_HOUR", 18)
+    max_h = getattr(config, "SCHEDULE_MAX_HOUR", 22)
+    print(f"⏰ Scheduler: 1 video/día entre {min_h:02d}:00 y {max_h:02d}:59 (hora aleatoria)")
+    print("   (Ctrl+C para detener)\n")
+
+    # Primer video: ahora mismo
+    run_factory(topic=topic)
+
+    while True:
+        next_run = _next_run_time()
+        wait_secs = (next_run - _dt.datetime.now()).total_seconds()
+        logger.info(
+            f"Próximo video programado: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
+            f"(en {wait_secs / 3600:.1f}h)"
+        )
+        print(f"\n⏰ Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
+              f"(en {wait_secs / 3600:.1f}h)\n")
+
+        # Esperar hasta la hora calculada (chequeando cada minuto)
+        while _dt.datetime.now() < next_run:
+            time.sleep(60)
+
+        run_factory()
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
@@ -758,28 +807,7 @@ Prerequisitos:
         sys.exit(0 if success else 1)
 
     else:
-        # Modo scheduler
-        peak_hours = getattr(config, "SCHEDULE_PEAK_HOURS", [])
-        if peak_hours:
-            hours_str = ", ".join(f"{h:02d}:00" for h in peak_hours)
-            print(f"⏰ Scheduler en horas pico: {hours_str} (hora local)")
-            print("   (Ctrl+C para detener)\n")
-
-            # Registrar una tarea por cada hora pico
-            for h in peak_hours:
-                schedule.every().day.at(f"{h:02d}:00").do(run_factory)
-
-        else:
-            print(f"⏰ Scheduler activado — corriendo cada {config.SCHEDULE_HOURS} horas")
-            print("   (Ctrl+C para detener)\n")
-            schedule.every(config.SCHEDULE_HOURS).hours.do(run_factory)
-
-        # Ejecutar una vez al inicio también
-        run_factory(topic=args.topic)
-
-        while True:
-            schedule.run_pending()
-            time.sleep(60)  # Verificar cada minuto
+        _run_scheduler(topic=args.topic)
 
 
 if __name__ == "__main__":

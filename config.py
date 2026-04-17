@@ -99,12 +99,10 @@ YOUTUBE_UPLOAD_ENABLED: bool = (
 )
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
-SCHEDULE_HOURS: int = int(os.getenv("SCHEDULE_HOURS", "8"))
-# Horas pico para español latino (MX/CO): 7am, 7pm, 9pm
-# Si está vacío, usa intervalo fijo de SCHEDULE_HOURS
-SCHEDULE_PEAK_HOURS: list = [
-    int(h) for h in os.getenv("SCHEDULE_PEAK_HOURS", "7,19,21").split(",") if h.strip()
-]
+# 1 video/día a una hora ALEATORIA dentro de la ventana
+# Audiencia latinoamericana: mejor franja 18:00–22:00 hora local
+SCHEDULE_MIN_HOUR: int = int(os.getenv("SCHEDULE_MIN_HOUR", "18"))
+SCHEDULE_MAX_HOUR: int = int(os.getenv("SCHEDULE_MAX_HOUR", "22"))
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 OUTPUT_DIR: Path = BASE_DIR / "output"
