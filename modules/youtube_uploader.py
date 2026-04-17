@@ -676,11 +676,8 @@ async def _upload_async(
         hashtags_str = " ".join(
             t if t.startswith("#") else f"#{t}" for t in (tags or [])
         )
-        full_desc = (
-            f"{hashtags_str}\n\n{description}\n\n{hashtags_str}"
-            if hashtags_str
-            else description
-        )
+        # Descripción corta + hashtags al final (estándar de Shorts)
+        full_desc = f"{description}\n\n{hashtags_str}" if hashtags_str else description
         await _human_click(page, desc_input)
         await _delay(1.2, 2.8)
         await _human_type(desc_input, full_desc, clear_first=False)

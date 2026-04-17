@@ -112,14 +112,14 @@ Genera una historia dramática anónima para YouTube Shorts con este JSON exacto
   "script_text": "historia completa narrada en primera persona, frases cortas conectadas causalmente, 100-130 palabras, empieza con hook, termina con pregunta",
   "title_options": ["opcion emocional (sentimiento fuerte)", "opcion misteriosa (intriga/secreto)", "opcion directa (accion concreta)"],
   "title": "el MEJOR de los tres title_options — máx 100 chars",
-  "description": "descripción SEO 200-400 chars que resume el conflicto especifico narrado",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "description": "descripción 80-120 chars, 1 frase impactante del conflicto + 1 pregunta corta al lector",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]
 }}
 
 REGLAS CRÍTICAS:
 - script_text: 100-130 palabras. Cada frase conecta causalmente con la anterior. NO son frases sueltas.
 - La historia es ficción creíble con detalles concretos (objetos, lugares, tiempos)
-- description DEBE incluir al menos 2 de estas frases de long-tail: "historia real", "confesión anónima", "descubrí que", "me traicionó", "historia de infidelidad", "historia de amor y traición"
+- description: máx 120 chars, directa y emocional. Sin hashtags. Sin keywords forzadas.
 - pregunta: si el dilema tiene dos posiciones claras, formularlo como "¿Eres Team [A] o Team [B]?" para maximizar debate en comentarios"""
 
 USER_PROMPT_RETRY_TEMPLATE = """Tema de confesión: {topic}
@@ -139,8 +139,8 @@ Campos: title, description, tags (lista 12), narrator_gender, character_descript
   "pregunta": "[pregunta especifica del dilema de {topic}, NO generica]",
   "script_text": "[narracion fluida, 100-130 palabras, empieza con hook, frases conectadas, termina con pregunta]",
   "title": "[titulo viral que describe EXACTAMENTE lo narrado en script_text]",
-  "description": "[descripcion SEO 200-400 chars del conflicto especifico narrado]",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "description": "[1 frase del conflicto + 1 pregunta al lector, máx 120 chars]",
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]
 }}"""
 
 
