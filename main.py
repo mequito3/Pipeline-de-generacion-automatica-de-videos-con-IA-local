@@ -409,6 +409,10 @@ def run_factory(topic: str | None = None) -> bool:
                             duration_s=audio_duration,
                             video_size_mb=video_size_mb,
                             word_count=len(script["script_text"].split()),
+                            description=script.get("description", ""),
+                            tags=script.get("tags", []),
+                            hook=script.get("hook", ""),
+                            pregunta=script.get("pregunta", ""),
                         )
                     except Exception as e_wa:
                         logger.warning(f"      Notificacion WhatsApp fallo (no critico): {e_wa}")

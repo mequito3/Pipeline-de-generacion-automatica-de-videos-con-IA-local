@@ -224,12 +224,14 @@ def send_upload_confirmation(
     duration_s: float = 0.0,
     video_size_mb: float = 0.0,
     word_count: int = 0,
+    description: str = "",
+    tags: list | None = None,
+    hook: str = "",
+    pregunta: str = "",
 ) -> None:
     """
-    Envía un mensaje de WhatsApp confirmando que el video fue publicado en YouTube.
-    Incluye el enlace directo, thumbnail y estadísticas del video.
-
-    No bloquea — si Twilio falla, solo se loguea el error.
+    Envía un mensaje de WhatsApp completo tras publicar el video en YouTube.
+    Incluye título, enlace, descripción, hashtags, gancho y pregunta final.
     """
     try:
         from twilio.rest import Client  # type: ignore
@@ -256,28 +258,63 @@ def send_upload_confirmation(
     from_ws = f"whatsapp:{from_number}"
     to_ws   = f"whatsapp:{to_number}"
 
-    # Construir mensaje
-    url_line = f"🔗 {youtube_url}" if youtube_url else "🔗 URL no disponible (revisa YouTube Studio)"
-    dur_line  = f"⏱ {duration_s:.0f}s" if duration_s else ""
-    size_line = f"📁 {video_size_mb:.1f} MB" if video_size_mb else ""
-    words_line = f"📝 {word_count} palabras" if word_count else ""
-    stats = "   ".join(x for x in [dur_line, size_line, words_line] if x)
+    # Estadísticas
+    stats_parts = []
+    if duration_s:   stats_parts.append(f"⏱ {duration_s:.0f}s")
+    if video_size_mb: stats_parts.append(f"📁 {video_size_mb:.1f}MB")
+    if word_count:   stats_parts.append(f"📝 {word_count} palabras")
+    stats_line = "   ".join(stats_parts)
 
+    # Hashtags
+    hashtags_str = ""
+    if tags:
+        hashtags_str = " ".join(t if t.startswith("#") else f"#{t}" for t in tags)
+
+    # Construir mensaje completo
     lines = [
         f"✅ *VIDEO PUBLICADO* — {config.CHANNEL_NAME}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"📌 *{title}*",
+        f"🎬 *TÍTULO:*",
+        f"_{title}_",
         "",
-        url_line,
+        f"🔗 *ENLACE:*",
+        youtube_url if youtube_url else "_(URL no capturada — revisa YouTube Studio)_",
     ]
-    if stats:
-        lines += ["", stats]
+
+    if stats_line:
+        lines += ["", stats_line]
+
+    if hook:
+        lines += ["", f"🪝 *GANCHO:* _{hook}_"]
+
+    if description:
+        # Limitar descripción a 800 chars para no saturar el mensaje
+        desc_preview = description[:800] + ("..." if len(description) > 800 else "")
+        lines += [
+            "",
+            "📝 *DESCRIPCIÓN (YouTube):*",
+            desc_preview,
+        ]
+
+    if hashtags_str:
+        # Máx 200 chars de hashtags
+        tags_preview = hashtags_str[:200] + ("..." if len(hashtags_str) > 200 else "")
+        lines += [
+            "",
+            "🏷 *HASHTAGS:*",
+            tags_preview,
+        ]
+
+    if pregunta:
+        lines += ["", f"❓ *PREGUNTA FINAL:* _{pregunta}_"]
+
     lines += [
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "_(Copia el enlace y compártelo)_",
+        "_(Mensaje automático — Shorts Factory)_",
     ]
+
     body = "\n".join(lines)
 
     # Subir thumbnail para adjuntarlo
