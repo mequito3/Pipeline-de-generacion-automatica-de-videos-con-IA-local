@@ -370,11 +370,13 @@ def run_factory(topic: str | None = None) -> bool:
         else:
             t0 = time.time()
             logger.info(f"{youtube_step_label} Subiendo a YouTube...")
+            thumbnail_p = run_dir / "thumbnail.jpg"
             upload_result = youtube_uploader.upload_to_youtube(
                 video_path=video_path,
                 title=script["title"],
                 description=script["description"],
-                tags=script.get("tags", [])
+                tags=script.get("tags", []),
+                thumbnail_path=str(thumbnail_p) if thumbnail_p.exists() else "",
             )
             step_times["upload"] = time.time() - t0
             # upload_result: str (URL, puede ser "") = OK | None = fallo

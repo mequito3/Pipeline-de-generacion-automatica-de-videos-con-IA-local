@@ -22,6 +22,9 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Frases de "pensar" que usa un humano antes de escribir o hacer clic
+_THINK_DELAYS = [1.2, 1.8, 2.3, 1.5, 2.8, 1.1, 3.1, 2.0]
+
 
 # --- Helpers de comportamiento humano (async) ---------------------------------
 
@@ -94,6 +97,150 @@ async def _scroll(page, amount: int = 200) -> None:
         pass
 
 
+async def _hover(element) -> None:
+    """Simula el mouse pasando sobre un elemento antes de hacer click."""
+    try:
+        await element.apply(
+            "(el) => el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, cancelable: true}))"
+        )
+        await asyncio.sleep(random.uniform(0.15, 0.55))
+        await element.apply(
+            "(el) => el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, cancelable: true}))"
+        )
+        await asyncio.sleep(random.uniform(0.1, 0.3))
+    except Exception:
+        pass
+
+
+async def _human_click(element) -> None:
+    """Hover + pausa + click, como lo haría un humano."""
+    await _hover(element)
+    await asyncio.sleep(random.uniform(0.2, 0.7))
+    await element.click()
+
+
+async def _upload_thumbnail(page, thumbnail_path: str) -> None:
+    """
+    Sube el thumbnail personalizado en el paso 1 (Detalles) de YouTube Studio.
+
+    YouTube Studio muestra 3 opciones de miniatura: fotograma auto, fotograma auto2,
+    y 'Subir miniatura' (input de archivo). Hacemos click en ese botón y enviamos la imagen.
+    """
+    thumb = Path(thumbnail_path)
+    if not thumb.exists():
+        logger.warning(f"Thumbnail no encontrado: {thumbnail_path}")
+        return
+
+    logger.info(f"Subiendo thumbnail personalizado: {thumb.name}")
+
+    # Scroll para ver la sección de miniaturas
+    await _scroll(page, 250)
+    await asyncio.sleep(random.uniform(0.8, 1.6))
+
+    try:
+        # Screenshot de diagnóstico para ver qué hay en la página
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        import sys, pathlib
+        logs_dir = pathlib.Path(__file__).parent.parent / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        diag_path = logs_dir / f"thumbnail_diag_{ts}.png"
+        await page.save_screenshot(str(diag_path))
+        logger.info(f"Screenshot diagnóstico thumbnail: {diag_path.name}")
+
+        # Volcar todos los inputs de tipo file visibles para debug
+        try:
+            inputs_info = await page.evaluate("""
+                Array.from(document.querySelectorAll('input[type=\\"file\\"]')).map(el => ({
+                    accept: el.accept,
+                    name: el.name,
+                    id: el.id,
+                    className: el.className.substring(0, 60)
+                }))
+            """)
+            logger.info(f"Inputs file en DOM: {inputs_info}")
+        except Exception as e_dbg:
+            logger.debug(f"No se pudo volcar inputs: {e_dbg}")
+
+        # 1. Intentar hacer click en el botón "Subir miniatura" para exponer el input
+        thumb_btn_clicked = False
+        for selector in [
+            "ytcp-thumbnails-compact-editor-tabs ytcp-button",
+            "[aria-label*='miniatura' i]",
+            "[aria-label*='thumbnail' i]",
+            "[aria-label*='Upload thumbnail' i]",
+            "[aria-label*='Subir miniatura' i]",
+            "ytcp-thumbnail-uploader ytcp-button",
+            ".thumbnail-upload-button",
+            "#thumbnail-uploader",
+        ]:
+            try:
+                btn = await page.select(selector, timeout=3)
+                if btn:
+                    await _human_click(btn)
+                    thumb_btn_clicked = True
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                    logger.info(f"Click en boton thumbnail ({selector})")
+                    break
+            except Exception:
+                pass
+
+        # 2. Buscar el input de archivo para la miniatura (DESPUÉS del click)
+        thumb_input = None
+        for selector in [
+            "input[type='file'][accept*='image']",
+            "input[type='file'][accept*='jpeg']",
+            "input[type='file'][accept*='png']",
+            "input[type='file'][name*='thumbnail']",
+            "input[type='file'][id*='thumbnail']",
+        ]:
+            try:
+                el = await page.select(selector, timeout=5)
+                if el:
+                    thumb_input = el
+                    logger.info(f"Input thumbnail encontrado: {selector}")
+                    break
+            except Exception:
+                pass
+
+        # 3. Si hay varios file inputs, el de thumbnail es el último (el primero es el video)
+        if thumb_input is None:
+            try:
+                all_inputs = await page.select_all("input[type='file']")
+                logger.info(f"Total inputs file en página: {len(all_inputs)}")
+                if len(all_inputs) > 1:
+                    thumb_input = all_inputs[-1]
+                    logger.info(f"Input thumbnail por posicion (último de {len(all_inputs)})")
+            except Exception:
+                pass
+
+        # Detectar si YouTube solo permite thumbnail desde movil
+        try:
+            mobile_msg = await page.find("miniatura en la aplicaci", timeout=3)
+            if mobile_msg:
+                logger.warning(
+                    "Thumbnail: YouTube requiere verificacion de canal para subir miniaturas en desktop.\n"
+                    "  Solucion: ve a studio.youtube.com → Configuracion → Canal → Verificar canal.\n"
+                    "  O cambia la miniatura desde la app movil de YouTube Studio."
+                )
+                return
+        except Exception:
+            pass
+
+        if thumb_input:
+            await thumb_input.send_file(str(thumb.absolute()))
+            await asyncio.sleep(random.uniform(2.5, 4.0))
+            logger.info("Thumbnail subido correctamente")
+        else:
+            logger.warning("No se encontro input de thumbnail — ver screenshot de diagnostico")
+
+        # Volver arriba despues de subir
+        await _scroll(page, -250)
+        await asyncio.sleep(random.uniform(0.6, 1.2))
+
+    except Exception as e:
+        logger.warning(f"Error subiendo thumbnail (no critico, el video igual se sube): {e}")
+
+
 # --- Logica principal de upload (async) --------------------------------------
 
 
@@ -124,6 +271,7 @@ async def _upload_async(
     title: str,
     description: str,
     tags: list,
+    thumbnail_path: str = "",
 ) -> tuple[bool, str]:
     """
     Logica asincrona completa de upload con nodriver (CDP).
@@ -159,11 +307,11 @@ async def _upload_async(
 
         logger.info(f"YouTube Studio cargado: {current_url[:60]}")
 
-        # Comportamiento humano: leer el dashboard antes de actuar
-        await _scroll(page, 150)
-        await _delay(1.5, 3.0)
-        await _scroll(page, -80)
-        await _delay(2.0, 5.0)
+        # Comportamiento humano: mirar el dashboard, leer un poco, moverse
+        await _scroll(page, random.randint(100, 200))
+        await _delay(2.0, 4.0)
+        await _scroll(page, random.randint(-100, -50))
+        await _delay(random.choice(_THINK_DELAYS), random.choice(_THINK_DELAYS) + 2.0)
 
         # -- Click en "Crear" --------------------------------------------------
         logger.info("Buscando boton 'Crear'...")
@@ -191,7 +339,7 @@ async def _upload_async(
             return False, ""
 
         await _delay(1.5, 3.5)
-        await create_btn.click()
+        await _human_click(create_btn)
         await _delay(1.5, 3.0)
 
         # -- Click en "Subir videos" -------------------------------------------
@@ -210,7 +358,7 @@ async def _upload_async(
             return False, ""
 
         await _delay(0.8, 1.8)
-        await upload_opt.click()
+        await _human_click(upload_opt)
         await _delay(2.0, 4.0)
 
         # -- Seleccionar archivo -----------------------------------------------
@@ -218,20 +366,22 @@ async def _upload_async(
         file_input = await page.select("input[type='file']", timeout=20)
         await file_input.send_file(str(video_path.absolute()))
         logger.info("Archivo enviado -- esperando modal de detalles...")
-        await _delay(4.0, 8.0)
+        # El video tarda en procesar; simular espera realista
+        await _delay(5.0, 9.0)
 
         # -- Titulo ------------------------------------------------------------
         logger.info("Escribiendo titulo...")
         title_input = await page.select(
             "#title-textarea #textbox", timeout=30
         )
-        await _delay(1.5, 3.0)
+        # Pausa "de pensar" antes de escribir, como un humano que lee el campo
+        await _delay(2.0, 4.0)
         await _human_type(title_input, title)
-        await _delay(2.0, 4.5)
+        # Pausa post-titulo: "leer" lo que escribió
+        await _delay(1.5, 3.5)
 
         # -- Descripcion + hashtags --------------------------------------------
         logger.info("Escribiendo descripcion...")
-        # Re-query para evitar referencia vieja tras typing del titulo
         desc_input = await page.select(
             "#description-textarea #textbox", timeout=15
         )
@@ -239,20 +389,36 @@ async def _upload_async(
             t if t.startswith("#") else f"#{t}" for t in (tags or [])
         )
         full_desc = f"{description}\n\n{hashtags_str}" if hashtags_str else description
-        await _delay(1.5, 3.0)
-        await _human_type(desc_input, full_desc)
-        await _delay(2.5, 5.5)
-        await _scroll(page, 200)
+        # Click en el campo de descripcion y pausa antes de escribir
+        await _human_click(desc_input)
+        await _delay(1.2, 2.8)
+        await _human_type(desc_input, full_desc, clear_first=False)
+        # Cerrar el autocomplete de hashtags que abre YouTube al escribir #
+        await asyncio.sleep(0.5)
+        await page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))")
+        await _delay(1.5, 3.5)
+
+        # -- Scroll para ver mas opciones y subir el thumbnail -----------------
+        await _scroll(page, 180)
+        await _delay(1.0, 2.5)
+
+        # -- Thumbnail personalizado -------------------------------------------
+        if thumbnail_path:
+            await _upload_thumbnail(page, thumbnail_path)
+            await _delay(1.5, 3.0)
 
         # -- Audiencia: No es para ninos --------------------------------------
         logger.info("Seleccionando audiencia...")
+        await _scroll(page, 200)
+        await _delay(0.8, 1.8)
         try:
             not_kids = await page.select(
                 "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
                 timeout=10,
             )
             if not_kids:
-                await _delay(1.0, 2.5)
+                await _hover(not_kids)
+                await _delay(0.8, 1.8)
                 await not_kids.click()
         except Exception:
             logger.warning("No se encontro opcion de audiencia, continuando...")
@@ -269,14 +435,17 @@ async def _upload_async(
                     logger.warning(f"Siguiente no encontrado en paso {step}")
                     await _delay(3.0, 6.0)
                     continue
-                await _delay(2.0, 4.5)
-                await next_btn.click()
+                # Scroll aleatorio para ver el contenido del paso antes de avanzar
+                await _scroll(page, random.randint(50, 180))
+                await _delay(1.5, 3.5)
+                await _scroll(page, random.randint(-80, -20))
+                await _delay(1.0, 2.5)
+                await _human_click(next_btn)
                 # Paso 3 (Comprobaciones->Visibilidad) necesita mas espera
                 if step == 3:
-                    await _delay(7.0, 14.0)
+                    await _delay(8.0, 15.0)
                 else:
-                    await _delay(3.5, 6.5)
-                await _scroll(page, random.randint(-80, 150))
+                    await _delay(3.5, 7.0)
             except Exception as e:
                 logger.warning(f"Paso {step}: {e}")
                 await _delay(3.0, 5.0)
@@ -312,20 +481,29 @@ async def _upload_async(
             logger.error("No se encontro el boton de visibilidad 'Publico'")
             return False, ""
 
-        await _delay(2.0, 4.5)
+        # Pausa de "revision" antes de hacer publico — como un humano que revisa
+        await _delay(2.5, 5.0)
+        await _hover(public_radio)
+        await _delay(0.5, 1.2)
         await public_radio.click()
+        logger.info("Visibilidad: Publico seleccionado")
         await _delay(4.0, 9.0)
 
         # -- Esperar upload completo ------------------------------------------
         await _wait_upload_complete(page)
 
-        # -- Guardar ----------------------------------------------------------
+        # -- Guardar: scroll para ver el boton, pausa de "ultima revision" ----
+        logger.info("Revisando antes de guardar...")
+        await _scroll(page, random.randint(-60, 60))
+        await _delay(random.choice(_THINK_DELAYS), random.choice(_THINK_DELAYS) + 1.5)
+
         logger.info("Guardando video...")
         save_btn = await page.select("ytcp-button#done-button", timeout=30)
         if save_btn is None:
             logger.error("No se encontro el boton Guardar")
             return False, ""
-        await _delay(2.5, 5.0)
+        await _hover(save_btn)
+        await _delay(1.0, 2.5)
         await save_btn.click()
         await _delay(5.0, 10.0)
 
@@ -413,15 +591,17 @@ def upload_to_youtube(
     title: str,
     description: str,
     tags: list[str],
+    thumbnail_path: str = "",
 ) -> str | None:
     """
     Sube un video a YouTube Studio usando nodriver (CDP, sin WebDriver).
 
     Args:
-        video_path: Ruta al archivo MP4
-        title: Titulo del video (max 100 chars)
-        description: Descripcion del video
-        tags: Lista de hashtags (con o sin #)
+        video_path:      Ruta al archivo MP4
+        title:           Titulo del video (max 100 chars)
+        description:     Descripcion del video
+        tags:            Lista de hashtags (con o sin #)
+        thumbnail_path:  Ruta al JPG/PNG de thumbnail (opcional)
 
     Returns:
         URL del video en YouTube si se subio correctamente (puede ser "" si
@@ -433,11 +613,13 @@ def upload_to_youtube(
         raise FileNotFoundError(f"Video no encontrado: {video_path}")
 
     logger.info(f"Iniciando upload: {video_path.name}")
+    if thumbnail_path and Path(thumbnail_path).exists():
+        logger.info(f"Thumbnail incluido: {Path(thumbnail_path).name}")
 
     for attempt in range(1, config.UPLOAD_MAX_RETRIES + 1):
         try:
             ok, youtube_url = asyncio.run(
-                _upload_async(video_path, title, description, tags)
+                _upload_async(video_path, title, description, tags, thumbnail_path)
             )
             if ok:
                 return youtube_url  # "" si no se capturo URL, pero upload OK

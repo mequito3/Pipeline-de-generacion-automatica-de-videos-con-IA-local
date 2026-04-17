@@ -620,8 +620,11 @@ def assemble_video(
         # ── 2. Intro ───────────────────────────────────────────────────────────
         logger.info("Renderizando intro...")
         t0 = time.time()
+        # El intro muestra el TÍTULO (clickbait de YouTube), no el hook.
+        # El hook se narra y aparece como subtítulo en la primera escena —
+        # mostrarlo también en el intro causaba que se leyera dos veces.
         intro_img = _render_intro_png(
-            hook=script.get("hook", script.get("title", "")),
+            hook=script.get("title", script.get("hook", "")),
             title=script.get("title", ""),
             first_image_path=valid_images[0] if valid_images else None,
         )
