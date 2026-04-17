@@ -32,11 +32,9 @@ twilio>=9.0.0                   # API de WhatsApp vía Twilio sandbox
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 numpy>=1.22.0                   # Arrays numéricos (dependencia de whisper)
 python-dotenv>=1.0.0            # Cargar .env con credenciales
-schedule>=1.2.1                 # Scheduler automático cada N horas
 json5>=0.9.0                    # Parser JSON permisivo (fallback para output del LLM)
 
 # ─── Dependencias del sistema (NO pip) — instalar manualmente ─────────────────
 # ffmpeg  : winget install ffmpeg          (requerido para video y audio)
 # Chrome  : https://www.google.com/chrome/ (requerido por nodriver)
 # Ollama  : https://ollama.ai              (servidor LLM local)
-# ComfyUI : https://github.com/comfyanonymous/ComfyUI  (opcional, imágenes IA)

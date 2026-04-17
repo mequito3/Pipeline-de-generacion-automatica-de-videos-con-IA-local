@@ -25,40 +25,15 @@ OLLAMA_MODEL: str = os.getenv(
 OLLAMA_FALLBACK_MODEL: str = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # lee del .env
 
-# ─── Pexels (stock videos gratuitos) ─────────────────────────────────────────
+# ─── Pexels (stock videos) ───────────────────────────────────────────────────
 # Regístrate gratis en https://www.pexels.com/api/ (200 req/hora, 20k/mes)
 PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
-# True → usa clips de stock de Pexels en vez de imágenes con IA
-USE_PEXELS: bool = os.getenv("USE_PEXELS", "false").lower() in ("true", "1", "yes")
-
-# ─── Stable Diffusion (imágenes locales) ─────────────────────────────────────
-SD_BACKEND: str = os.getenv("SD_BACKEND", "auto")  # "a1111" | "comfyui" | "auto"
-SD_A1111_URL: str = os.getenv("SD_A1111_URL", "http://localhost:7860")
-SD_COMFYUI_URL: str = os.getenv("SD_COMFYUI_URL", "http://localhost:8000")
-SD_STEPS: int = int(os.getenv("SD_STEPS", "20"))  # más pasos = más calidad, más lento
-SD_CFG_SCALE: float = float(os.getenv("SD_CFG_SCALE", "7.0"))
-SD_SAMPLER: str = "DPM++ 2M Karras"
-SD_TIMEOUT: int = int(os.getenv("SD_TIMEOUT", "180"))  # segundos máximos por imagen
-
-# ─── Z-Image Turbo (ComfyUI) — parámetros de rendimiento ─────────────────────
-# Resolución nativa de inferencia (se escala a 1080x1920 en el video)
-# 832 → sweet spot calidad/velocidad en portrait  |  768 → ~5-7s  |  1024 → ~20-30s
-SD_NATIVE_RES: int = int(os.getenv("SD_NATIVE_RES", "768"))
-# Pasos de muestreo (4=turbo rápido, 8=calidad)
-SD_TURBO_STEPS: int = int(os.getenv("SD_TURBO_STEPS", "4"))
-# Máximo de imágenes únicas por video (las escenas sobrantes reciclan imágenes existentes)
-SD_MAX_IMAGES: int = int(os.getenv("SD_MAX_IMAGES", "6"))
-# Negative prompt universal para todas las imágenes generadas
-SD_NEGATIVE_PROMPT: str = os.getenv(
-    "SD_NEGATIVE_PROMPT",
-    "ugly, deformed, blurry, low quality, watermark, text, logo, nsfw, "
-    "cartoon, anime, drawing, painting, illustration, bad anatomy, extra limbs"
-)
+USE_PEXELS: bool = True  # Siempre Pexels — Stable Diffusion eliminado
 
 # ─── Video ────────────────────────────────────────────────────────────────────
 VIDEO_WIDTH: int = 1080
 VIDEO_HEIGHT: int = 1920
-VIDEO_DURATION: int = 35  # segundos objetivo del Short (confesiones: 20–40s ideal)
+VIDEO_DURATION: int = 50  # 50s = sweet spot retención Shorts de confesiones (35s era muy corto para medir watch time)
 FPS: int = 30
 INTRO_DURATION: float = 0.0   # 0 = sin intro (recomendado Shorts: viewers hacen swipe si no ven historia en <2s)
 OUTRO_DURATION: float = 4.0   # CTA final con pregunta de engagement
@@ -99,8 +74,12 @@ YOUTUBE_UPLOAD_ENABLED: bool = (
 )
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
-# 1 video/día a una hora ALEATORIA dentro de la ventana
-# Audiencia latinoamericana: mejor franja 18:00–22:00 hora local
+VIDEOS_PER_DAY: int = int(os.getenv("VIDEOS_PER_DAY", "3"))
+# Ventanas de audiencia pico (latinoamérica): almuerzo / tarde / noche
+SCHEDULE_WIN1: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN1_MIN", "11")), int(os.getenv("SCHEDULE_WIN1_MAX", "13")))
+SCHEDULE_WIN2: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN2_MIN", "16")), int(os.getenv("SCHEDULE_WIN2_MAX", "18")))
+SCHEDULE_WIN3: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN3_MIN", "20")), int(os.getenv("SCHEDULE_WIN3_MAX", "22")))
+# Retrocompatibilidad
 SCHEDULE_MIN_HOUR: int = int(os.getenv("SCHEDULE_MIN_HOUR", "18"))
 SCHEDULE_MAX_HOUR: int = int(os.getenv("SCHEDULE_MAX_HOUR", "22"))
 
@@ -175,18 +154,24 @@ CTA_COMMENTS: list[str] = [
     "Respóndeme en los comentarios",
 ]
 CTA_FOLLOW: list[str] = [
-    "Sígueme para más historias reales",
-    "Suscríbete para más confesiones",
-    "No te pierdas las próximas historias",
-    "Dale like y sígueme para más",
-    "Sígueme, hay muchas más historias así",
+    "Sígueme — mañana publico la historia MÁS impactante que he narrado",
+    "Suscríbete ya, esta semana hay historias que te van a quitar el sueño",
+    "Dale follow — tengo una historia que va a hacer estallar los comentarios",
+    "Sígueme para no perderte la próxima — es PEOR que esta",
+    "Suscríbete, la próxima historia involucra a toda una familia",
+    "Dale like y sígueme — lo que viene te va a dejar sin palabras",
 ]
 
-# ─── Ruta del workflow de ComfyUI (configurable por usuario) ──────────────────
-COMFYUI_WORKFLOW_PATH: Path = Path(os.getenv(
-    "COMFYUI_WORKFLOW_PATH",
-    str(Path(__file__).parent / "assets" / "comfyui_workflow.json")
-))
+# ─── Hashtags permanentes del nicho (se añaden a todos los videos) ───────────
+# Tienen volumen constante en búsqueda de Shorts en español latino
+BASE_HASHTAGS: list[str] = [
+    "#confesiones", "#historiareal", "#dramareal", "#infidelidad",
+    "#traicion", "#relatosdeamor", "#storytime", "#HistoriasReales",
+    "#cortometraje", "#dramático",
+]
+
+# ─── Pie de afiliado en descripción (dejar vacío para desactivar) ─────────────
+AFFILIATE_FOOTER: str = os.getenv("AFFILIATE_FOOTER", "")
 
 # ─── Subtítulos ───────────────────────────────────────────────────────────────
 SUBTITLE_FONT_SIZE: int = 88

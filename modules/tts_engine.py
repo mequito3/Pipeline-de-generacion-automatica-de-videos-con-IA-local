@@ -469,7 +469,7 @@ def _cuda_available() -> bool:
         return False
     except Exception as e:
         logger.warning(f"faster-whisper falló ({e}) — usando fallback")
-        return []
+        return False
 
 
 # ─── Backend edge-tts ─────────────────────────────────────────────────────────

@@ -202,24 +202,75 @@ def _render_intro_png(hook: str, title: str, first_image_path: str | None) -> Im
     return bg
 
 
+def _pick_best_frame(video_path: str, W: int, H: int) -> Image.Image:
+    """
+    Extrae 5 fotogramas del video en distintos momentos y elige el más colorido
+    (mayor varianza de color = más interesante visualmente, evita frames oscuros).
+    """
+    import subprocess as _sp
+    import tempfile, os as _os
+    candidates = []
+    offsets = [0.10, 0.25, 0.40, 0.55, 0.70]
+
+    # Obtener duración del video
+    try:
+        probe = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        duration = float(probe.stdout.strip())
+    except Exception:
+        duration = 10.0
+
+    for frac in offsets:
+        ts = max(0.1, duration * frac)
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+            _sp.run(
+                ["ffmpeg", "-ss", str(ts), "-i", video_path,
+                 "-vframes", "1", "-q:v", "2", "-y", tmp_path],
+                capture_output=True, timeout=15
+            )
+            if _os.path.exists(tmp_path) and _os.path.getsize(tmp_path) > 1000:
+                img = Image.open(tmp_path).convert("RGB")
+                img.load()
+                _os.unlink(tmp_path)
+                candidates.append(img)
+        except Exception:
+            pass
+
+    if not candidates:
+        return _open_as_image(video_path, (W, H))
+
+    # Elegir el frame con mayor varianza de color (descarta frames oscuros/blancos)
+    import numpy as np
+    best = max(candidates, key=lambda im: float(np.array(im).std()))
+    return best.resize((W, H), Image.LANCZOS)
+
+
 def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str:
     """
     Genera thumbnail profesional 1280×720 para YouTube.
 
-    Selecciona la escena más dramática (DESCUBRIMIENTO/CONFRONTACION/CLIMAX),
-    superpone capas de gradiente, franja roja con canal, y hook text.
+    - Selecciona la escena más dramática (DESCUBRIMIENTO/CONFRONTACION/CLIMAX)
+    - Si es video Pexels, elige el frame más visualmente interesante de 5 candidatos
+    - Texto muy grande (100px) en tercio inferior con gradiente fuerte
+    - Franja roja con nombre del canal + barra dorada
 
     Returns:
         Path absoluto del thumbnail generado.
     """
-    W_T, H_T = 1280, 720
-    RED      = (204, 0, 0)
-    GOLD     = (255, 210, 40)
-    WHITE    = (255, 255, 255)
+    W_T, H_T  = 1280, 720
+    RED       = (204, 0, 0)
+    GOLD      = (255, 210, 40)
+    WHITE     = (255, 255, 255)
+    YELLOW    = (255, 230, 0)
 
     scenes = script.get("scenes", [])
 
-    # Buscar escena más dramática por acto
+    # Elegir escena más dramática por acto
     dramatic_acts = {"DESCUBRIMIENTO", "CONFRONTACION", "CONFRONTACIÓN", "CLIMAX", "GIRO", "REVELACION", "REVELACIÓN"}
     best_idx = None
     for i, scene in enumerate(scenes):
@@ -227,64 +278,67 @@ def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str
             best_idx = i
             break
     if best_idx is None:
-        # Fallback: 35% del total (punto de máxima tensión narrativa)
         best_idx = max(0, int(len(images) * 0.35))
 
     bg_path = images[best_idx] if best_idx < len(images) else (images[0] if images else None)
 
-    # Fondo — soporta tanto imagen como clip de video (Pexels)
-    if bg_path:
+    # Fondo: extraer mejor frame si es video, o abrir imagen directamente
+    if bg_path and _is_video(bg_path):
+        bg = _pick_best_frame(bg_path, W_T, H_T)
+    elif bg_path:
         bg = _open_as_image(bg_path, (W_T, H_T))
     else:
         bg = Image.new("RGB", (W_T, H_T), (10, 10, 20))
 
-    # Gradiente oscuro: superior 20% con 60% alpha, inferior 50% con 80% alpha
+    # Gradiente: superior levemente oscurecido, inferior 85% negro (texto claro)
     ov = Image.new("RGBA", (W_T, H_T), (0, 0, 0, 0))
     d  = ImageDraw.Draw(ov)
     for y in range(H_T):
         frac = y / H_T
-        if frac < 0.20:
-            alpha = int(153)         # 60% en parte superior
-        elif frac > 0.50:
-            alpha = int(204)         # 80% en parte inferior
+        if frac < 0.15:
+            alpha = 120           # 47% arriba (se ve el canal)
+        elif frac > 0.45:
+            # Gradiente intenso en parte inferior para texto legible
+            t = (frac - 0.45) / 0.55
+            alpha = int(120 + t * 117)   # 47% → 92%
         else:
-            # Transición lineal entre 60% y 80%
-            t     = (frac - 0.20) / 0.30
-            alpha = int(153 + t * 51)
+            t = (frac - 0.15) / 0.30
+            alpha = int(120 + t * 0)     # zona media sin cambio
         d.line([(0, y), (W_T, y)], fill=(0, 0, 0, alpha))
     bg = Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
     draw = ImageDraw.Draw(bg)
 
     font_path    = _find_font()
-    font_channel = _load_font(font_path, 32)
-    font_hook    = _load_font(font_path, 72)
+    font_channel = _load_font(font_path, 34)
+    font_hook    = _load_font(font_path, 100)   # Grande — impacto máximo
 
-    # Franja roja superior (60px)
-    stripe_h = 60
-    draw.rectangle([0, 0, W_T, stripe_h], fill=(*RED, 230))
+    # Franja roja superior (62px) + barra dorada (5px)
+    stripe_h = 62
+    draw.rectangle([0, 0, W_T, stripe_h], fill=(*RED, 235))
+    draw.rectangle([0, stripe_h, W_T, stripe_h + 5], fill=GOLD)
 
-    # Barra dorada (4px) bajo la franja roja
-    draw.rectangle([0, stripe_h, W_T, stripe_h + 4], fill=GOLD)
-
-    # Nombre del canal en la franja roja, centrado verticalmente
+    # Nombre del canal centrado en la franja
     channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
     c_bbox  = draw.textbbox((0, 0), channel, font=font_channel)
-    c_w     = c_bbox[2] - c_bbox[0]
-    c_h     = c_bbox[3] - c_bbox[1]
-    draw.text(((W_T - c_w) // 2, (stripe_h - c_h) // 2), channel, font=font_channel, fill=WHITE)
+    c_w, c_h = c_bbox[2] - c_bbox[0], c_bbox[3] - c_bbox[1]
+    draw.text(((W_T - c_w) // 2, (stripe_h - c_h) // 2),
+              channel, font=font_channel, fill=WHITE)
 
-    # Hook text centrado — máx 2 líneas de 22 chars
-    hook = script.get("hook", script.get("title", ""))
-    hook_short = " ".join(hook.split()[:10])
-    hook_lines = _wrap_text(draw, hook_short, font_hook, W_T - 80)[:2]
-    line_h     = 84
+    # Hook text en tercio inferior — máx 2 líneas, texto grande + borde grueso
+    hook = script.get("title", script.get("hook", ""))
+    hook_short = " ".join(hook.split()[:9])  # máx 9 palabras para no saturar
+    hook_lines = _wrap_text(draw, hook_short, font_hook, W_T - 60)[:2]
+    line_h     = 112   # espaciado proporcional a font_size 100
     block_h    = len(hook_lines) * line_h
-    y_start    = (H_T + stripe_h + 4) // 2 - block_h // 2 + 20
+
+    # Anclar el bloque de texto a ~80% vertical (tercio inferior)
+    y_start = int(H_T * 0.78) - block_h
 
     for i, line in enumerate(hook_lines):
         bbox = draw.textbbox((0, 0), line, font=font_hook)
         x    = (W_T - (bbox[2] - bbox[0])) // 2
-        _draw_text_with_stroke(draw, x, y_start + i * line_h, line, font_hook, WHITE, 5)
+        # Stroke doble: negro grueso exterior + amarillo fino para vibrar
+        _draw_text_with_stroke(draw, x, y_start + i * line_h, line, font_hook, WHITE, 7)
 
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -490,107 +544,6 @@ def _build_scene_clip_from_video(
         )
 
 
-# ─── Construcción de clips de escena con FFmpeg ───────────────────────────────
-
-def _build_scene_clip(
-    image_path: str,
-    duration: float,
-    fps: int,
-    out_path: Path,
-    scene_idx: int,
-    act: str = "",
-) -> None:
-    """
-    Genera un clip de escena con:
-    - Ken Burns dinámico por acto dramático (zoompan)
-    - Fade in desde negro (0.3s) + fade out a negro (0.3s) → transición suave entre escenas
-    Encodea con h264_nvenc (GPU) para velocidad máxima.
-
-    Ken Burns por acto:
-      DESCUBRIMIENTO/CONFRONTACION/CLIMAX → zoom in rápido (tensión máxima)
-      CONSECUENCIA/FINAL → zoom out lento (aftermath, peso emocional)
-      INICIO/REFLEXION/resto → pan lateral (establecimiento o contemplación)
-    """
-    W, H     = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    n_frames = max(int(duration * fps), 1)
-    zoom_inc = round(0.06 / n_frames, 8)
-
-    act_upper = (act or "").upper()
-
-    # Actos de tensión máxima → zoom in agresivo
-    if any(k in act_upper for k in ("DESCUBRI", "CONFRONTA", "CLIMAX", "GIRO", "REVELAC")):
-        zoom_fast = round(0.10 / n_frames, 8)
-        effects = [
-            f"zoompan=z='zoom+{zoom_fast}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-            f"zoompan=z='zoom+{zoom_fast}':x='iw/2-(iw/zoom/2)+{zoom_fast}*50':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-        ]
-    # Actos de consecuencia/final → zoom out lento (peso emocional)
-    elif any(k in act_upper for k in ("CONSECUENCIA", "FINAL", "RESULTADO", "REFLEXION")):
-        effects = [
-            f"zoompan=z='1.08-{zoom_inc}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-            f"zoompan=z='1.06-{zoom_inc}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-        ]
-    # Actos de inicio/contexto → pan lento lateral (establecimiento)
-    else:
-        effects = [
-            f"zoompan=z='1.04':x='iw/2-(iw/zoom/2)+{zoom_inc}*80':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-            f"zoompan=z='1.04':x='iw/2-(iw/zoom/2)-{zoom_inc}*80':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-            f"zoompan=z='zoom+{zoom_inc}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}",
-        ]
-
-    zoompan = random.choice(effects)
-
-    # Fade: máx 0.3s o 12% de la escena (protege escenas muy cortas)
-    fade_d = round(min(0.30, duration * 0.12), 3)
-    fade_out_start = round(max(0.0, duration - fade_d), 3)
-    vf = (
-        f"{zoompan},"
-        f"fade=t=in:st=0:d={fade_d},"
-        f"fade=t=out:st={fade_out_start}:d={fade_d}"
-    )
-
-    _ffmpeg(
-        "-loop", "1", "-framerate", str(fps), "-i", str(image_path),
-        "-vf", vf,
-        "-frames:v", str(n_frames),
-        "-c:v", "h264_nvenc", "-preset", "p4", "-pix_fmt", "yuv420p",
-        str(out_path),
-        desc=f"escena {scene_idx} (Ken Burns + fade)",
-    )
-
-
-def _build_scene_clip_cpu(
-    image_path: str,
-    duration: float,
-    fps: int,
-    out_path: Path,
-    scene_idx: int,
-    act: str = "",
-) -> None:
-    """Fallback de _build_scene_clip usando libx264 (CPU) en vez de h264_nvenc."""
-    W, H     = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    n_frames = max(int(duration * fps), 1)
-    zoom_inc = round(0.06 / n_frames, 8)
-    act_upper = (act or "").upper()
-    if any(k in act_upper for k in ("DESCUBRI", "CONFRONTA", "CLIMAX", "GIRO", "REVELAC")):
-        zoom_fast = round(0.10 / n_frames, 8)
-        zoompan = f"zoompan=z='zoom+{zoom_fast}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}"
-    elif any(k in act_upper for k in ("CONSECUENCIA", "FINAL", "RESULTADO", "REFLEXION")):
-        zoompan = f"zoompan=z='1.08-{zoom_inc}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}"
-    else:
-        zoompan = f"zoompan=z='1.04':x='iw/2-(iw/zoom/2)+{zoom_inc}*80':y='ih/2-(ih/zoom/2)':s={W}x{H}:d={n_frames}:fps={fps}"
-    fade_d   = round(min(0.30, duration * 0.12), 3)
-    fade_out = round(max(0.0, duration - fade_d), 3)
-    vf       = f"{zoompan},fade=t=in:st=0:d={fade_d},fade=t=out:st={fade_out}:d={fade_d}"
-    _ffmpeg(
-        "-loop", "1", "-framerate", str(fps), "-i", str(image_path),
-        "-vf", vf,
-        "-frames:v", str(n_frames),
-        "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-        str(out_path),
-        desc=f"escena {scene_idx} CPU fallback",
-    )
-
 
 # ─── Música de fondo ──────────────────────────────────────────────────────────
 
@@ -747,9 +700,7 @@ def assemble_video(
         # REMOVIDO: Ahora se inyecta directamente vía FFmpeg ASS en el paso 6.
 
         # ── 4. Generar clips de escena en paralelo ─────────────────────────────
-        using_video = any(_is_video(p) for p in valid_images)
-        clip_mode = "stock video (Pexels)" if using_video else "zoompan + NVENC (SD)"
-        logger.info(f"Generando {len(valid_images)} clips — modo: {clip_mode}...")
+        logger.info(f"Generando {len(valid_images)} clips (stock video Pexels)...")
         t0 = time.time()
 
         scene_clip_paths = [tmp_dir / f"clip_{i+1:03d}_scene.mp4"
@@ -766,15 +717,6 @@ def assemble_video(
                     fps=config.FPS,
                     out_path=scene_clip_paths[idx],
                     scene_idx=idx,
-                )
-            else:
-                _build_scene_clip(
-                    image_path=src,
-                    duration=scene_duration,
-                    fps=config.FPS,
-                    out_path=scene_clip_paths[idx],
-                    scene_idx=idx,
-                    act=act,
                 )
             logger.info(
                 f"  Escena {idx+1}/{len(valid_images)} [{act or '-'}] lista "
@@ -795,24 +737,9 @@ def assemble_video(
                     errors.append(idx)
 
         if errors:
-            # Intentar con PIL fallback las escenas que fallaron
-            logger.warning(f"Regenerando {len(errors)} escena(s) fallidas con libx264...")
-            for idx in errors:
-                try:
-                    act = scenes[idx].get("act", "") if idx < len(scenes) else ""
-                    _build_scene_clip_cpu(
-                        image_path=valid_images[idx],
-                        duration=scene_duration,
-                        fps=config.FPS,
-                        out_path=scene_clip_paths[idx],
-                        scene_idx=idx,
-                        act=act,
-                    )
-                    logger.info(f"  Escena {idx+1} recuperada con libx264")
-                except Exception as e2:
-                    raise RuntimeError(
-                        f"Escena {idx+1} falló incluso con fallback: {e2}"
-                    ) from e2
+            raise RuntimeError(
+                f"Escenas fallidas: {errors}. Verifica la API key de Pexels y la conexión."
+            )
 
         clip_paths.extend(scene_clip_paths)
         logger.info(f"Clips de escenas listos en {time.time()-t0:.1f}s")
@@ -932,19 +859,31 @@ def assemble_video(
 
         vf_args = ["-vf", ",".join(filters)] if filters else []
 
-        _ffmpeg(
+        _final_encode_args = [
             "-i", str(concat_mp4),
-            "-i", str(final_audio),   # audio ya lleva silencio al inicio (adelay)
+            "-i", str(final_audio),
             *vf_args,
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "h264_nvenc", "-preset", "p6", "-cq", "20",
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
             "-movflags", "+faststart",
             "-c:a", "aac", "-ar", "44100",
             "-shortest",
-            str(output_path),
-            desc="audio mix + subtítulos ASS",
-        )
+        ]
+        try:
+            _ffmpeg(
+                *_final_encode_args,
+                "-c:v", "h264_nvenc", "-preset", "p6", "-cq", "20",
+                str(output_path),
+                desc="audio mix + subtítulos ASS (NVENC)",
+            )
+        except RuntimeError:
+            logger.warning("h264_nvenc no disponible — usando libx264 (CPU)")
+            _ffmpeg(
+                *_final_encode_args,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                str(output_path),
+                desc="audio mix + subtítulos ASS (CPU fallback)",
+            )
         logger.info(f"Audio mezclado en {time.time()-t0:.1f}s")
 
     finally:

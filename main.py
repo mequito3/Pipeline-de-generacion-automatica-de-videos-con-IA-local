@@ -2,27 +2,28 @@
 main.py — Orquestador principal del Shorts Factory
 
 Uso:
-  python main.py           → Scheduler automático (cada 8h)
+  python main.py           → Scheduler automático (3 videos/día)
   python main.py --now     → Generar y subir un video ahora
   python main.py --test    → Probar cada módulo individualmente
 
 Flujo completo:
-  1. Verificar servicios (Ollama + SD local)
-  2. Obtener próximo topic de la lista rotatoria
-  3. Generar guión con Ollama
-  4. Generar audio con TTS local
-  5. Generar imágenes con Stable Diffusion local
+  1. Verificar servicios (Ollama + ffmpeg)
+  2. Buscar historia real en Reddit (o elegir topic rotatorio)
+  3. Generar guión con LLM (Groq/Ollama)
+  4. Generar audio con TTS (Edge TTS)
+  5. Descargar clips de stock video (Pexels)
   6. Ensamblar video MP4 1080x1920
-  7. Subir a YouTube con Selenium
+  7. Subir a YouTube con nodriver
   8. Log completo + limpieza de temporales
 """
 
 import argparse
+import asyncio
 import concurrent.futures
-import hashlib
 import io
 import json
 import logging
+import random
 import shutil
 import sys
 import time
@@ -35,14 +36,21 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+# Fix asyncio Windows: el ProactorEventLoop de Python 3.10 no limpia bien
+# los subprocesos y lanza "RuntimeError: Event loop is closed" en __del__.
+# WindowsSelectorEventLoopPolicy elimina ese ruido sin afectar la funcionalidad.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import requests
-import schedule
 
 # Añadir directorio actual al path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
-from modules import script_generator, tts_engine, image_generator, video_assembler, youtube_uploader, scraper
+from modules import script_generator, tts_engine, video_assembler, youtube_uploader, scraper, pexels_fetcher
+
+logger = logging.getLogger("main")
 
 # ─── Configurar logging ───────────────────────────────────────────────────────
 
@@ -100,7 +108,7 @@ def check_services() -> dict:
 
     Chequea:
     - Ollama en localhost:11434
-    - Stable Diffusion (A1111 o ComfyUI)
+    - ffmpeg instalado
 
     Returns:
         Dict con estado de cada servicio y modelo/backend detectado
@@ -147,22 +155,6 @@ def check_services() -> dict:
         print(f"   → Instalar modelo: ollama pull {config.OLLAMA_MODEL}")
         sys.exit(1)
 
-    # ── Verificar Stable Diffusion ─────────────────────────────────────────────
-    print(f"\n🎨 Stable Diffusion (auto-detect)...")
-    sd_backend = image_generator.detect_sd_backend()
-
-    if sd_backend == "a1111":
-        print(f"   ✅ A1111 detectado en {config.SD_A1111_URL}")
-        print(f"   Pasos: {config.SD_STEPS}, CFG: {config.SD_CFG_SCALE}, Sampler: {config.SD_SAMPLER}")
-    elif sd_backend == "comfyui":
-        print(f"   ✅ ComfyUI detectado en {config.SD_COMFYUI_URL}")
-    else:
-        print(f"   ⚠️  Stable Diffusion NO detectado — se usarán imágenes de fallback")
-        print(f"   Para A1111: python webui.py --api")
-        print(f"   Para ComfyUI: python main.py (desde el directorio de ComfyUI)")
-
-    results["sd"] = {"ok": sd_backend != "none", "backend": sd_backend}
-
     # ── Verificar dependencias ─────────────────────────────────────────────────
     print(f"\n🔧 Dependencias del sistema...")
     ffmpeg_ok = _check_ffmpeg()
@@ -200,7 +192,7 @@ def run_factory(topic: str | None = None) -> bool:
     Ejecuta el pipeline completo de generación y subida de un video.
 
     Flujo:
-    1. Obtener topic → 2. Generar script → 3. TTS → 4. Imágenes → 5. Video → 6. Upload
+    1. Obtener topic → 2. Generar script → 3. TTS → 4. Clips Pexels → 5. Video → 6. Upload
 
     Args:
         topic: Tema específico. Si es None, usa la lista rotatoria.
@@ -224,9 +216,6 @@ def run_factory(topic: str | None = None) -> bool:
     total_start = time.time()
 
     try:
-        # ── PASO 0: Verificar servicios ────────────────────────────────────────
-        check_services()
-
         # ── PASO 1: Buscar historia real en Reddit ─────────────────────────────
         t0 = time.time()
         if topic:
@@ -271,20 +260,7 @@ def run_factory(topic: str | None = None) -> bool:
             narrator_gender = "auto"
         gender_label = {"female": "Mujer", "male": "Hombre", "auto": "Auto-detectado"}.get(narrator_gender, "Auto")
 
-        char_desc = script.get("character_description", "") or ""
-        if not isinstance(char_desc, str):
-            char_desc = str(char_desc)
-        img_gender = script.get("narrator_gender", "")
-        if img_gender not in ("female", "male"):
-            img_gender = ""
-        post_id_raw = script.get("_post_id", "") or ""
-        post_seed = int(hashlib.md5(post_id_raw.encode()).hexdigest()[:8], 16) if post_id_raw else None
-
-        use_pexels = getattr(config, "USE_PEXELS", False)
-        visual_src = "Pexels (stock video)" if use_pexels else "Stable Diffusion (IA)"
-        logger.info(f"[3+4/6] TTS ({gender_label}) + {len(script['scenes'])} clips [{visual_src}] en paralelo...")
-        if not use_pexels:
-            logger.info(f"        Personaje: {char_desc[:60] or '(auto)'} | Genero: {img_gender or 'auto'}")
+        logger.info(f"[3+4/6] TTS ({gender_label}) + {len(script['scenes'])} clips [Pexels] en paralelo...")
 
         t0 = time.time()
 
@@ -296,18 +272,9 @@ def run_factory(topic: str | None = None) -> bool:
             )
 
         def _run_images():
-            if use_pexels:
-                from modules import pexels_fetcher
-                return pexels_fetcher.fetch_videos(
-                    script["scenes"],
-                    str(images_dir),
-                )
-            return image_generator.generate_images(
+            return pexels_fetcher.fetch_videos(
                 script["scenes"],
                 str(images_dir),
-                character_description=char_desc,
-                gender=img_gender,
-                post_seed=post_seed,
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _pool:
@@ -380,11 +347,21 @@ def run_factory(topic: str | None = None) -> bool:
             t0 = time.time()
             logger.info(f"{youtube_step_label} Subiendo a YouTube...")
             thumbnail_p = run_dir / "thumbnail.jpg"
+            # Fusionar hashtags del script con los hashtags base del nicho
+            base_tags = getattr(config, "BASE_HASHTAGS", [])
+            all_tags = list(dict.fromkeys(script.get("tags", []) + base_tags))
+
+            # Añadir pie de afiliado si está configurado
+            description = script["description"]
+            affiliate = getattr(config, "AFFILIATE_FOOTER", "")
+            if affiliate:
+                description = f"{description}\n\n{affiliate}"
+
             upload_result = youtube_uploader.upload_to_youtube(
                 video_path=video_path,
                 title=script["title"],
-                description=script["description"],
-                tags=script.get("tags", []),
+                description=description,
+                tags=all_tags,
                 thumbnail_path=str(thumbnail_p) if thumbnail_p.exists() else "",
             )
             step_times["upload"] = time.time() - t0
@@ -456,22 +433,14 @@ def run_factory(topic: str | None = None) -> bool:
 
 
 def _cleanup_temp_files(run_dir: Path, keep_final: bool = True) -> None:
-    """
-    Limpia archivos temporales de la corrida.
-
-    Args:
-        run_dir: Directorio de la corrida
-        keep_final: Si True, mantiene final_video.mp4
-    """
+    """Elimina imágenes y audio temporal de la corrida actual."""
     logger = logging.getLogger("main.cleanup")
     try:
-        # Eliminar imágenes temporales
         images_dir = run_dir / "images"
         if images_dir.exists():
             shutil.rmtree(images_dir)
             logger.debug("Imágenes temporales eliminadas")
 
-        # Eliminar audio temporal
         audio_file = run_dir / "narration.mp3"
         if audio_file.exists():
             audio_file.unlink()
@@ -479,6 +448,47 @@ def _cleanup_temp_files(run_dir: Path, keep_final: bool = True) -> None:
 
     except Exception as e:
         logger.warning(f"Error limpiando temporales: {e}")
+
+
+def _cleanup_old_runs(days_to_keep: int = 7) -> None:
+    """Elimina carpetas run_* en output/ con más de N días de antigüedad."""
+    log = logging.getLogger("main.cleanup")
+    cutoff = time.time() - days_to_keep * 86400
+    output_dir = config.OUTPUT_DIR
+    if not output_dir.exists():
+        return
+    removed = 0
+    freed_mb = 0.0
+    for folder in output_dir.iterdir():
+        if not folder.is_dir() or not folder.name.startswith("run_"):
+            continue
+        if folder.stat().st_mtime < cutoff:
+            try:
+                size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+                shutil.rmtree(folder)
+                freed_mb += size / 1_048_576
+                removed += 1
+            except Exception as e:
+                log.warning(f"No se pudo eliminar {folder.name}: {e}")
+    if removed:
+        log.info(f"Limpieza: {removed} carpeta(s) eliminada(s), {freed_mb:.1f} MB liberados")
+
+
+def _rotate_logs(max_files: int = 30) -> None:
+    """Mantiene solo los últimos N archivos de log en logs/."""
+    log = logging.getLogger("main.cleanup")
+    logs_dir = config.LOGS_DIR
+    if not logs_dir.exists():
+        return
+    log_files = sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime)
+    to_delete = log_files[: max(0, len(log_files) - max_files)]
+    for f in to_delete:
+        try:
+            f.unlink()
+        except Exception as e:
+            log.warning(f"No se pudo eliminar log {f.name}: {e}")
+    if to_delete:
+        log.info(f"Logs rotados: {len(to_delete)} archivo(s) eliminado(s)")
 
 
 # ─── Test WhatsApp ────────────────────────────────────────────────────────────
@@ -581,7 +591,7 @@ def run_tests() -> None:
     results = {}
 
     # ── Test 1: Servicios ──────────────────────────────────────────────────────
-    print("[TEST 1/5] Verificando servicios (Ollama, SD, ffmpeg)...")
+    print("[TEST 1/5] Verificando servicios (Ollama, ffmpeg)...")
     try:
         services = check_services()
         results["Servicios"] = "OK — todo corriendo"
@@ -638,21 +648,21 @@ def run_tests() -> None:
         results["Voz narradora"] = f"FALLO: {e}"
         audio_path = None
 
-    # ── Test 4: Imágenes ───────────────────────────────────────────────────────
-    print("\n[TEST 4/5] Generando imagenes con Stable Diffusion...")
+    # ── Test 4: Clips de Pexels ──────────────────────────────────────────────────
+    print("\n[TEST 4/5] Descargando clips de stock video (Pexels)...")
     try:
         test_scenes = script.get("scenes", [])[:2]
         for i, s in enumerate(test_scenes, 1):
             print(f"   Escena {i}: {s.get('image_prompt', '')[:70]}")
-        image_paths = image_generator.generate_images(
+        image_paths = pexels_fetcher.fetch_videos(
             test_scenes,
             str(test_dir / "images")
         )
-        print(f"   Imagenes generadas : {len(image_paths)}")
-        results["Imagenes (SD)"] = f"OK — {len(image_paths)} imagenes"
+        print(f"   Clips descargados  : {len(image_paths)}")
+        results["Clips (Pexels)"] = f"OK — {len(image_paths)} clips"
     except Exception as e:
         print(f"   ERROR: {e}")
-        results["Imagenes (SD)"] = f"FALLO: {e}"
+        results["Clips (Pexels)"] = f"FALLO: {e}"
         image_paths = []
 
     # ── Test 5: Video final ────────────────────────────────────────────────────
@@ -694,53 +704,105 @@ def run_tests() -> None:
     print("="*60 + "\n")
 
 
-# ─── Scheduler diario con hora aleatoria ─────────────────────────────────────
+# ─── Wrapper seguro para el scheduler ───────────────────────────────────────
 
-def _next_run_time() -> "datetime.datetime":
+def _safe_run_factory(topic: str | None = None) -> bool:
     """
-    Calcula la hora del próximo video: mañana a una hora aleatoria
-    dentro de la ventana configurada (SCHEDULE_MIN_HOUR – SCHEDULE_MAX_HOUR).
-    Añade también minutos aleatorios para que nunca sea hora exacta.
+    Llama a run_factory() sin dejar morir al scheduler si algo falla.
+    Captura SystemExit (de check_services) y cualquier excepción inesperada.
+    Solo deja pasar KeyboardInterrupt para que Ctrl+C funcione.
+    """
+    try:
+        return run_factory(topic=topic)
+    except KeyboardInterrupt:
+        raise
+    except SystemExit as e:
+        logger.error(f"run_factory terminó con sys.exit({e.code}) — servicio caído. Próxima corrida en el siguiente slot.")
+        return False
+    except Exception as e:
+        logger.error(f"run_factory lanzó excepción inesperada: {e}", exc_info=True)
+        return False
+
+
+# ─── Scheduler multi-video con ventanas de audiencia pico ────────────────────
+
+def _daily_schedule() -> list:
+    """
+    Calcula VIDEOS_PER_DAY horarios para HOY, distribuidos en ventanas pico.
+    Ventanas por defecto (audiencia latinoamericana):
+      WIN1: 11-13h (almuerzo) | WIN2: 16-18h (tarde) | WIN3: 20-22h (noche)
     """
     import datetime as _dt
-    min_h = getattr(config, "SCHEDULE_MIN_HOUR", 18)
-    max_h = getattr(config, "SCHEDULE_MAX_HOUR", 22)
-    tomorrow = _dt.date.today() + _dt.timedelta(days=1)
-    hour     = random.randint(min_h, max_h)
-    minute   = random.randint(0, 59)
-    return _dt.datetime.combine(tomorrow, _dt.time(hour, minute))
+    today = _dt.date.today()
+    windows = [
+        getattr(config, "SCHEDULE_WIN1", (11, 13)),
+        getattr(config, "SCHEDULE_WIN2", (16, 18)),
+        getattr(config, "SCHEDULE_WIN3", (20, 22)),
+    ]
+    n = getattr(config, "VIDEOS_PER_DAY", 3)
+    expanded = (windows * ((n // len(windows)) + 1))[:n]
+    times = []
+    for min_h, max_h in expanded:
+        h = random.randint(min_h, max_h)
+        m = random.randint(0, 59)
+        times.append(_dt.datetime.combine(today, _dt.time(h, m)))
+    return sorted(times)
 
 
 def _run_scheduler(topic: str | None = None) -> None:
     """
-    Publica 1 video/día a una hora aleatoria dentro de la ventana configurada.
-    Nunca a la misma hora dos días seguidos.
+    Publica VIDEOS_PER_DAY videos/día en ventanas de audiencia pico.
+    Por defecto 3 videos: 11-13h, 16-18h, 20-22h (hora local).
     """
     import datetime as _dt
 
-    min_h = getattr(config, "SCHEDULE_MIN_HOUR", 18)
-    max_h = getattr(config, "SCHEDULE_MAX_HOUR", 22)
-    print(f"⏰ Scheduler: 1 video/día entre {min_h:02d}:00 y {max_h:02d}:59 (hora aleatoria)")
+    n  = getattr(config, "VIDEOS_PER_DAY", 3)
+    w1 = getattr(config, "SCHEDULE_WIN1", (11, 13))
+    w2 = getattr(config, "SCHEDULE_WIN2", (16, 18))
+    w3 = getattr(config, "SCHEDULE_WIN3", (20, 22))
+    print(f"⏰ Scheduler: {n} videos/día en ventanas de audiencia pico")
+    print(f"   WIN1: {w1[0]:02d}-{w1[1]:02d}h | WIN2: {w2[0]:02d}-{w2[1]:02d}h | WIN3: {w3[0]:02d}-{w3[1]:02d}h")
     print("   (Ctrl+C para detener)\n")
 
-    # Primer video: ahora mismo
-    run_factory(topic=topic)
+    _cleanup_old_runs(days_to_keep=7)
+    _rotate_logs(max_files=30)
+
+    # Primer video: inmediatamente al arrancar
+    _safe_run_factory(topic=topic)
 
     while True:
-        next_run = _next_run_time()
-        wait_secs = (next_run - _dt.datetime.now()).total_seconds()
-        logger.info(
-            f"Próximo video programado: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
-            f"(en {wait_secs / 3600:.1f}h)"
-        )
-        print(f"\n⏰ Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
-              f"(en {wait_secs / 3600:.1f}h)\n")
+        import datetime as _dt
+        now = _dt.datetime.now()
 
-        # Esperar hasta la hora calculada (chequeando cada minuto)
-        while _dt.datetime.now() < next_run:
-            time.sleep(60)
+        # Slots de hoy que aún no han pasado
+        pending = [t for t in _daily_schedule() if t > now]
 
-        run_factory()
+        if not pending:
+            # Todos los slots de hoy ya pasaron → programar para mañana
+            tomorrow = _dt.date.today() + _dt.timedelta(days=1)
+            pending = [
+                t.replace(year=tomorrow.year, month=tomorrow.month, day=tomorrow.day)
+                for t in _daily_schedule()
+            ]
+
+        for next_run in pending:
+            wait_secs = (next_run - _dt.datetime.now()).total_seconds()
+            if wait_secs <= 0:
+                continue
+
+            logger.info(
+                f"Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
+                f"(en {wait_secs / 3600:.1f}h)"
+            )
+            print(f"\n⏰ Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
+                  f"(en {wait_secs / 3600:.1f}h)\n")
+
+            while _dt.datetime.now() < next_run:
+                time.sleep(60)
+
+            _cleanup_old_runs(days_to_keep=7)
+            _rotate_logs(max_files=30)
+            _safe_run_factory()
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -756,10 +818,9 @@ Ejemplos:
   python main.py --test     Probar cada módulo individualmente
 
 Prerequisitos:
-  - Ollama corriendo: ollama serve && ollama pull llama3
-  - SD corriendo: A1111 con --api ó ComfyUI
+  - Ollama corriendo: ollama serve && ollama pull llama3.2
   - ffmpeg instalado: winget install ffmpeg
-  - .env configurado con YOUTUBE_EMAIL y YOUTUBE_PASSWORD
+  - .env configurado con PEXELS_API_KEY, YOUTUBE_EMAIL, YOUTUBE_PASSWORD
         """
     )
     parser.add_argument(
@@ -787,10 +848,10 @@ Prerequisitos:
 
     print("\n" + "="*60)
     print(f"  {config.CHANNEL_NAME} — Generador de YouTube Shorts")
-    print("  100% local, sin costo de APIs")
+    print("  Pexels + Groq/Ollama + Edge TTS")
     print("="*60)
     print(f"  Modelo de IA   : {config.OLLAMA_MODEL}")
-    print(f"  Imagenes       : Stable Diffusion ({config.SD_BACKEND})")
+    print(f"  Imagenes       : Pexels (stock video)")
     print(f"  Resolucion     : {config.VIDEO_WIDTH}x{config.VIDEO_HEIGHT} px @ {config.FPS}fps")
     print(f"  Duracion video : Automatica (basada en narracion)")
     print(f"  Canal          : {config.CHANNEL_NAME}")

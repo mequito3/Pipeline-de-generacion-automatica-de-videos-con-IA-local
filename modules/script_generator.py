@@ -79,6 +79,8 @@ Cada parte conecta causalmente con la siguiente:
   Ejemplo secreto familiar: "¿Habrías confrontado a tu madre delante de todos?"
   Ejemplo celular revisado: "¿Habrías seguido revisando o cerrado el teléfono?"
 
+TÉCNICA DEL FALSO FINAL (obligatoria): Antes del giro real, añade una frase que parezca resolver la historia pero que inmediatamente sea contradicha. Ejemplo: "Pensé que era un error. Pero entonces vi la fecha: llevaba dos años." Esto retiene al espectador que iba a hacer swipe.
+
 REGLAS DE ESCRITURA:
 - Frases cortas (máx 12 palabras) pero SIEMPRE conectadas causalmente con la anterior
 - Primera persona: quien narra lo vivió
@@ -108,14 +110,17 @@ Genera una historia dramática anónima para YouTube Shorts con este JSON exacto
   "final": "reacción y consecuencia real — 15-20 palabras",
   "pregunta": "pregunta especifica del dilema de {topic} (PROHIBIDO: perdonar/que harias en forma generica)",
   "script_text": "historia completa narrada en primera persona, frases cortas conectadas causalmente, 100-130 palabras, empieza con hook, termina con pregunta",
-  "title": "titulo viral que describe EXACTAMENTE lo que pasa en el script_text, máx 100 chars",
+  "title_options": ["opcion emocional (sentimiento fuerte)", "opcion misteriosa (intriga/secreto)", "opcion directa (accion concreta)"],
+  "title": "el MEJOR de los tres title_options — máx 100 chars",
   "description": "descripción SEO 200-400 chars que resume el conflicto especifico narrado",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}
 
 REGLAS CRÍTICAS:
 - script_text: 100-130 palabras. Cada frase conecta causalmente con la anterior. NO son frases sueltas.
-- La historia es ficción creíble con detalles concretos (objetos, lugares, tiempos)"""
+- La historia es ficción creíble con detalles concretos (objetos, lugares, tiempos)
+- description DEBE incluir al menos 2 de estas frases de long-tail: "historia real", "confesión anónima", "descubrí que", "me traicionó", "historia de infidelidad", "historia de amor y traición"
+- pregunta: si el dilema tiene dos posiciones claras, formularlo como "¿Eres Team [A] o Team [B]?" para maximizar debate en comentarios"""
 
 USER_PROMPT_RETRY_TEMPLATE = """Tema de confesión: {topic}
 
@@ -137,6 +142,48 @@ Campos: title, description, tags (lista 12), narrator_gender, character_descript
   "description": "[descripcion SEO 200-400 chars del conflicto especifico narrado]",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}"""
+
+
+def _pick_best_title(options: list[str]) -> str:
+    """
+    Elige el título más clickbait de una lista según señales del algoritmo de YouTube.
+    Scoring: palabras emocionales + números + preguntas + longitud óptima + primera persona.
+    """
+    if not options:
+        return ""
+    valid = [t for t in options if isinstance(t, str) and t.strip()]
+    if len(valid) == 1:
+        return valid[0]
+
+    _EMOTIONAL = {
+        "traición", "traicionó", "traicioné", "traicionada", "traicionado",
+        "secreto", "secretos", "mentira", "mentiras", "mintió",
+        "descubrí", "descubrió", "encontré", "encontró",
+        "nunca", "jamás", "engaño", "engañó", "engañaba",
+        "abandonó", "abandoné", "llorando", "lloré", "lloró",
+        "destrozado", "destrozada", "shockeante", "impactante",
+        "devastador", "devastadora", "increíble", "inimaginable",
+        "oscuro", "oscura", "terrible", "horror", "verdad",
+        "oculto", "oculta", "confesión", "infiel", "infidelidad",
+        "doble vida", "muerto", "muerta", "destruyó", "perdí",
+    }
+
+    def _score(title: str) -> float:
+        t_lower = title.lower()
+        words   = set(t_lower.split())
+        s = 0.0
+        s += sum(5 for w in _EMOTIONAL if w in t_lower)          # emocional
+        s += 3 if any(c.isdigit() for c in title) else 0          # números
+        s += 2 if "?" in title else 0                              # pregunta
+        s += 4 if 50 <= len(title) <= 90 else (1 if 40 <= len(title) <= 100 else 0)
+        s += 2 if any(w in words for w in {"mi", "mis", "me", "yo", "descubrí", "encontré", "vi", "supe"}) else 0
+        s += min(2, len([w for w in title.split() if w.isupper() and len(w) > 2]))
+        return s
+
+    best = max(valid, key=_score)
+    scores = {t: _score(t) for t in valid}
+    logger.info(f"Títulos evaluados: {scores} → elegido: '{best}'")
+    return best
 
 
 def check_ollama_running() -> bool:
@@ -544,21 +591,54 @@ def _validate_script(script: dict) -> bool:
     Returns:
         True si es válido (con correcciones in-place donde es posible)
     """
+    # ── 0. Selección de mejor título (title_options) ──────────────────────────
+    options = script.get("title_options", [])
+    if isinstance(options, list) and len(options) >= 2:
+        best = _pick_best_title(options)
+        if best:
+            script["title"] = best
+
     # ── 1. Campos requeridos ──────────────────────────────────────────────────
     required_keys = [
         "title", "description", "tags", "script_text",
         "hook", "contexto", "problema", "giro", "final", "pregunta",
-        "narrator_gender", "character_description", "scenes",
+        "narrator_gender", "character_description",
     ]
     for key in required_keys:
         if key not in script or not script[key]:
             logger.warning(f"Campo faltante o vacío en script: '{key}'")
             return False
 
-    # ── 2. Escenas ────────────────────────────────────────────────────────────
-    if not isinstance(script["scenes"], list) or len(script["scenes"]) < 4:
-        logger.warning(f"Scenes inválidas: {len(script.get('scenes', []))} (se requieren 4+)")
-        return False
+    # ── 2. Escenas — auto-generar si el modelo no las produjo ─────────────────
+    if not isinstance(script.get("scenes"), list) or len(script.get("scenes", [])) < 4:
+        logger.warning(
+            f"scenes faltantes o insuficientes "
+            f"({len(script.get('scenes', []))}) — generando desde secciones narrativas"
+        )
+        parts = [
+            script.get("hook", ""),
+            script.get("contexto", ""),
+            script.get("problema", ""),
+            script.get("giro", ""),
+            script.get("final", ""),
+            script.get("pregunta", ""),
+        ]
+        sentences = []
+        for part in parts:
+            for s in re.split(r"(?<=[.!?])\s+", part):
+                s = s.strip()
+                if s and len(s.split()) >= 3:
+                    sentences.append(s)
+        if not sentences:
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", script["script_text"]) if s.strip()]
+        script["scenes"] = [
+            {"text": s, "image_prompt": "", "act": "STORY"}
+            for s in sentences if len(s.split()) >= 3
+        ]
+        if len(script["scenes"]) < 4:
+            logger.warning(f"No se pudieron generar scenes: {len(script['scenes'])}")
+            return False
+        logger.info(f"scenes auto-generadas: {len(script['scenes'])} desde secciones narrativas")
 
     for i, scene in enumerate(script["scenes"]):
         if "text" not in scene or "image_prompt" not in scene:
@@ -569,41 +649,35 @@ def _validate_script(script: dict) -> bool:
     script_text = script.get("script_text", "")
     word_count  = len(script_text.split())
 
-    if word_count < 45:
-        # Intentar reconstruir desde las secciones narrativas antes de fallar
-        reconstructed = " ".join(filter(None, [
-            script.get("hook", ""),
-            script.get("contexto", ""),
-            script.get("problema", ""),
-            script.get("giro", ""),
-            script.get("final", ""),
-            script.get("pregunta", ""),
-        ]))
-        reconstructed_words = len(reconstructed.split())
-        if reconstructed_words >= 70:
-            logger.warning(
-                f"script_text corto ({word_count} palabras) — "
-                f"reconstruyendo desde secciones ({reconstructed_words} palabras)"
-            )
-            script["script_text"] = reconstructed
-            script_text = reconstructed
-            word_count  = reconstructed_words
-        else:
-            logger.warning(
-                f"Script muy corto: {word_count} palabras. "
-                f"Reconstrucción también corta: {reconstructed_words} palabras. Reintentando."
-            )
-            return False
+    # Siempre reconstruir script_text desde secciones si la suma es mayor
+    reconstructed = " ".join(filter(None, [
+        script.get("hook", ""),
+        script.get("contexto", ""),
+        script.get("problema", ""),
+        script.get("giro", ""),
+        script.get("final", ""),
+        script.get("pregunta", ""),
+    ]))
+    reconstructed_words = len(reconstructed.split())
+    if reconstructed_words > word_count:
+        logger.info(
+            f"script_text reconstruido desde secciones: {word_count} → {reconstructed_words} palabras"
+        )
+        script["script_text"] = reconstructed
+        script_text = reconstructed
+        word_count  = reconstructed_words
 
-    if word_count < 70:
-        logger.warning(f"Script demasiado corto: {word_count} palabras (mínimo 70). Reintentando.")
+    if word_count < 30:
+        logger.warning(f"Script demasiado corto: {word_count} palabras. Reintentando.")
         return False
 
     if word_count > 160:
         logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 160). Reintentando.")
         return False
 
-    if 70 <= word_count < 100:
+    if word_count < 45:
+        logger.warning(f"Script muy corto: {word_count} palabras (objetivo 100-130)")
+    elif word_count < 100:
         logger.warning(f"Script algo corto: {word_count} palabras (objetivo 100-130)")
     elif 131 <= word_count <= 160:
         logger.warning(f"Script algo largo: {word_count} palabras (objetivo 100-130)")
@@ -802,7 +876,7 @@ def generate_script(topic: str) -> dict:
                     character_example=_char["description"],
                 )
 
-            raw_response = _call_ollama(user_prompt, attempt, model=model_to_use)
+            raw_response = _call_ollama(user_prompt, attempt, model=model_to_use, max_tokens=1200)
             logger.debug(f"Respuesta cruda Ollama ({len(raw_response)} chars): {raw_response[:300]}...")
 
             # Extraer, sanear y parsear JSON
@@ -959,7 +1033,8 @@ ESTRUCTURA OBLIGATORIA de script_text:
   "script_text": "[EMPIEZA con intro_hook. Luego narra TODA la historia en primera persona con todos los detalles, frases cortas conectadas causalmente. Entre 150 y 250 palabras. Termina con outro_cta.]",
   "pregunta": "pregunta especifica del dilema de ESTA historia (PROHIBIDO: perdonar/que harias en forma generica)",
   "outro_cta": "pregunta especifica de ESTE conflicto (no generica) + llamada a accion corta",
-  "title": "titulo viral que describe EXACTAMENTE lo que pasa en el script_text, maximo 100 caracteres",
+  "title_options": ["opcion emocional (sentimiento fuerte)", "opcion misteriosa (intriga/secreto)", "opcion directa (accion concreta)"],
+  "title": "el MEJOR de los tres title_options — maximo 100 caracteres",
   "description": "descripcion SEO 200-400 caracteres que resume el conflicto especifico narrado en script_text",
   "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
 }}
@@ -1005,6 +1080,13 @@ def _validate_story_script(script: dict) -> bool:
     8. Asegura image_prompt en cada scene
     9. División visual de scenes largas
     """
+    # ── 0. Selección de mejor título (title_options) ──────────────────────────
+    options = script.get("title_options", [])
+    if isinstance(options, list) and len(options) >= 2:
+        best = _pick_best_title(options)
+        if best:
+            script["title"] = best
+
     # ── 1. Campos requeridos (scenes es opcional — se auto-genera si falta) ─────
     required_keys = [
         "title", "description", "tags", "script_text",
