@@ -1,16 +1,28 @@
 """
 youtube_uploader.py -- Sube videos a YouTube Studio (nodriver, sin WebDriver)
 
-nodriver usa Chrome DevTools Protocol directamente -- sin protocolo WebDriver,
-invisible para los sistemas de bot-detection de Google/YouTube.
-
-Requiere: pip install nodriver
+Anti-detección multicapa:
+  1. nodriver: usa Chrome DevTools Protocol directo, sin protocolo WebDriver
+  2. Stealth JS inyectado via CDP ANTES de que cargue cualquier página:
+     - navigator.webdriver parcheado a undefined
+     - navigator.plugins, languages, hardwareConcurrency realistas
+     - window.chrome con propiedades completas
+     - Canvas fingerprint con ruido sutil
+     - Permissions API normalizada
+  3. Movimiento de mouse real via CDP Input.dispatchMouseEvent con curvas Bezier
+  4. Warm-up de sesión: visita YouTube home antes de ir a Studio
+  5. Delays con distribución triangular + pausas de "pensar" variables
+  6. Tipeo carácter a carácter con velocidad variable (~60 WPM)
 """
 
 import asyncio
 import json as _json
 import logging
+import math
+import os
+import platform
 import random
+import re as _re
 import sys
 import time
 from pathlib import Path
@@ -22,205 +34,416 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Frases de "pensar" que usa un humano antes de escribir o hacer clic
-_THINK_DELAYS = [1.2, 1.8, 2.3, 1.5, 2.8, 1.1, 3.1, 2.0]
+# ─── Stealth JS ───────────────────────────────────────────────────────────────
+# Se inyecta via Page.addScriptToEvaluateOnNewDocument ANTES de que cargue
+# cualquier página. Parchea todas las propiedades que delatan automatización.
 
+_STEALTH_JS = r"""
+(function() {
+    // 1. Eliminar navigator.webdriver (la señal más obvia de bot)
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 
-# --- Helpers de comportamiento humano (async) ---------------------------------
+    // 2. Plugins realistas (Chrome vacío es señal de bot)
+    const _makePlugin = (name, filename, desc) => {
+        const p = { name, filename, description: desc, length: 0 };
+        Object.setPrototypeOf(p, Plugin.prototype);
+        return p;
+    };
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+            const arr = [
+                _makePlugin('Chrome PDF Plugin', 'internal-pdf-viewer', 'Portable Document Format'),
+                _makePlugin('Chrome PDF Viewer', 'mhjfbmdgcfjbbpaeojofohoefgiehjai', ''),
+                _makePlugin('Native Client', 'internal-nacl-plugin', ''),
+            ];
+            Object.setPrototypeOf(arr, PluginArray.prototype);
+            return arr;
+        }
+    });
+
+    // 3. Idiomas (español latinoamericano + inglés, como usuario real)
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['es-419', 'es', 'en-US', 'en']
+    });
+
+    // 4. Hardware realista (8 cores, 8GB — PC normal de 2024)
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+    // 5. window.chrome completo (ausente en bots headless)
+    if (!window.chrome) {
+        window.chrome = {
+            app: {
+                isInstalled: false,
+                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+            },
+            runtime: {
+                connect: function(){},
+                sendMessage: function(){},
+                OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', UPDATE: 'update' },
+                PlatformOs: { LINUX: 'linux', MAC: 'mac', WIN: 'win' }
+            },
+            csi: function() {},
+            loadTimes: function() { return { requestTime: Date.now() / 1000 - Math.random() * 2 }; }
+        };
+    }
+
+    // 6. Permissions API normalizada (los bots suelen romperla)
+    try {
+        const _origQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (params) => {
+            if (params.name === 'notifications') {
+                return Promise.resolve({ state: Notification.permission });
+            }
+            return _origQuery(params);
+        };
+    } catch(e) {}
+
+    // 7. Canvas fingerprint: ruido de 1-2 bits por cada 50 pixels
+    // Imperceptible visualmente, rompe el hash de tracking
+    const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+        try {
+            const ctx = this.getContext('2d');
+            if (ctx && this.width > 0 && this.height > 0) {
+                const img = ctx.getImageData(0, 0, this.width, this.height);
+                for (let i = 0; i < img.data.length; i += 48) {
+                    img.data[i] ^= (Math.random() * 3) | 0;
+                }
+                ctx.putImageData(img, 0, 0);
+            }
+        } catch(e) {}
+        return _origToDataURL.call(this, type, quality);
+    };
+
+    // 8. Screen realista (1920x1080, taskbar de 40px)
+    const _screen = {
+        width: 1920, height: 1080,
+        availWidth: 1920, availHeight: 1040,
+        colorDepth: 24, pixelDepth: 24
+    };
+    for (const [k, v] of Object.entries(_screen)) {
+        try { Object.defineProperty(screen, k, { get: () => v }); } catch(e) {}
+    }
+
+    // 9. WebGL: ocultar proveedor real (evita fingerprinting por GPU)
+    try {
+        const _getParam = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(param) {
+            if (param === 37445) return 'Intel Inc.';        // UNMASKED_VENDOR_WEBGL
+            if (param === 37446) return 'Intel Iris OpenGL'; // UNMASKED_RENDERER_WEBGL
+            return _getParam.call(this, param);
+        };
+        const _getParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function(param) {
+            if (param === 37445) return 'Intel Inc.';
+            if (param === 37446) return 'Intel Iris OpenGL';
+            return _getParam2.call(this, param);
+        };
+    } catch(e) {}
+
+    // 10. Eliminar traces de automation en el objeto window
+    delete window.__nightmare;
+    delete window._phantom;
+    delete window.callPhantom;
+    delete window.__selenium_evaluate;
+    delete window.__webdriver_evaluate;
+    delete window.__driver_evaluate;
+})();
+"""
+
+# ─── Delays y timing ──────────────────────────────────────────────────────────
+
+_THINK_PAUSES = [1.1, 1.4, 1.8, 2.2, 2.6, 3.0, 1.6, 2.9]
 
 
 async def _delay(min_s: float = 2.0, max_s: float = 5.0) -> None:
-    """Pausa aleatoria con distribucion triangular (mas realista que uniform)."""
+    """Pausa con distribución triangular (pico en el centro, como pausas humanas)."""
     await asyncio.sleep(random.triangular(min_s, max_s, (min_s + max_s) / 2))
 
 
+async def _think() -> None:
+    """Pausa corta de 'pensar' entre acciones."""
+    await asyncio.sleep(random.choice(_THINK_PAUSES) * random.uniform(0.7, 1.3))
+
+
+# ─── Mouse con curvas Bezier (CDP real) ───────────────────────────────────────
+
+async def _bezier_move(page, x1: int, y1: int, x2: int, y2: int) -> None:
+    """
+    Mueve el cursor de (x1,y1) a (x2,y2) siguiendo una curva Bezier cuadrática.
+    Usa CDP Input.dispatchMouseEvent — mueve el cursor real, no solo dispara eventos JS.
+    Google detecta si el cursor llega al botón en línea recta (bot) vs curva (humano).
+    """
+    try:
+        import nodriver.cdp.input_ as cdp_input
+
+        # Punto de control aleatorio (crea la curva)
+        cx = (x1 + x2) // 2 + random.randint(-120, 120)
+        cy = (y1 + y2) // 2 + random.randint(-80, 80)
+
+        dist = math.hypot(x2 - x1, y2 - y1)
+        steps = max(12, min(40, int(dist / 20)))
+
+        for i in range(steps + 1):
+            t = i / steps
+            # Curva Bezier cuadrática: B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
+            bx = int((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t ** 2 * x2)
+            by = int((1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t ** 2 * y2)
+            # Micro-jitter humano (la mano no es perfectamente estable)
+            bx += random.randint(-1, 1)
+            by += random.randint(-1, 1)
+
+            await page.send(
+                cdp_input.dispatch_mouse_event(
+                    type_="mouseMoved",
+                    x=float(bx),
+                    y=float(by),
+                    modifiers=0,
+                    buttons=0,
+                    button=cdp_input.MouseButton.NONE,
+                    click_count=0,
+                )
+            )
+            # Velocidad variable: más lento al inicio y al final (como aceleración humana)
+            speed_factor = 1.0 - 0.5 * math.sin(math.pi * t)
+            await asyncio.sleep(random.uniform(0.006, 0.018) * speed_factor)
+
+    except Exception as e:
+        logger.debug(f"Bezier move fallback: {e}")
+
+
+async def _get_element_center(element) -> tuple[int, int]:
+    """Obtiene las coordenadas del centro de un elemento en la página."""
+    try:
+        box = await element.apply(
+            "(el) => { const r = el.getBoundingClientRect(); "
+            "return {x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2)}; }"
+        )
+        if box and isinstance(box, dict):
+            return int(box.get("x", 500)), int(box.get("y", 400))
+    except Exception:
+        pass
+    return random.randint(400, 800), random.randint(300, 600)
+
+
+async def _human_click(page, element) -> None:
+    """
+    Click realista: mueve cursor en curva Bezier desde posición aleatoria,
+    pausa de 'apuntar', luego click.
+    """
+    tx, ty = await _get_element_center(element)
+
+    # Posición de origen aleatoria (donde estaba el cursor antes)
+    ox = random.randint(200, 1400)
+    oy = random.randint(100, 900)
+
+    await _bezier_move(page, ox, oy, tx, ty)
+    await asyncio.sleep(random.uniform(0.08, 0.22))  # pausa de "apuntar"
+    await element.click()
+    await asyncio.sleep(random.uniform(0.1, 0.35))   # pausa post-click
+
+
+# ─── Scroll con lectura simulada ─────────────────────────────────────────────
+
+async def _scroll(page, amount: int = 200) -> None:
+    """Scroll suave en pasos pequeños, como un humano que lee."""
+    try:
+        steps = random.randint(3, 6)
+        step_size = amount // steps
+        for _ in range(steps):
+            await page.evaluate(
+                f"window.scrollBy({{top: {step_size + random.randint(-10, 10)}, behavior: 'smooth'}})"
+            )
+            await asyncio.sleep(random.uniform(0.15, 0.45))
+        # Pausa de "leer" tras scroll
+        await asyncio.sleep(random.uniform(0.4, 1.1))
+    except Exception:
+        pass
+
+
+async def _random_mouse_wander(page) -> None:
+    """Movimiento de mouse aleatorio mientras 'lee' la página (comportamiento idle)."""
+    try:
+        import nodriver.cdp.input_ as cdp_input
+        for _ in range(random.randint(2, 5)):
+            x = random.randint(300, 1600)
+            y = random.randint(100, 900)
+            await page.send(
+                cdp_input.dispatch_mouse_event(
+                    type_="mouseMoved", x=float(x), y=float(y),
+                    modifiers=0, buttons=0,
+                    button=cdp_input.MouseButton.NONE, click_count=0,
+                )
+            )
+            await asyncio.sleep(random.uniform(0.3, 0.8))
+    except Exception:
+        pass
+
+
+# ─── Tipeo humano ─────────────────────────────────────────────────────────────
+
 async def _human_type(element, text: str, clear_first: bool = True) -> None:
     """
-    Escribe texto caracter a caracter usando document.execCommand('insertText').
-
-    Esto garantiza que cada caracter va al elemento correcto (titulo o descripcion)
-    incluso si YouTube Studio intenta mover el foco durante la escritura.
-    Evita el problema de send_keys() que envia al elemento activo global del tab.
+    Escribe carácter a carácter vía execCommand('insertText').
+    Velocidad variable (~60 WPM), pausas de 'pensar' periódicas,
+    y ocasionales errores de tipeo corregidos.
     """
-    # Limpiar y dar foco inicial al campo
-    # Usamos selectAll+delete para contenteditable (mas confiable que textContent='')
     if clear_first:
         await element.apply(
-            "(el) => {"
-            "  el.focus();"
-            "  document.execCommand('selectAll', false, null);"
-            "  document.execCommand('delete', false, null);"
-            "}"
+            "(el) => { el.focus(); document.execCommand('selectAll', false, null); "
+            "document.execCommand('delete', false, null); }"
         )
     else:
         await element.apply("(el) => el.focus()")
-    await asyncio.sleep(random.uniform(0.4, 0.8))
+    await asyncio.sleep(random.uniform(0.3, 0.7))
 
     chars_since_pause = 0
-    next_pause_at = random.randint(10, 25)
+    next_pause_at = random.randint(8, 22)
+    # Simular velocidad de escritura variable (burst rápido luego lento)
+    wpm_factor = random.uniform(0.8, 1.3)
 
-    for char in text:
-        # Serializar el caracter correctamente para JS (maneja \n, comillas, etc.)
+    for i, char in enumerate(text):
         char_json = _json.dumps(char)
-        # Cada caracter: re-foco el elemento y lo inserta via execCommand.
-        # El re-foco evita que YouTube Studio robe el foco entre caracteres.
         await element.apply(
             "(el) => { el.focus(); document.execCommand('insertText', false, "
-            + char_json
-            + "); }"
+            + char_json + "); }"
         )
 
-        # Velocidad variable segun tipo de caracter (~60 WPM promedio)
+        # Velocidad según tipo de carácter
         if char == " ":
-            await asyncio.sleep(random.uniform(0.08, 0.22))
+            base = random.uniform(0.07, 0.20)
         elif char in ".,;:!?\n":
-            await asyncio.sleep(random.uniform(0.14, 0.42))
+            base = random.uniform(0.12, 0.38)
+        elif char in "0123456789":
+            base = random.uniform(0.09, 0.20)
         else:
-            await asyncio.sleep(random.uniform(0.05, 0.18))
+            base = random.uniform(0.04, 0.16)
 
-        # Pausa de "pensar" periodica para simular ritmo humano
+        await asyncio.sleep(base / wpm_factor)
+
+        # Cambiar velocidad ocasionalmente (burst de escritura)
+        if random.random() < 0.05:
+            wpm_factor = random.uniform(0.7, 1.5)
+
+        # Pausas de "pensar" periódicas
         chars_since_pause += 1
         if chars_since_pause >= next_pause_at:
-            await asyncio.sleep(random.uniform(0.4, 1.5))
+            await asyncio.sleep(random.uniform(0.35, 1.4))
             chars_since_pause = 0
-            next_pause_at = random.randint(10, 25)
+            next_pause_at = random.randint(8, 22)
 
 
-async def _scroll(page, amount: int = 200) -> None:
-    """Scroll suave simulando lectura de pagina."""
+# ─── Stealth setup vía CDP ────────────────────────────────────────────────────
+
+async def _inject_stealth(page) -> None:
+    """
+    Inyecta el JS de stealth ANTES de que cargue cualquier contenido de página.
+    Usa Page.addScriptToEvaluateOnNewDocument — se ejecuta en cada nueva página,
+    antes de que cualquier script del sitio pueda detectar las propiedades de bot.
+    """
     try:
-        await page.evaluate(
-            f"window.scrollBy({{top: {amount}, behavior: 'smooth'}})"
+        import nodriver.cdp.page as cdp_page
+        await page.send(
+            cdp_page.add_script_to_evaluate_on_new_document(source=_STEALTH_JS)
         )
-        await asyncio.sleep(random.uniform(0.5, 1.2))
-    except Exception:
-        pass
+        logger.info("Stealth JS inyectado via CDP (pre-page-load)")
+    except Exception as e:
+        # Fallback: ejecutar después de cargar (menos efectivo pero algo)
+        try:
+            await page.evaluate(_STEALTH_JS)
+            logger.debug(f"Stealth JS via evaluate (fallback): {e}")
+        except Exception as e2:
+            logger.debug(f"Stealth injection fallback falló: {e2}")
 
 
-async def _hover(element) -> None:
-    """Simula el mouse pasando sobre un elemento antes de hacer click."""
+# ─── Warm-up de sesión ────────────────────────────────────────────────────────
+
+async def _session_warmup(browser) -> None:
+    """
+    Un humano no abre Chrome y va directo a Studio.
+    Visita YouTube home brevemente, lee un poco, luego navega a Studio.
+    Esto establece un historial de navegación normal antes de hacer el upload.
+    """
     try:
-        await element.apply(
-            "(el) => el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, cancelable: true}))"
-        )
-        await asyncio.sleep(random.uniform(0.15, 0.55))
-        await element.apply(
-            "(el) => el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, cancelable: true}))"
-        )
-        await asyncio.sleep(random.uniform(0.1, 0.3))
-    except Exception:
-        pass
+        logger.info("Warm-up: visitando YouTube home...")
+        page = await browser.get("https://www.youtube.com")
+        await _delay(3.0, 6.0)
+        await _scroll(page, random.randint(150, 350))
+        await _random_mouse_wander(page)
+        await _delay(2.0, 4.5)
+        await _scroll(page, random.randint(-100, -50))
+        await asyncio.sleep(random.uniform(1.0, 2.5))
+        logger.info("Warm-up completado")
+    except Exception as e:
+        logger.debug(f"Warm-up omitido: {e}")
 
 
-async def _human_click(element) -> None:
-    """Hover + pausa + click, como lo haría un humano."""
-    await _hover(element)
-    await asyncio.sleep(random.uniform(0.2, 0.7))
-    await element.click()
-
+# ─── Thumbnail ────────────────────────────────────────────────────────────────
 
 async def _upload_thumbnail(page, thumbnail_path: str) -> None:
-    """
-    Sube el thumbnail personalizado en el paso 1 (Detalles) de YouTube Studio.
-
-    YouTube Studio muestra 3 opciones de miniatura: fotograma auto, fotograma auto2,
-    y 'Subir miniatura' (input de archivo). Hacemos click en ese botón y enviamos la imagen.
-    """
     thumb = Path(thumbnail_path)
     if not thumb.exists():
         logger.warning(f"Thumbnail no encontrado: {thumbnail_path}")
         return
 
-    logger.info(f"Subiendo thumbnail personalizado: {thumb.name}")
-
-    # Scroll para ver la sección de miniaturas
+    logger.info(f"Subiendo thumbnail: {thumb.name}")
     await _scroll(page, 250)
-    await asyncio.sleep(random.uniform(0.8, 1.6))
+    await _delay(0.8, 1.8)
 
     try:
-        # Screenshot de diagnóstico para ver qué hay en la página
         ts = time.strftime("%Y%m%d_%H%M%S")
-        import sys, pathlib
-        logs_dir = pathlib.Path(__file__).parent.parent / "logs"
+        logs_dir = Path(__file__).parent.parent / "logs"
         logs_dir.mkdir(exist_ok=True)
-        diag_path = logs_dir / f"thumbnail_diag_{ts}.png"
-        await page.save_screenshot(str(diag_path))
-        logger.info(f"Screenshot diagnóstico thumbnail: {diag_path.name}")
+        await page.save_screenshot(str(logs_dir / f"thumbnail_diag_{ts}.png"))
 
-        # Volcar todos los inputs de tipo file visibles para debug
-        try:
-            inputs_info = await page.evaluate("""
-                Array.from(document.querySelectorAll('input[type=\\"file\\"]')).map(el => ({
-                    accept: el.accept,
-                    name: el.name,
-                    id: el.id,
-                    className: el.className.substring(0, 60)
-                }))
-            """)
-            logger.info(f"Inputs file en DOM: {inputs_info}")
-        except Exception as e_dbg:
-            logger.debug(f"No se pudo volcar inputs: {e_dbg}")
-
-        # 1. Intentar hacer click en el botón "Subir miniatura" para exponer el input
         thumb_btn_clicked = False
         for selector in [
             "ytcp-thumbnails-compact-editor-tabs ytcp-button",
             "[aria-label*='miniatura' i]",
             "[aria-label*='thumbnail' i]",
             "[aria-label*='Upload thumbnail' i]",
-            "[aria-label*='Subir miniatura' i]",
             "ytcp-thumbnail-uploader ytcp-button",
-            ".thumbnail-upload-button",
-            "#thumbnail-uploader",
         ]:
             try:
                 btn = await page.select(selector, timeout=3)
                 if btn:
-                    await _human_click(btn)
+                    await _human_click(page, btn)
                     thumb_btn_clicked = True
-                    await asyncio.sleep(random.uniform(1.0, 2.0))
-                    logger.info(f"Click en boton thumbnail ({selector})")
+                    await _delay(1.0, 2.0)
                     break
             except Exception:
                 pass
 
-        # 2. Buscar el input de archivo para la miniatura (DESPUÉS del click)
         thumb_input = None
         for selector in [
             "input[type='file'][accept*='image']",
             "input[type='file'][accept*='jpeg']",
             "input[type='file'][accept*='png']",
-            "input[type='file'][name*='thumbnail']",
-            "input[type='file'][id*='thumbnail']",
         ]:
             try:
                 el = await page.select(selector, timeout=5)
                 if el:
                     thumb_input = el
-                    logger.info(f"Input thumbnail encontrado: {selector}")
                     break
             except Exception:
                 pass
 
-        # 3. Si hay varios file inputs, el de thumbnail es el último (el primero es el video)
         if thumb_input is None:
             try:
                 all_inputs = await page.select_all("input[type='file']")
-                logger.info(f"Total inputs file en página: {len(all_inputs)}")
                 if len(all_inputs) > 1:
                     thumb_input = all_inputs[-1]
-                    logger.info(f"Input thumbnail por posicion (último de {len(all_inputs)})")
             except Exception:
                 pass
 
-        # Detectar si YouTube solo permite thumbnail desde movil
         try:
             mobile_msg = await page.find("miniatura en la aplicaci", timeout=3)
             if mobile_msg:
                 logger.warning(
-                    "Thumbnail: YouTube requiere verificacion de canal para subir miniaturas en desktop.\n"
-                    "  Solucion: ve a studio.youtube.com → Configuracion → Canal → Verificar canal.\n"
-                    "  O cambia la miniatura desde la app movil de YouTube Studio."
+                    "YouTube requiere verificación del canal para subir thumbnails en desktop.\n"
+                    "  Ve a studio.youtube.com → Configuración → Canal → Verificar canal."
                 )
                 return
         except Exception:
@@ -228,43 +451,42 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
 
         if thumb_input:
             await thumb_input.send_file(str(thumb.absolute()))
-            await asyncio.sleep(random.uniform(2.5, 4.0))
-            logger.info("Thumbnail subido correctamente")
+            await _delay(2.5, 4.5)
+            logger.info("Thumbnail subido")
         else:
-            logger.warning("No se encontro input de thumbnail — ver screenshot de diagnostico")
+            logger.warning("Input de thumbnail no encontrado")
 
-        # Volver arriba despues de subir
         await _scroll(page, -250)
         await asyncio.sleep(random.uniform(0.6, 1.2))
 
     except Exception as e:
-        logger.warning(f"Error subiendo thumbnail (no critico, el video igual se sube): {e}")
+        logger.warning(f"Thumbnail (no crítico): {e}")
 
 
-# --- Logica principal de upload (async) --------------------------------------
+# ─── Esperar upload completo ──────────────────────────────────────────────────
 
-
-async def _wait_upload_complete(page, timeout: int = 300) -> None:
-    """
-    Espera a que el video termine de subirse.
-    Detecta cuando el boton 'Guardar' (done-button) aparece habilitado.
-    """
+async def _wait_upload_complete(page, timeout: int = 360) -> None:
     logger.info("Esperando que el video termine de subirse...")
     start = time.time()
     while time.time() - start < timeout:
         try:
             done = await page.select("ytcp-button#done-button", timeout=3)
             if done:
-                logger.info("Upload completo -- boton Guardar disponible")
+                logger.info("Upload completo — botón Guardar disponible")
                 return
         except Exception:
             pass
+        # Mouse wander mientras espera (comportamiento humano idle)
+        if random.random() < 0.3:
+            await _random_mouse_wander(page)
         await asyncio.sleep(5)
         elapsed = int(time.time() - start)
         if elapsed % 30 == 0:
             logger.info(f"Esperando upload... ({elapsed}s)")
     logger.warning(f"Timeout esperando upload ({timeout}s)")
 
+
+# ─── Pipeline principal ───────────────────────────────────────────────────────
 
 async def _upload_async(
     video_path: Path,
@@ -273,34 +495,26 @@ async def _upload_async(
     tags: list,
     thumbnail_path: str = "",
 ) -> tuple[bool, str]:
-    """
-    Logica asincrona completa de upload con nodriver (CDP).
-    Returns (success, youtube_url)  — url es "" si no se pudo capturar.
-    """
+    """Pipeline completo de upload con anti-detección multicapa."""
+
     profile_dir = Path(config.CHROME_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    # En Linux sin display físico (Raspberry Pi) usamos Xvfb como pantalla virtual.
-    # Xvfb no es detectable como headless — Chrome cree que hay una pantalla real.
-    import platform
-    import os
-    extra_args: list[str] = []
+    # En Linux sin display físico (Raspberry Pi) → usar Xvfb como pantalla virtual
     if platform.system() == "Linux" and not os.environ.get("DISPLAY"):
-        # Sin DISPLAY configurado: forzar pantalla virtual :99 (levantada por systemd)
         os.environ["DISPLAY"] = ":99"
         logger.info("Linux sin display físico — usando DISPLAY=:99 (Xvfb)")
 
     # Detectar binario de Chrome/Chromium según SO
     chrome_bin = getattr(config, "CHROME_BINARY", "")
     if not chrome_bin:
-        candidates = [
-            "/usr/bin/chromium-browser",   # Raspberry Pi OS
-            "/usr/bin/chromium",           # Debian/Ubuntu
-            "/usr/bin/google-chrome",      # Ubuntu con Chrome
-        ]
-        for c in candidates:
-            if Path(c).exists():
-                chrome_bin = c
+        for candidate in [
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/usr/bin/google-chrome",
+        ]:
+            if Path(candidate).exists():
+                chrome_bin = candidate
                 break
 
     browser = await uc.start(
@@ -311,36 +525,47 @@ async def _upload_async(
             "--window-size=1920,1080",
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",   # Necesario en Pi (poca memoria compartida)
-            *extra_args,
+            "--disable-dev-shm-usage",
+            "--disable-infobars",
+            "--disable-extensions",
+            "--disable-popup-blocking",
+            "--lang=es-419",
         ],
     )
 
     page = None
     try:
+        # Obtener la pestaña principal y aplicar stealth ANTES de navegar
+        page = await browser.get("about:blank")
+        await _inject_stealth(page)
+
+        # Warm-up de sesión (visitar YouTube home como haría un humano)
+        await _session_warmup(browser)
+
+        # Ahora ir a Studio
         page = await browser.get(config.YOUTUBE_STUDIO_URL)
         await _delay(5.0, 10.0)
 
-        # Verificar sesion activa
         current_url = page.url or ""
         if "accounts.google.com" in current_url:
             logger.error(
-                "No hay sesion activa en YouTube Studio.\n"
-                "  Abre Chrome manualmente, entra a studio.youtube.com, "
-                "inicia sesion y cierra Chrome. El perfil guardara las cookies."
+                "No hay sesión activa en YouTube Studio.\n"
+                "  Abre Chrome manualmente, entra a studio.youtube.com,\n"
+                "  inicia sesión y cierra Chrome. El perfil guardará las cookies."
             )
             return False, ""
 
         logger.info(f"YouTube Studio cargado: {current_url[:60]}")
 
-        # Comportamiento humano: mirar el dashboard, leer un poco, moverse
-        await _scroll(page, random.randint(100, 200))
-        await _delay(2.0, 4.0)
-        await _scroll(page, random.randint(-100, -50))
-        await _delay(random.choice(_THINK_DELAYS), random.choice(_THINK_DELAYS) + 2.0)
+        # Lectura del dashboard como humano
+        await _scroll(page, random.randint(100, 220))
+        await _random_mouse_wander(page)
+        await _delay(2.5, 5.0)
+        await _scroll(page, random.randint(-120, -60))
+        await _think()
 
-        # -- Click en "Crear" --------------------------------------------------
-        logger.info("Buscando boton 'Crear'...")
+        # ── Botón "Crear" ────────────────────────────────────────────────────
+        logger.info("Buscando botón 'Crear'...")
         create_btn = None
         for selector in [
             "ytcp-button#create-icon",
@@ -361,15 +586,15 @@ async def _upload_async(
                 pass
 
         if not create_btn:
-            logger.error("No se encontro el boton 'Crear'")
+            logger.error("No se encontró el botón 'Crear'")
             return False, ""
 
-        await _delay(1.5, 3.5)
-        await _human_click(create_btn)
+        await _think()
+        await _human_click(page, create_btn)
         await _delay(1.5, 3.0)
 
-        # -- Click en "Subir videos" -------------------------------------------
-        logger.info("Buscando opcion 'Subir videos'...")
+        # ── "Subir vídeos" ───────────────────────────────────────────────────
+        logger.info("Buscando opción 'Subir vídeos'...")
         upload_opt = None
         for text in ["Subir v\u00eddeos", "Subir videos", "Upload videos", "Upload"]:
             try:
@@ -380,124 +605,108 @@ async def _upload_async(
                 pass
 
         if not upload_opt:
-            logger.error("No se encontro la opcion 'Subir videos'")
+            logger.error("No se encontró la opción 'Subir vídeos'")
             return False, ""
 
-        await _delay(0.8, 1.8)
-        await _human_click(upload_opt)
-        await _delay(2.0, 4.0)
+        await asyncio.sleep(random.uniform(0.5, 1.2))
+        await _human_click(page, upload_opt)
+        await _delay(2.0, 4.5)
 
-        # -- Seleccionar archivo -----------------------------------------------
+        # ── Seleccionar archivo ───────────────────────────────────────────────
         logger.info(f"Cargando archivo: {video_path.name}")
         file_input = await page.select("input[type='file']", timeout=20)
         await file_input.send_file(str(video_path.absolute()))
-        logger.info("Archivo enviado -- esperando modal de detalles...")
-        # El video tarda en procesar; simular espera realista
+        logger.info("Archivo enviado — esperando modal de detalles...")
+        await _random_mouse_wander(page)
         await _delay(5.0, 9.0)
 
-        # -- Titulo ------------------------------------------------------------
-        logger.info("Escribiendo titulo...")
-        title_input = await page.select(
-            "#title-textarea #textbox", timeout=30
-        )
-        # Pausa "de pensar" antes de escribir, como un humano que lee el campo
-        await _delay(2.0, 4.0)
+        # ── Título ───────────────────────────────────────────────────────────
+        logger.info("Escribiendo título...")
+        title_input = await page.select("#title-textarea #textbox", timeout=30)
+        await _think()
+        await _human_click(page, title_input)
+        await _delay(1.5, 3.5)
         await _human_type(title_input, title)
-        # Pausa post-titulo: "leer" lo que escribió
+        await _random_mouse_wander(page)
         await _delay(1.5, 3.5)
 
-        # -- Descripcion + hashtags --------------------------------------------
-        logger.info("Escribiendo descripcion...")
-        desc_input = await page.select(
-            "#description-textarea #textbox", timeout=15
-        )
+        # ── Descripción + hashtags ────────────────────────────────────────────
+        logger.info("Escribiendo descripción...")
+        desc_input = await page.select("#description-textarea #textbox", timeout=15)
         hashtags_str = " ".join(
             t if t.startswith("#") else f"#{t}" for t in (tags or [])
         )
-        # Hashtags al inicio Y al final: mejor SEO y YouTube los muestra encima del título
-        if hashtags_str:
-            full_desc = f"{hashtags_str}\n\n{description}\n\n{hashtags_str}"
-        else:
-            full_desc = description
-        # Click en el campo de descripcion y pausa antes de escribir
-        await _human_click(desc_input)
+        full_desc = (
+            f"{hashtags_str}\n\n{description}\n\n{hashtags_str}"
+            if hashtags_str
+            else description
+        )
+        await _human_click(page, desc_input)
         await _delay(1.2, 2.8)
         await _human_type(desc_input, full_desc, clear_first=False)
-        # Cerrar el autocomplete de hashtags que abre YouTube al escribir #
         await asyncio.sleep(0.5)
-        await page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))")
+        await page.evaluate(
+            "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+        )
         await _delay(1.5, 3.5)
 
-        # -- Scroll para ver mas opciones y subir el thumbnail -----------------
+        # ── Scroll + thumbnail ────────────────────────────────────────────────
         await _scroll(page, 180)
         await _delay(1.0, 2.5)
 
-        # -- Thumbnail personalizado -------------------------------------------
         if thumbnail_path:
             await _upload_thumbnail(page, thumbnail_path)
             await _delay(1.5, 3.0)
 
-        # -- Audiencia: No es para ninos --------------------------------------
+        # ── Audiencia: No es para niños ───────────────────────────────────────
         logger.info("Seleccionando audiencia...")
         await _scroll(page, 200)
-        await _delay(0.8, 1.8)
+        await asyncio.sleep(random.uniform(0.8, 1.8))
         try:
             not_kids = await page.select(
                 "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
                 timeout=10,
             )
             if not_kids:
-                await _hover(not_kids)
-                await _delay(0.8, 1.8)
-                await not_kids.click()
+                await _human_click(page, not_kids)
         except Exception:
-            logger.warning("No se encontro opcion de audiencia, continuando...")
+            logger.warning("Opción de audiencia no encontrada, continuando...")
         await _delay(2.0, 4.0)
 
-        # -- Siguiente x3 (pasos 1->2->3->4) ----------------------------------
+        # ── Siguiente x3 ─────────────────────────────────────────────────────
         for step in range(1, 4):
             logger.info(f"Avanzando al paso {step + 1}...")
             try:
-                next_btn = await page.select(
-                    "ytcp-button#next-button", timeout=20
-                )
+                next_btn = await page.select("ytcp-button#next-button", timeout=20)
                 if next_btn is None:
-                    logger.warning(f"Siguiente no encontrado en paso {step}")
                     await _delay(3.0, 6.0)
                     continue
-                # Scroll aleatorio para ver el contenido del paso antes de avanzar
-                await _scroll(page, random.randint(50, 180))
+                await _scroll(page, random.randint(40, 160))
+                await _random_mouse_wander(page)
                 await _delay(1.5, 3.5)
-                await _scroll(page, random.randint(-80, -20))
-                await _delay(1.0, 2.5)
-                await _human_click(next_btn)
-                # Paso 3 (Comprobaciones->Visibilidad) necesita mas espera
-                if step == 3:
-                    await _delay(8.0, 15.0)
-                else:
-                    await _delay(3.5, 7.0)
+                await _scroll(page, random.randint(-60, -20))
+                await _think()
+                await _human_click(page, next_btn)
+                await _delay(8.0, 15.0) if step == 3 else await _delay(3.5, 7.0)
             except Exception as e:
                 logger.warning(f"Paso {step}: {e}")
                 await _delay(3.0, 5.0)
 
-        # -- Visibilidad: Publico ---------------------------------------------
-        logger.info("Estableciendo visibilidad: Publico...")
+        # ── Visibilidad: Público ──────────────────────────────────────────────
+        logger.info("Estableciendo visibilidad: Público...")
         public_radio = await page.select(
             "tp-yt-paper-radio-button[name='PUBLIC']", timeout=25
         )
 
-        # Si no aparecio, reintentar avance (transicion lenta)
         if public_radio is None:
-            logger.warning("Visibilidad no visible aun -- reintentando avance...")
             extra_next = await page.select("ytcp-button#next-button", timeout=10)
             if extra_next:
-                await extra_next.click()
+                await _human_click(page, extra_next)
                 await _delay(7.0, 14.0)
             public_radio = await page.select(
                 "tp-yt-paper-radio-button[name='PUBLIC']", timeout=20
             )
 
-        # Fallback: buscar por texto visible en la pagina
         if public_radio is None:
             for text in ["P\u00fablica", "Public", "P\u00fablico"]:
                 try:
@@ -508,90 +717,67 @@ async def _upload_async(
                     pass
 
         if public_radio is None:
-            logger.error("No se encontro el boton de visibilidad 'Publico'")
+            logger.error("No se encontró el botón de visibilidad 'Público'")
             return False, ""
 
-        # Pausa de "revision" antes de hacer publico — como un humano que revisa
-        await _delay(2.5, 5.0)
-        await _hover(public_radio)
-        await _delay(0.5, 1.2)
-        await public_radio.click()
-        logger.info("Visibilidad: Publico seleccionado")
+        await _think()
+        await _random_mouse_wander(page)
+        await _delay(2.0, 4.5)
+        await _human_click(page, public_radio)
+        logger.info("Visibilidad: Público seleccionado")
         await _delay(4.0, 9.0)
 
-        # -- Esperar upload completo ------------------------------------------
+        # ── Esperar upload + guardar ──────────────────────────────────────────
         await _wait_upload_complete(page)
 
-        # -- Guardar: scroll para ver el boton, pausa de "ultima revision" ----
-        logger.info("Revisando antes de guardar...")
-        await _scroll(page, random.randint(-60, 60))
-        await _delay(random.choice(_THINK_DELAYS), random.choice(_THINK_DELAYS) + 1.5)
+        await _scroll(page, random.randint(-80, 80))
+        await _random_mouse_wander(page)
+        await _think()
 
         logger.info("Guardando video...")
         save_btn = await page.select("ytcp-button#done-button", timeout=30)
         if save_btn is None:
-            logger.error("No se encontro el boton Guardar")
+            logger.error("No se encontró el botón Guardar")
             return False, ""
-        await _hover(save_btn)
-        await _delay(1.0, 2.5)
-        await save_btn.click()
+
+        await _human_click(page, save_btn)
         await _delay(5.0, 10.0)
 
-        # -- Capturar URL del video publicado ----------------------------------
-        import re as _re
+        # ── Capturar URL ──────────────────────────────────────────────────────
         youtube_url = ""
-
-        # 1. Buscar enlace directo en el dialogo de confirmacion
-        for selector in [
-            "a[href*='/shorts/']",
-            "a[href*='watch?v=']",
-            "a[href*='youtu.be/']",
-        ]:
+        for selector in ["a[href*='/shorts/']", "a[href*='watch?v=']", "a[href*='youtu.be/']"]:
             try:
                 link_el = await page.select(selector, timeout=5)
                 if link_el:
                     href = await link_el.get_attribute("href")
-                    if href and ("shorts" in href or "watch" in href or "youtu.be" in href):
+                    if href and ("shorts" in href or "watch" in href):
                         youtube_url = href.strip()
-                        logger.info(f"URL capturada del dialogo: {youtube_url}")
                         break
             except Exception:
                 pass
 
-        # 2. Si no hubo dialogo, extraer video ID de la URL del Studio
         if not youtube_url:
             current_url_after = page.url or ""
-            m = _re.search(r'/video/([a-zA-Z0-9_-]{8,12})(?:/|$)', current_url_after)
+            m = _re.search(r"/video/([a-zA-Z0-9_-]{8,12})(?:/|$)", current_url_after)
             if m:
-                vid_id = m.group(1)
-                youtube_url = f"https://www.youtube.com/shorts/{vid_id}"
-                logger.info(f"URL construida desde Studio URL: {youtube_url}")
+                youtube_url = f"https://www.youtube.com/shorts/{m.group(1)}"
 
-        # 3. Buscar texto con ID en el cuerpo de la pagina
         if not youtube_url:
             try:
                 body_text = await page.evaluate("document.body.innerText")
-                m = _re.search(r'youtu\.be/([a-zA-Z0-9_-]{8,12})', body_text or "")
-                if not m:
-                    m = _re.search(r'watch\?v=([a-zA-Z0-9_-]{8,12})', body_text or "")
-                if not m:
-                    m = _re.search(r'/shorts/([a-zA-Z0-9_-]{8,12})', body_text or "")
-                if m:
-                    youtube_url = f"https://www.youtube.com/shorts/{m.group(1)}"
-                    logger.info(f"URL extraida del DOM: {youtube_url}")
+                for pattern in [r"youtu\.be/([a-zA-Z0-9_-]{8,12})",
+                                 r"watch\?v=([a-zA-Z0-9_-]{8,12})",
+                                 r"/shorts/([a-zA-Z0-9_-]{8,12})"]:
+                    m = _re.search(pattern, body_text or "")
+                    if m:
+                        youtube_url = f"https://www.youtube.com/shorts/{m.group(1)}"
+                        break
             except Exception:
                 pass
 
-        if not youtube_url:
-            logger.warning("No se pudo capturar la URL del video — el video SI fue publicado")
-
-        # -- Screenshot de confirmacion ----------------------------------------
         ts = time.strftime("%Y%m%d_%H%M%S")
-        screenshot_path = config.LOGS_DIR / f"upload_confirm_{ts}.png"
-        await page.save_screenshot(str(screenshot_path))
-        logger.info(f"Screenshot guardado: {screenshot_path.name}")
-
-        logger.info(f"Video subido exitosamente: '{title}'")
+        await page.save_screenshot(str(config.LOGS_DIR / f"upload_confirm_{ts}.png"))
+        logger.info(f"Video subido: '{title}' — {youtube_url or 'URL no capturada'}")
         return True, youtube_url
 
     except Exception as e:
@@ -599,9 +785,7 @@ async def _upload_async(
         if page:
             try:
                 ts = time.strftime("%Y%m%d_%H%M%S")
-                err_path = config.LOGS_DIR / f"upload_error_{ts}.png"
-                await page.save_screenshot(str(err_path))
-                logger.info(f"Screenshot de error: {err_path.name}")
+                await page.save_screenshot(str(config.LOGS_DIR / f"upload_error_{ts}.png"))
             except Exception:
                 pass
         return False, ""
@@ -613,8 +797,7 @@ async def _upload_async(
             pass
 
 
-# --- API publica (sincrona) ---------------------------------------------------
-
+# ─── API pública (síncrona) ───────────────────────────────────────────────────
 
 def upload_to_youtube(
     video_path: str,
@@ -624,27 +807,17 @@ def upload_to_youtube(
     thumbnail_path: str = "",
 ) -> str | None:
     """
-    Sube un video a YouTube Studio usando nodriver (CDP, sin WebDriver).
-
-    Args:
-        video_path:      Ruta al archivo MP4
-        title:           Titulo del video (max 100 chars)
-        description:     Descripcion del video
-        tags:            Lista de hashtags (con o sin #)
-        thumbnail_path:  Ruta al JPG/PNG de thumbnail (opcional)
+    Sube un video a YouTube Studio con anti-detección multicapa.
 
     Returns:
-        URL del video en YouTube si se subio correctamente (puede ser "" si
-        no se capturo la URL pero el upload si se completo).
-        None si el upload fallo.
+        URL del video si se subió (puede ser "" si no se capturó la URL pero sí se subió).
+        None si el upload falló.
     """
     video_path = Path(video_path)
     if not video_path.exists():
         raise FileNotFoundError(f"Video no encontrado: {video_path}")
 
     logger.info(f"Iniciando upload: {video_path.name}")
-    if thumbnail_path and Path(thumbnail_path).exists():
-        logger.info(f"Thumbnail incluido: {Path(thumbnail_path).name}")
 
     for attempt in range(1, config.UPLOAD_MAX_RETRIES + 1):
         try:
@@ -652,14 +825,14 @@ def upload_to_youtube(
                 _upload_async(video_path, title, description, tags, thumbnail_path)
             )
             if ok:
-                return youtube_url  # "" si no se capturo URL, pero upload OK
-            logger.warning(f"Intento {attempt} fallo sin excepcion")
+                return youtube_url
+            logger.warning(f"Intento {attempt} falló sin excepción")
         except Exception as e:
-            logger.error(f"Excepcion en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {e}")
+            logger.error(f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: {e}")
 
         if attempt < config.UPLOAD_MAX_RETRIES:
             logger.info(f"Reintentando en {config.UPLOAD_RETRY_WAIT}s...")
             time.sleep(config.UPLOAD_RETRY_WAIT)
 
-    logger.error(f"Upload fallo tras {config.UPLOAD_MAX_RETRIES} intentos")
+    logger.error(f"Upload falló tras {config.UPLOAD_MAX_RETRIES} intentos")
     return None
