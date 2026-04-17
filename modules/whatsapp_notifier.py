@@ -243,7 +243,13 @@ def send_upload_confirmation(
     to_number   = getattr(config, "WHATSAPP_TO", "")
 
     if not all([account_sid, auth_token, from_number, to_number]):
-        logger.warning("Faltan credenciales de Twilio — omitiendo confirmacion WhatsApp")
+        missing = [k for k, v in {
+            "TWILIO_ACCOUNT_SID": account_sid,
+            "TWILIO_AUTH_TOKEN": auth_token,
+            "TWILIO_WHATSAPP_FROM": from_number,
+            "WHATSAPP_TO": to_number,
+        }.items() if not v]
+        logger.warning(f"WhatsApp: faltan variables en .env: {', '.join(missing)} — omitiendo notificacion")
         return
 
     client  = Client(account_sid, auth_token)
@@ -293,7 +299,11 @@ def send_upload_confirmation(
         if youtube_url:
             logger.info(f"Enlace del video: {youtube_url}")
     except Exception as e:
-        logger.error(f"Error enviando confirmacion WhatsApp: {e}")
+        logger.error(
+            f"Error enviando confirmacion WhatsApp: {e}\n"
+            "  → Si es error de sandbox: reenvía 'join <palabra>' al número de Twilio\n"
+            "  → Diagnóstico completo: python main.py --test-wa"
+        )
 
 
 def send_approval_request(

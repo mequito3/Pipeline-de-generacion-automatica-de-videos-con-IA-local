@@ -477,6 +477,86 @@ def _cleanup_temp_files(run_dir: Path, keep_final: bool = True) -> None:
         logger.warning(f"Error limpiando temporales: {e}")
 
 
+# ─── Test WhatsApp ────────────────────────────────────────────────────────────
+
+def test_whatsapp() -> None:
+    """
+    Diagnóstico completo de la conexión WhatsApp/Twilio.
+    Envía un mensaje de prueba real y reporta cada paso.
+    Uso: python main.py --test-wa
+    """
+    print("\n" + "="*60)
+    print("  TEST WhatsApp / Twilio")
+    print("="*60)
+
+    # 1. Verificar credenciales
+    sid   = getattr(config, "TWILIO_ACCOUNT_SID", "")
+    token = getattr(config, "TWILIO_AUTH_TOKEN", "")
+    frm   = getattr(config, "TWILIO_WHATSAPP_FROM", "")
+    to    = getattr(config, "WHATSAPP_TO", "")
+
+    checks = {
+        "TWILIO_ACCOUNT_SID":  sid,
+        "TWILIO_AUTH_TOKEN":   token,
+        "TWILIO_WHATSAPP_FROM": frm,
+        "WHATSAPP_TO":         to,
+    }
+    ok = True
+    for k, v in checks.items():
+        status = "✅" if v else "❌ FALTA"
+        print(f"  {status}  {k}: {'***' + v[-4:] if v else 'no configurado'}")
+        if not v:
+            ok = False
+
+    if not ok:
+        print("\n❌ Faltan credenciales. Configura el .env con los valores de Twilio.")
+        print("   Guía: https://www.twilio.com/console/messaging/whatsapp/sandbox")
+        print("   Luego envía 'join <palabra>' al sandbox desde tu WhatsApp.")
+        return
+
+    # 2. Intentar importar twilio
+    try:
+        from twilio.rest import Client
+    except ImportError:
+        print("\n❌ twilio no instalado. Ejecuta: pip install twilio")
+        return
+
+    print("\n  Credenciales OK. Enviando mensaje de prueba...")
+
+    try:
+        client   = Client(sid, token)
+        from_ws  = f"whatsapp:{frm}"
+        to_ws    = f"whatsapp:{to}"
+        msg      = client.messages.create(
+            from_=from_ws,
+            to=to_ws,
+            body=(
+                f"✅ *Test de conexión — {config.CHANNEL_NAME}*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Si recibes este mensaje, las notificaciones de YouTube funcionan correctamente.\n\n"
+                "_Este es un mensaje automático de prueba._"
+            ),
+        )
+        print(f"\n✅ Mensaje enviado correctamente.")
+        print(f"   SID: {msg.sid}")
+        print(f"   Estado: {msg.status}")
+        print(f"\n   Revisa WhatsApp en {to} — debería llegar en segundos.")
+        print("\n   Si NO llega:")
+        print("   1. Abre WhatsApp y envía 'join <palabra>' al número del sandbox")
+        print(f"      → número sandbox: {frm}")
+        print("   2. Las sesiones del sandbox expiran cada 72h sin actividad")
+        print("   3. Verifica que WHATSAPP_TO tiene el formato +34612345678")
+    except Exception as e:
+        print(f"\n❌ Error enviando mensaje: {e}")
+        print("\n   Causas frecuentes:")
+        print("   • Sesión del sandbox expirada → reenvía 'join <palabra>' al sandbox")
+        print("   • TWILIO_WHATSAPP_FROM incorrecto (debe ser el número del sandbox)")
+        print("   • WHATSAPP_TO sin código de país (ej: +34612345678 no 612345678)")
+        print("   • Credenciales de Twilio incorrectas")
+
+    print("\n" + "="*60)
+
+
 # ─── Modo test ────────────────────────────────────────────────────────────────
 
 def run_tests() -> None:
@@ -640,6 +720,11 @@ Prerequisitos:
         help="Probar cada módulo individualmente"
     )
     parser.add_argument(
+        "--test-wa",
+        action="store_true",
+        help="Diagnosticar y probar la conexión WhatsApp/Twilio"
+    )
+    parser.add_argument(
         "--topic",
         type=str,
         help="Tema específico para el video (por defecto: rotatorio automático)"
@@ -660,6 +745,9 @@ Prerequisitos:
 
     if args.test:
         run_tests()
+
+    elif getattr(args, "test_wa", False):
+        test_whatsapp()
 
     elif args.now:
         success = run_factory(topic=args.topic)
