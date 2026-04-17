@@ -187,7 +187,7 @@ def _check_ffmpeg() -> bool:
 
 # ─── Pipeline principal ───────────────────────────────────────────────────────
 
-def run_factory(topic: str | None = None) -> bool:
+def run_factory(topic: str | None = None) -> bool | None:
     """
     Ejecuta el pipeline completo de generación y subida de un video.
 
@@ -330,9 +330,9 @@ def run_factory(topic: str | None = None) -> bool:
                 narrator_gender=script.get("narrator_gender", "auto"),
             )
             if not approved:
-                logger.info("      Video RECHAZADO — no se sube a YouTube")
-                _cleanup_temp_files(run_dir, keep_final=True)
-                return False
+                logger.info("      Video RECHAZADO vía WhatsApp — se generará un nuevo video")
+                _cleanup_temp_files(run_dir, keep_final=False)
+                return None  # None = rechazado, distinto de False = error real
             logger.info("      Video APROBADO via WhatsApp — continuando...")
             youtube_step_label = "[7/7]"
         else:
@@ -709,19 +709,49 @@ def run_tests() -> None:
 def _safe_run_factory(topic: str | None = None) -> bool:
     """
     Llama a run_factory() sin dejar morir al scheduler si algo falla.
-    Captura SystemExit (de check_services) y cualquier excepción inesperada.
-    Solo deja pasar KeyboardInterrupt para que Ctrl+C funcione.
+
+    Maneja tres resultados de run_factory():
+      True  → éxito, termina
+      False → error real, no reintenta
+      None  → rechazado por WhatsApp, regenera un video nuevo (hasta MAX_WA_RETRIES veces)
     """
-    try:
-        return run_factory(topic=topic)
-    except KeyboardInterrupt:
-        raise
-    except SystemExit as e:
-        logger.error(f"run_factory terminó con sys.exit({e.code}) — servicio caído. Próxima corrida en el siguiente slot.")
-        return False
-    except Exception as e:
-        logger.error(f"run_factory lanzó excepción inesperada: {e}", exc_info=True)
-        return False
+    max_retries = getattr(config, "MAX_WA_RETRIES", 3)
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = run_factory(topic=topic)
+
+            if result is True:
+                return True
+
+            if result is None:
+                # Usuario respondió "no" por WhatsApp → generar video nuevo
+                if attempt < max_retries:
+                    logger.info(
+                        f"WhatsApp: video rechazado — generando nuevo video "
+                        f"(intento {attempt + 1}/{max_retries})..."
+                    )
+                    continue
+                else:
+                    logger.warning(
+                        f"WhatsApp: {max_retries} videos rechazados consecutivos — "
+                        "no se sube nada en este slot."
+                    )
+                    return False
+
+            # result is False → error real, no reintentar
+            return False
+
+        except KeyboardInterrupt:
+            raise
+        except SystemExit as e:
+            logger.error(f"run_factory terminó con sys.exit({e.code}) — servicio caído.")
+            return False
+        except Exception as e:
+            logger.error(f"run_factory lanzó excepción inesperada: {e}", exc_info=True)
+            return False
+
+    return False
 
 
 # ─── Scheduler multi-video con ventanas de audiencia pico ────────────────────

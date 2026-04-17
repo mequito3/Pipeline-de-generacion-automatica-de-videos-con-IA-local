@@ -61,6 +61,8 @@ TWILIO_WHATSAPP_FROM: str = os.getenv("TWILIO_WHATSAPP_FROM", "")
 WHATSAPP_TO: str = os.getenv("WHATSAPP_TO", "")
 # Segundos máximos esperando respuesta (default: 2 horas)
 WHATSAPP_APPROVAL_TIMEOUT: int = int(os.getenv("WHATSAPP_APPROVAL_TIMEOUT", "7200"))
+# Veces máximas que se regenera un video nuevo cuando WhatsApp responde "no"
+MAX_WA_RETRIES: int = int(os.getenv("MAX_WA_RETRIES", "3"))
 
 # ─── YouTube (Selenium) ───────────────────────────────────────────────────────
 YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
