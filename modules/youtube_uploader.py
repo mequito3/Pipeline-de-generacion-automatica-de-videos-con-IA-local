@@ -157,6 +157,10 @@ _STEALTH_JS = r"""
 
 _THINK_PAUSES = [1.1, 1.4, 1.8, 2.2, 2.6, 3.0, 1.6, 2.9]
 
+# Posición actual del cursor — se actualiza en cada movimiento para que
+# el siguiente click parta desde donde realmente terminó el anterior.
+_cursor: dict[str, float] = {"x": 960.0, "y": 540.0}
+
 
 async def _delay(min_s: float = 2.0, max_s: float = 5.0) -> None:
     """Pausa con distribución triangular (pico en el centro, como pausas humanas)."""
@@ -170,48 +174,53 @@ async def _think() -> None:
 
 # ─── Mouse con curvas Bezier (CDP real) ───────────────────────────────────────
 
-async def _bezier_move(page, x1: int, y1: int, x2: int, y2: int) -> None:
+async def _bezier_move(page, x1: float, y1: float, x2: float, y2: float) -> None:
     """
     Mueve el cursor de (x1,y1) a (x2,y2) siguiendo una curva Bezier cuadrática.
     Usa CDP Input.dispatchMouseEvent — mueve el cursor real, no solo dispara eventos JS.
-    Google detecta si el cursor llega al botón en línea recta (bot) vs curva (humano).
+    Actualiza _cursor al terminar para que el próximo movimiento parta desde aquí.
     """
+    global _cursor
     try:
         import nodriver.cdp.input_ as cdp_input
 
-        # Punto de control aleatorio (crea la curva)
-        cx = (x1 + x2) // 2 + random.randint(-120, 120)
-        cy = (y1 + y2) // 2 + random.randint(-80, 80)
+        # Punto de control aleatorio fuera de la línea recta (crea la curva)
+        cx = (x1 + x2) / 2 + random.uniform(-130, 130)
+        cy = (y1 + y2) / 2 + random.uniform(-90, 90)
 
         dist = math.hypot(x2 - x1, y2 - y1)
-        steps = max(12, min(40, int(dist / 20)))
+        steps = max(10, min(45, int(dist / 18)))
 
         for i in range(steps + 1):
             t = i / steps
-            # Curva Bezier cuadrática: B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
-            bx = int((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t ** 2 * x2)
-            by = int((1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t ** 2 * y2)
-            # Micro-jitter humano (la mano no es perfectamente estable)
-            bx += random.randint(-1, 1)
-            by += random.randint(-1, 1)
+            bx = (1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t ** 2 * x2
+            by = (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t ** 2 * y2
+            # Micro-jitter: la mano humana tiembla ligeramente
+            bx += random.uniform(-0.8, 0.8)
+            by += random.uniform(-0.8, 0.8)
 
             await page.send(
                 cdp_input.dispatch_mouse_event(
                     type_="mouseMoved",
-                    x=float(bx),
-                    y=float(by),
+                    x=round(bx, 1),
+                    y=round(by, 1),
                     modifiers=0,
                     buttons=0,
                     button=cdp_input.MouseButton.NONE,
                     click_count=0,
                 )
             )
-            # Velocidad variable: más lento al inicio y al final (como aceleración humana)
-            speed_factor = 1.0 - 0.5 * math.sin(math.pi * t)
-            await asyncio.sleep(random.uniform(0.006, 0.018) * speed_factor)
+            # Aceleración humana: lento al inicio, rápido en el medio, lento al llegar
+            speed_factor = 1.0 - 0.55 * math.sin(math.pi * t)
+            await asyncio.sleep(random.uniform(0.005, 0.016) * speed_factor)
+
+        _cursor["x"] = x2
+        _cursor["y"] = y2
 
     except Exception as e:
         logger.debug(f"Bezier move fallback: {e}")
+        _cursor["x"] = x2
+        _cursor["y"] = y2
 
 
 async def _get_element_center(element) -> tuple[int, int]:
@@ -230,19 +239,15 @@ async def _get_element_center(element) -> tuple[int, int]:
 
 async def _human_click(page, element) -> None:
     """
-    Click realista: mueve cursor en curva Bezier desde posición aleatoria,
-    pausa de 'apuntar', luego click.
+    Click realista: mueve cursor en Bezier desde la posición actual rastreada,
+    pausa de 'apuntar', click, y actualiza la posición del cursor.
     """
     tx, ty = await _get_element_center(element)
-
-    # Posición de origen aleatoria (donde estaba el cursor antes)
-    ox = random.randint(200, 1400)
-    oy = random.randint(100, 900)
-
-    await _bezier_move(page, ox, oy, tx, ty)
-    await asyncio.sleep(random.uniform(0.08, 0.22))  # pausa de "apuntar"
+    # Partir desde donde el cursor quedó del último movimiento (no desde un punto aleatorio)
+    await _bezier_move(page, _cursor["x"], _cursor["y"], float(tx), float(ty))
+    await asyncio.sleep(random.uniform(0.07, 0.20))  # pausa de "apuntar"
     await element.click()
-    await asyncio.sleep(random.uniform(0.1, 0.35))   # pausa post-click
+    await asyncio.sleep(random.uniform(0.1, 0.32))   # pausa post-click
 
 
 # ─── Scroll con lectura simulada ─────────────────────────────────────────────
@@ -264,20 +269,17 @@ async def _scroll(page, amount: int = 200) -> None:
 
 
 async def _random_mouse_wander(page) -> None:
-    """Movimiento de mouse aleatorio mientras 'lee' la página (comportamiento idle)."""
+    """
+    Mueve el mouse por 2-4 puntos aleatorios vía Bezier.
+    No teleporta — parte desde _cursor y actualiza su posición en cada paso.
+    Simula el movimiento idle de un humano mientras lee o espera.
+    """
     try:
-        import nodriver.cdp.input_ as cdp_input
-        for _ in range(random.randint(2, 5)):
-            x = random.randint(300, 1600)
-            y = random.randint(100, 900)
-            await page.send(
-                cdp_input.dispatch_mouse_event(
-                    type_="mouseMoved", x=float(x), y=float(y),
-                    modifiers=0, buttons=0,
-                    button=cdp_input.MouseButton.NONE, click_count=0,
-                )
-            )
-            await asyncio.sleep(random.uniform(0.3, 0.8))
+        for _ in range(random.randint(2, 4)):
+            nx = float(random.randint(250, 1650))
+            ny = float(random.randint(120, 880))
+            await _bezier_move(page, _cursor["x"], _cursor["y"], nx, ny)
+            await asyncio.sleep(random.uniform(0.25, 0.7))
     except Exception:
         pass
 
@@ -553,6 +555,10 @@ async def _upload_async(
             if Path(candidate).exists():
                 chrome_bin = candidate
                 break
+
+    # Resetear posición del cursor al centro de pantalla para esta sesión
+    global _cursor
+    _cursor = {"x": 960.0, "y": 540.0}
 
     browser = None
     page = None
