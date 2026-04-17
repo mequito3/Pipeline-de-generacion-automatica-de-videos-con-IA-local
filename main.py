@@ -351,9 +351,15 @@ def run_factory(topic: str | None = None) -> bool | None:
             base_tags = getattr(config, "BASE_HASHTAGS", [])
             all_tags = list(dict.fromkeys(script.get("tags", []) + base_tags))
 
-            # Añadir pie de afiliado si está configurado
-            description = script["description"]
+            # Descripción profesional y consistente para todos los videos:
+            # 1. Frase corta del conflicto (del LLM, 80-120 chars)
+            # 2. CTA de seguimiento (rotatorio del config)
+            # 3. Pie de afiliado si está configurado
+            desc_line = script["description"].strip()
+            cta_follow = random.choice(config.CTA_FOLLOW)
             affiliate = getattr(config, "AFFILIATE_FOOTER", "")
+
+            description = f"{desc_line}\n\n{cta_follow}"
             if affiliate:
                 description = f"{description}\n\n{affiliate}"
 
