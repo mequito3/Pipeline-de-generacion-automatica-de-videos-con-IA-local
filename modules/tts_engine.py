@@ -662,6 +662,127 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     )
 
 
+# ─── Backend VoxCPM — clonación de voz propia ────────────────────────────────
+
+
+def _voxcpm_generate(text: str, output_path: Path, voice_sample: str) -> str:
+    """
+    Genera audio clonando una voz de referencia con VoxCPM2.
+
+    Estrategia de VRAM (RTX 500 Ada, 8GB):
+    - Carga VoxCPM (load_denoiser=False ahorra ~1GB), genera WAV, libera VRAM
+    - Luego stable-ts/faster-whisper corren sin competir por GPU
+    """
+    try:
+        import gc
+        import soundfile as sf
+        import torch
+        from voxcpm import VoxCPM
+    except ImportError as e:
+        raise RuntimeError(
+            f"VoxCPM no instalado: {e}\n"
+            "Ejecuta: pip install voxcpm soundfile"
+        )
+
+    sample_path = Path(voice_sample)
+    if not sample_path.exists():
+        raise FileNotFoundError(
+            f"Muestra de voz no encontrada: {voice_sample}\n"
+            "Configura VOXCPM_VOICE_SAMPLE_MALE en tu .env"
+        )
+
+    # Liberar VRAM de otros modelos cacheados antes de cargar VoxCPM
+    global _stable_ts_model, _faster_whisper_model
+    if _stable_ts_model is not None:
+        del _stable_ts_model
+        _stable_ts_model = None
+    if _faster_whisper_model is not None:
+        del _faster_whisper_model
+        _faster_whisper_model = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    logger.info("VoxCPM: cargando modelo openbmb/VoxCPM2 (primera vez descarga ~8GB)...")
+    try:
+        model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
+    except Exception as e:
+        raise RuntimeError(f"VoxCPM: falló al cargar modelo — {e}")
+
+    logger.info(f"VoxCPM: generando con muestra '{sample_path.name}'...")
+    try:
+        wav = model.generate(
+            text=text,
+            reference_wav_path=str(sample_path),
+        )
+        sample_rate = model.tts_model.sample_rate
+    except Exception as e:
+        raise RuntimeError(f"VoxCPM: error en síntesis — {e}")
+    finally:
+        # Liberar VRAM inmediatamente para que Whisper pueda usar GPU después
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.debug("VoxCPM: VRAM liberada")
+
+    # Guardar WAV temporal → convertir a MP3
+    wav_path = output_path.with_suffix(".wav")
+    try:
+        sf.write(str(wav_path), wav, sample_rate)
+        logger.info(f"VoxCPM: WAV guardado ({wav_path.stat().st_size // 1024}KB)")
+
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_wav(str(wav_path))
+            audio.export(str(output_path), format="mp3", bitrate="192k")
+        except Exception:
+            # Si falla la conversión, usar WAV directamente
+            wav_path.rename(output_path.with_suffix(".wav"))
+            return str(output_path.with_suffix(".wav"))
+    finally:
+        if wav_path.exists():
+            wav_path.unlink(missing_ok=True)
+
+    logger.info(f"VoxCPM: MP3 generado → {output_path.name}")
+    return str(output_path)
+
+
+def _voxcpm_generate_with_subtitles(text: str, output_path: Path, voice_sample: str) -> str:
+    """Genera audio con VoxCPM y luego el ASS de subtítulos sincronizados."""
+    result_path = Path(_voxcpm_generate(text, output_path, voice_sample))
+
+    # Timestamps — stable-ts o faster-whisper (VRAM ya libre tras VoxCPM)
+    timed_words = _get_stable_ts_word_timestamps(result_path)
+    if not timed_words:
+        timed_words = _get_whisper_word_timestamps(result_path)
+
+    if not timed_words:
+        # Fallback uniforme
+        try:
+            from pydub import AudioSegment
+            dur = len(AudioSegment.from_mp3(str(result_path))) / 1000.0
+        except Exception:
+            dur = 45.0
+        words = text.split()
+        w_dur = dur / max(1, len(words))
+        timed_words = [(w, 0.3 + i * w_dur, w_dur) for i, w in enumerate(words)]
+
+    timed_words = _fix_word_timings(timed_words)
+
+    try:
+        from pydub import AudioSegment
+        audio_dur = len(AudioSegment.from_mp3(str(result_path))) / 1000.0
+    except Exception:
+        audio_dur = 0.0
+
+    ass_path = result_path.with_suffix(".ass")
+    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur)
+    logger.info(f"VoxCPM: ASS generado ({len(timed_words)} palabras)")
+
+    return str(result_path)
+
+
 # ─── Backend pyttsx3 ──────────────────────────────────────────────────────────
 
 
@@ -848,7 +969,18 @@ def generate_audio(
     )
 
     if backend == "edge":
-        result = _generate_with_edge_tts(text, output_path, gender=gender)
+        male_sample  = getattr(config, "VOXCPM_VOICE_SAMPLE_MALE", "")
+        female_sample = getattr(config, "VOXCPM_VOICE_SAMPLE_FEMALE", "")
+        resolved_gender = gender if gender != "auto" else detect_narrator_gender(text)
+
+        if resolved_gender == "male" and male_sample:
+            logger.info(f"VoxCPM: voz masculina clonada desde '{Path(male_sample).name}'")
+            result = _voxcpm_generate_with_subtitles(text, output_path, male_sample)
+        elif resolved_gender == "female" and female_sample:
+            logger.info(f"VoxCPM: voz femenina clonada desde '{Path(female_sample).name}'")
+            result = _voxcpm_generate_with_subtitles(text, output_path, female_sample)
+        else:
+            result = _generate_with_edge_tts(text, output_path, gender=gender)
     else:
         result = _generate_with_pyttsx3(text, output_path)
         # Mock ASS para pyttsx3

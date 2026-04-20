@@ -50,6 +50,26 @@ TTS_EDGE_VOICE: str = os.getenv("TTS_EDGE_VOICE", "es-MX-DaliaNeural")
 TTS_VOICE_RATE: int = int(os.getenv("TTS_VOICE_RATE", "175"))
 TTS_VOLUME: float = 1.0
 
+# ─── VoxCPM — clonación de voz (opcional) ────────────────────────────────────
+# Si defines VOXCPM_VOICE_SAMPLE_MALE, el TTS usará tu voz clonada cuando
+# el narrador sea masculino (femenino sigue con Edge TTS DaliaNeural).
+#
+# Cómo grabar tu muestra de voz:
+#   1. Ambiente silencioso, sin eco ni música
+#   2. Narra en español algo natural durante 30-60s (leer un artículo, contar algo)
+#   3. Guarda como WAV mono 16kHz o 44kHz (cualquier formato sirve)
+#   4. Pon el path aquí abajo
+#
+# Requerimientos (primera vez):
+#   pip install voxcpm soundfile
+#   # El modelo openbmb/VoxCPM2 se descarga automático (~8GB, solo la primera vez)
+#
+# VRAM: necesita ~7-8GB libres. Con RTX 500 Ada (8GB) funciona si no hay
+# otros procesos GPU activos. El modelo se descarga/libera entre narración y
+# extracción de timestamps para no saturar VRAM.
+VOXCPM_VOICE_SAMPLE_MALE:   str = os.getenv("VOXCPM_VOICE_SAMPLE_MALE", "")
+VOXCPM_VOICE_SAMPLE_FEMALE: str = os.getenv("VOXCPM_VOICE_SAMPLE_FEMALE", "")
+
 # ─── WhatsApp / Aprobación manual ────────────────────────────────────────────
 # Si es true, el pipeline pausa y espera tu SI/NO en WhatsApp antes de publicar
 WHATSAPP_APPROVAL_ENABLED: bool = (
