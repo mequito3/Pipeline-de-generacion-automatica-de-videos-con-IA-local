@@ -49,6 +49,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config
 from modules import script_generator, tts_engine, video_assembler, youtube_uploader, scraper, pexels_fetcher
+from modules import growth_agent
+from modules import analytics_agent, ceo_report
 
 logger = logging.getLogger("main")
 
@@ -355,7 +357,12 @@ def run_factory(topic: str | None = None) -> bool | None:
             # 1. Frase corta del conflicto (del LLM, 80-120 chars)
             # 2. CTA de seguimiento (rotatorio del config)
             # 3. Pie de afiliado si está configurado
-            desc_line = script["description"].strip()
+            # Limpiar descripción: quitar hashtags que el LLM mete dentro del campo
+            # y truncar a máx 120 chars para que quede corta y limpia
+            raw_desc = script["description"].strip()
+            desc_words = [w for w in raw_desc.split() if not w.startswith("#")]
+            desc_line = " ".join(desc_words)[:120].rsplit(" ", 1)[0]
+
             cta_follow = random.choice(config.CTA_FOLLOW)
             affiliate = getattr(config, "AFFILIATE_FOOTER", "")
 
@@ -399,6 +406,12 @@ def run_factory(topic: str | None = None) -> bool | None:
                         )
                     except Exception as e_wa:
                         logger.warning(f"      Notificacion WhatsApp fallo (no critico): {e_wa}")
+                # Growth agent: pinear comentario + engagement (no crítico)
+                try:
+                    logger.info("      Iniciando growth agent post-upload...")
+                    growth_agent.run_growth_session(do_own=True)
+                except Exception as e_ga:
+                    logger.warning(f"      Growth agent falló (no crítico): {e_ga}")
             else:
                 logger.error(f"      ERROR: No se pudo subir el video | Tardó: {step_times['upload']:.0f}s")
 
@@ -785,23 +798,45 @@ def _daily_schedule() -> list:
     return sorted(times)
 
 
+def _run_analytics_and_report() -> None:
+    """Ejecuta analítica + CEO Report. Llamado una vez al día desde el scheduler."""
+    if not getattr(config, "ANALYTICS_ENABLED", True):
+        return
+    try:
+        logger.info("Analista — inicio de sesión diaria...")
+        analytics_agent.run_analytics_session()
+    except Exception as e:
+        logger.warning(f"Analytics agent falló (no crítico): {e}")
+
+    try:
+        logger.info("CEO Report — generando y enviando...")
+        ceo_report.run_ceo_report(send=True)
+    except Exception as e:
+        logger.warning(f"CEO Report falló (no crítico): {e}")
+
+
 def _run_scheduler(topic: str | None = None) -> None:
     """
     Publica VIDEOS_PER_DAY videos/día en ventanas de audiencia pico.
     Por defecto 3 videos: 11-13h, 16-18h, 20-22h (hora local).
+    Analytics + CEO Report: una vez al día a las ANALYTICS_HOUR (default: 9h).
     """
     import datetime as _dt
 
-    n  = getattr(config, "VIDEOS_PER_DAY", 3)
-    w1 = getattr(config, "SCHEDULE_WIN1", (11, 13))
-    w2 = getattr(config, "SCHEDULE_WIN2", (16, 18))
-    w3 = getattr(config, "SCHEDULE_WIN3", (20, 22))
+    n    = getattr(config, "VIDEOS_PER_DAY", 3)
+    a_h  = getattr(config, "ANALYTICS_HOUR", 9)
+    w1   = getattr(config, "SCHEDULE_WIN1", (11, 13))
+    w2   = getattr(config, "SCHEDULE_WIN2", (16, 18))
+    w3   = getattr(config, "SCHEDULE_WIN3", (20, 22))
     print(f"⏰ Scheduler: {n} videos/día en ventanas de audiencia pico")
     print(f"   WIN1: {w1[0]:02d}-{w1[1]:02d}h | WIN2: {w2[0]:02d}-{w2[1]:02d}h | WIN3: {w3[0]:02d}-{w3[1]:02d}h")
+    print(f"   Analytics + CEO Report: todos los días a las {a_h:02d}:00h")
     print("   (Ctrl+C para detener)\n")
 
     _cleanup_old_runs(days_to_keep=7)
     _rotate_logs(max_files=30)
+
+    analytics_done_today: str = ""   # fecha ISO de la última ejecución de analytics
 
     # Primer video: inmediatamente al arrancar
     _safe_run_factory(topic=topic)
@@ -809,12 +844,24 @@ def _run_scheduler(topic: str | None = None) -> None:
     while True:
         import datetime as _dt
         now = _dt.datetime.now()
+        today_str = now.date().isoformat()
 
-        # Slots de hoy que aún no han pasado
+        # ── Analítica diaria ──────────────────────────────────────────────────
+        analytics_target = _dt.datetime.combine(
+            now.date(), _dt.time(a_h, random.randint(0, 29))
+        )
+        if (
+            getattr(config, "ANALYTICS_ENABLED", True)
+            and analytics_done_today != today_str
+            and now >= analytics_target
+        ):
+            analytics_done_today = today_str
+            _run_analytics_and_report()
+
+        # ── Slots de video pendientes ─────────────────────────────────────────
         pending = [t for t in _daily_schedule() if t > now]
 
         if not pending:
-            # Todos los slots de hoy ya pasaron → programar para mañana
             tomorrow = _dt.date.today() + _dt.timedelta(days=1)
             pending = [
                 t.replace(year=tomorrow.year, month=tomorrow.month, day=tomorrow.day)
@@ -832,6 +879,31 @@ def _run_scheduler(topic: str | None = None) -> None:
             )
             print(f"\n⏰ Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
                   f"(en {wait_secs / 3600:.1f}h)\n")
+
+            # Sesión de growth a mitad de la espera (solo comentarios externos)
+            half_wait = wait_secs / 2
+            half_target = _dt.datetime.now() + _dt.timedelta(seconds=half_wait)
+            while _dt.datetime.now() < half_target:
+                time.sleep(60)
+                # Verificar si toca analytics mientras esperamos
+                now_inner = _dt.datetime.now()
+                today_inner = now_inner.date().isoformat()
+                analytics_target_inner = _dt.datetime.combine(
+                    now_inner.date(), _dt.time(a_h, 0)
+                )
+                if (
+                    getattr(config, "ANALYTICS_ENABLED", True)
+                    and analytics_done_today != today_inner
+                    and now_inner >= analytics_target_inner
+                ):
+                    analytics_done_today = today_inner
+                    _run_analytics_and_report()
+
+            try:
+                logger.info("Growth agent — sesión intermedia (solo externos)...")
+                growth_agent.run_growth_session(do_own=False)
+            except Exception as e_ga:
+                logger.warning(f"Growth agent intermedio falló (no crítico): {e_ga}")
 
             while _dt.datetime.now() < next_run:
                 time.sleep(60)
@@ -879,6 +951,21 @@ Prerequisitos:
         type=str,
         help="Tema específico para el video (por defecto: rotatorio automático)"
     )
+    parser.add_argument(
+        "--grow",
+        action="store_true",
+        help="Ejecutar solo el agente de crecimiento ahora (sin generar video)"
+    )
+    parser.add_argument(
+        "--analytics",
+        action="store_true",
+        help="Ejecutar el agente analista ahora (stats del canal y videos)"
+    )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generar y enviar el reporte ejecutivo por WhatsApp ahora"
+    )
 
     args = parser.parse_args()
 
@@ -902,6 +989,33 @@ Prerequisitos:
     elif args.now:
         success = run_factory(topic=args.topic)
         sys.exit(0 if success else 1)
+
+    elif getattr(args, "grow", False):
+        setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
+        result = growth_agent.run_growth_session(do_own=True)
+        print(f"\n  Comentarios externos : {result['external']}")
+        print(f"  Replies propios      : {result['own']}")
+        print(f"  Omitidos             : {result['skipped']}\n")
+
+    elif getattr(args, "analytics", False):
+        setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
+        snap = analytics_agent.run_analytics_session()
+        print(f"\n  Canal         : {snap.channel_id}")
+        print(f"  Suscriptores  : {snap.subscribers}")
+        print(f"  Vistas 28d    : {snap.views_28d}")
+        print(f"  Watch time    : {snap.watch_time_h_28d}h")
+        print(f"  Videos        : {len(snap.videos)}")
+        print(f"  Top video     : {snap.top_video_title[:60]}")
+        if snap.errors:
+            print(f"  Errores       : {snap.errors}")
+        print()
+
+    elif getattr(args, "report", False):
+        setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
+        report_text = ceo_report.run_ceo_report(send=True)
+        print(f"\n{'='*60}")
+        print(report_text)
+        print(f"{'='*60}\n")
 
     else:
         _run_scheduler(topic=args.topic)

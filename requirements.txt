@@ -29,6 +29,9 @@ nodriver>=0.48.0                # Automatización Chrome sin detección (reempla
 # ─── Notificaciones WhatsApp ──────────────────────────────────────────────────
 twilio>=9.0.0                   # API de WhatsApp vía Twilio sandbox
 
+# ─── Servidor web (keep-alive en Render para UptimeRobot) ────────────────────
+flask>=3.0.0                    # Endpoint /health que UptimeRobot pinga cada 5 min
+
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 numpy>=1.22.0                   # Arrays numéricos (dependencia de whisper)
 python-dotenv>=1.0.0            # Cargar .env con credenciales

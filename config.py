@@ -8,8 +8,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Cargar variables de entorno desde .env
+# CHANNEL_ENV_FILE permite al orchestrator apuntar a un .env distinto por canal
 BASE_DIR = Path(__file__).parent
-load_dotenv(BASE_DIR / ".env")
+_env_file = os.environ.get("CHANNEL_ENV_FILE", str(BASE_DIR / ".env"))
+load_dotenv(_env_file, override=True)
 
 # ─── Groq (cloud gratuito, se usa antes de Ollama si hay API key) ────────────
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
@@ -183,6 +185,18 @@ SUBTITLE_FONT_COLOR: str = "white"
 SUBTITLE_STROKE_COLOR: str = "black"
 SUBTITLE_STROKE_WIDTH: int = 2
 SUBTITLE_FONT: str = "Impact"  # estándar de Shorts virales (más impactante que Arial)
+
+# ─── YouTube Data API v3 (opcional) ──────────────────────────────────────────
+# Para stats exactas en el Analista (likes, comentarios por video).
+# Clave gratuita: console.cloud.google.com → Enable YouTube Data API v3 → API Key
+# Sin esta key el analista usa scraping — funciona igual pero con menos detalle.
+YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", "")
+
+# ─── Analista + CEO Report ────────────────────────────────────────────────────
+ANALYTICS_HOUR: int = int(os.getenv("ANALYTICS_HOUR", "9"))    # hora del reporte diario
+ANALYTICS_ENABLED: bool = (
+    os.getenv("ANALYTICS_ENABLED", "true").lower() == "true"
+)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
