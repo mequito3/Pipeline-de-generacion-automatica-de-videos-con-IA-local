@@ -60,6 +60,7 @@ GROWTH_LOG_FILE      = Path(__file__).parent.parent / "growth_log.json"
 # ─── Keywords para buscar videos del nicho ────────────────────────────────────
 
 NICHE_SEARCHES = [
+    # Traición / infidelidad
     "confesión drama real español",
     "me traicionó historia real",
     "descubrí la verdad relato",
@@ -67,9 +68,33 @@ NICHE_SEARCHES = [
     "me engañó mi pareja storytime",
     "relato real traición amor",
     "me mintió durante años historia",
-    "secreto familiar revelado",
     "historia real venganza pareja",
-    "confesiones dramáticas latinos",
+    "descubrí infidelidad accidente relato",
+    "mi pareja tenía doble vida español",
+    "encontré mensajes en su celular historia",
+    # Familia / secretos
+    "secreto familiar revelado historia",
+    "mi familia me ocultó esto relato",
+    "confesión familiar drama latino",
+    "verdad que cambió mi vida historia",
+    # Drama / AITAH estilo
+    "fui el malo en esta historia español",
+    "¿hice lo correcto storytime español",
+    "historia real drama relación latina",
+    "me arrepiento de esto historia real",
+    "tomé la decisión más difícil relato",
+    # Formato corto viral
+    "storytime dramático español shorts",
+    "confesiones reales tiktok estilo",
+    "drama real latino narrado shorts",
+    "historia impactante relato breve",
+    "me pasó algo terrible historia real",
+    # Palabras clave de bajo competencia pero alto nicho
+    "revenge latina story real",
+    "traición descubierta relato real español",
+    "mi mejor amigo me traicionó historia",
+    "ella tenía otro historia real",
+    "lo perdoné pero no debí relato",
 ]
 
 # ─── Plantillas de comentarios (fallback sin Groq) ────────────────────────────
@@ -300,6 +325,19 @@ async def _generate_reply(comment_text: str) -> str:
         return random.choice(_REPLY_TEMPLATES)
 
 
+def _parse_yt_duration(text: str) -> int:
+    """Convierte '1:23' o '12:34' o '1:23:45' a segundos."""
+    parts = text.strip().split(":")
+    try:
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except (ValueError, IndexError):
+        pass
+    return 0
+
+
 def _fallback_comment(video_title: str) -> str:
     template = random.choice(_COMMENT_TEMPLATES)
     words = [w for w in video_title.split() if len(w) > 4 and not w.startswith("#")]
@@ -380,11 +418,29 @@ async def _comment_on_video(browser, video: dict) -> bool:
         page = await browser.get(video["url"])
         await _delay(4.0, 8.0)
 
-        # Ver el video (comportamiento humano — no comentar de inmediato)
+        # Ver el video — tiempo proporcional a la duración real
         await _scroll(page, random.randint(100, 250))
         await _random_mouse_wander(page)
-        watch_secs = random.uniform(14.0, 30.0)
-        logger.debug(f"  Viendo {watch_secs:.0f}s...")
+
+        # Leer duración del video del player
+        dur_text = await _eval_safe(page, """(function() {
+            var t = document.querySelector('.ytp-time-duration');
+            return t ? (t.innerText || '') : '';
+        })()""") or ""
+        duration_s = _parse_yt_duration(dur_text)
+
+        if duration_s > 0:
+            if duration_s <= 63:          # Short (hasta ~1min)
+                ratio = random.triangular(0.40, 0.80, 0.60)
+            elif duration_s <= 300:       # Video corto (1-5 min)
+                ratio = random.triangular(0.20, 0.45, 0.30)
+            else:                         # Video largo (>5 min)
+                ratio = random.triangular(0.08, 0.25, 0.15)
+            watch_secs = max(8.0, min(duration_s * ratio, 270.0))
+        else:
+            watch_secs = random.triangular(14.0, 35.0, 22.0)
+
+        logger.debug(f"  Viendo {watch_secs:.0f}s (duración: {dur_text or '?'})")
         await asyncio.sleep(watch_secs)
 
         # Scroll hacia los comentarios
@@ -763,6 +819,55 @@ async def _reply_to_top_comments(page, log: dict) -> int:
 
 # ─── Sesión principal ─────────────────────────────────────────────────────────
 
+async def _browse_casually(browser) -> None:
+    """
+    Simula navegación orgánica entre bloques de comentarios.
+    Va al homepage o trending, scrollea y mira videos sin comentar.
+    Rompe el patrón lineal comment→comment→comment.
+    """
+    try:
+        destinations = [
+            "https://www.youtube.com",
+            "https://www.youtube.com/?bp=6gQJRkVleHBsb3Jl",  # trending/explore
+        ]
+        page = await browser.get(random.choice(destinations))
+        await _delay(3.0, 6.0)
+        await _dismiss_consent(page)
+
+        # Scroll orgánico por el feed
+        for _ in range(random.randint(2, 4)):
+            await _scroll(page, random.randint(200, 500))
+            await _delay(4.0, 12.0)
+            await _random_mouse_wander(page)
+
+        # 40% de probabilidad: clic en un video y observar sin comentar
+        if random.random() < 0.40:
+            vid_link = None
+            for sel in ["a#video-title-link", "a#thumbnail"]:
+                try:
+                    candidates = await page.select_all(sel, timeout=5)
+                    if candidates:
+                        vid_link = random.choice(candidates[:8])
+                        break
+                except Exception:
+                    pass
+
+            if vid_link:
+                await _human_click(page, vid_link)
+                await _delay(2.0, 5.0)
+                # Mira 20-60s sin interactuar
+                await asyncio.sleep(random.triangular(20.0, 60.0, 35.0))
+                await _random_mouse_wander(page)
+
+        break_secs = random.triangular(90.0, 240.0, 150.0)
+        logger.debug(f"  Micro-break browsing {break_secs:.0f}s")
+        await asyncio.sleep(break_secs)
+
+    except Exception as e:
+        logger.debug(f"  _browse_casually: {e}")
+        await asyncio.sleep(random.uniform(60.0, 120.0))
+
+
 async def _dismiss_consent(page) -> None:
     """Descarta el dialog de consentimiento de cookies de Google si aparece."""
     try:
@@ -842,14 +947,23 @@ async def _growth_session_async(do_own: bool = True) -> dict:
 
         # ── Comentar en videos del nicho ──────────────────────────────────────
         if ext_count < DAILY_EXTERNAL_LIMIT:
-            keywords = random.sample(NICHE_SEARCHES, k=min(3, len(NICHE_SEARCHES)))
-            session_target = random.randint(3, 5)
+            # Rotar keywords: priorizar las NO usadas recientemente
+            log = _load_log()
+            used_kws = set(log.get("used_keywords", {}).keys())
+            fresh = [k for k in NICHE_SEARCHES if k not in used_kws]
+            if len(fresh) < 3:
+                # Resetear si ya se usaron todas
+                log["used_keywords"] = {}
+                _save_log(log)
+                fresh = list(NICHE_SEARCHES)
+            keywords = random.sample(fresh, k=min(3, len(fresh)))
+
+            # Batches de 2-3 comentarios con micro-break entre bloques
+            BATCH_SIZE = random.randint(2, 3)
             session_done = 0
-            # `page` no se usa directamente aquí — cada función abre su propia navegación
+            batch_done = 0
 
             for keyword in keywords:
-                if session_done >= session_target:
-                    break
                 log = _load_log()
                 ext_count, _ = _daily_counts(log)
                 if ext_count >= DAILY_EXTERNAL_LIMIT:
@@ -858,18 +972,33 @@ async def _growth_session_async(do_own: bool = True) -> dict:
                 logger.info(f"Búsqueda: '{keyword}'")
                 videos = await _search_niche_videos(browser, keyword, log)
 
+                # Registrar keyword como usada
+                log.setdefault("used_keywords", {})[keyword] = _today()
+                _save_log(log)
+
                 for video in videos:
-                    if session_done >= session_target:
+                    log = _load_log()
+                    ext_count, _ = _daily_counts(log)
+                    if ext_count >= DAILY_EXTERNAL_LIMIT:
                         break
+
                     ok = await _comment_on_video(browser, video)
                     if ok:
                         session_done += 1
+                        batch_done += 1
                         results["external"] += 1
                     else:
                         results["skipped"] += 1
 
-                    # Pausa larga entre comentarios — no los hace en ráfaga
-                    await _delay(18.0, 40.0)
+                    # Pausa natural entre comentarios individuales
+                    await _delay(20.0, 45.0)
+
+                    # Al completar un batch: micro-break de navegación orgánica
+                    if batch_done >= BATCH_SIZE:
+                        logger.info(f"  Micro-break después de {batch_done} comentarios...")
+                        await _browse_casually(browser)
+                        batch_done = 0
+                        BATCH_SIZE = random.randint(2, 3)  # variar el próximo batch
 
         # ── Engagement en canal propio ─────────────────────────────────────────
         if do_own:
