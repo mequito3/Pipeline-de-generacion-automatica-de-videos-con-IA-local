@@ -1,6 +1,7 @@
 # ─── Credenciales — NUNCA subir ──────────────────────────────────────────────
 .env
 *.env.local
+export_session_output.txt       # contiene cookies de YouTube en base64
 
 # ─── Output generado ─────────────────────────────────────────────────────────
 output/

@@ -92,6 +92,18 @@ async def _generate_report_groq(
     if snap.errors:
         errors_text = f"\nADVERTENCIAS del sistema: {'; '.join(snap.errors[:3])}"
 
+    # Cargar sugerencias de expansión desde agent_memory
+    expansion_text = ""
+    try:
+        from modules import agent_memory as _am
+        exp = _am.get_expansion_suggestions()
+        if exp and exp.get("adjacent_niches"):
+            niches   = "\n".join(f"  • {n}" for n in exp["adjacent_niches"][:2])
+            auto     = "\n".join(f"  • {a}" for a in exp["automation_next_steps"][:2])
+            expansion_text = f"\n\nSUGERENCIAS DE EXPANSIÓN (basadas en datos):\n{niches}\n\nSIGUIENTE PASO AUTOMATIZACIÓN:\n{auto}"
+    except Exception:
+        pass
+
     prompt = f"""Eres el analista de un canal de YouTube Shorts en español llamado "{getattr(config, 'CHANNEL_NAME', 'GATA CURIOSA')}" (nicho: confesiones y dramas reales).
 
 Fecha del reporte: {snap.timestamp[:10]}
@@ -105,10 +117,10 @@ MÉTRICAS DEL CANAL:
 
 RENDIMIENTO POR VIDEO (recientes):
 {top_videos_text if top_videos_text else "  Sin datos de videos"}
-{errors_text}
+{errors_text}{expansion_text}
 
 INSTRUCCIONES:
-Escribe un reporte ejecutivo para WhatsApp (máximo 350 palabras, nunca superar 1500 caracteres totales).
+Escribe un reporte ejecutivo para WhatsApp (máximo 400 palabras, nunca superar 1800 caracteres totales).
 Formato WhatsApp: usa *negrita* para títulos, _cursiva_ para énfasis, emojis estratégicos.
 ESTRUCTURA OBLIGATORIA (usa estas secciones con este orden):
 
@@ -123,6 +135,9 @@ ESTRUCTURA OBLIGATORIA (usa estas secciones con este orden):
 
 ⚡ *Acción esta semana*
 [1 recomendación específica y accionable para el canal]
+
+🚀 *Expansión sugerida*
+[1-2 líneas con el siguiente nicho/plataforma a atacar basándote en las sugerencias de expansión si las hay, o en los datos disponibles]
 
 Si hay caídas importantes (CTR < 3%, retención < 30%, vistas cayendo > 20%), incluye una sección de alerta con emoji 🚨.
 

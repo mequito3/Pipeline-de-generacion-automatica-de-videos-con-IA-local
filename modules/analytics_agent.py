@@ -893,8 +893,14 @@ async def _analytics_session_async() -> ChannelSnapshot:
                 if prev_vs and prev_vs.views > 0:
                     vs.views_delta_pct = _delta_pct(vs.views, prev_vs.views)
 
-        # ── 9. Guardar ────────────────────────────────────────────────────────
+        # ── 9. Guardar + actualizar memoria compartida ────────────────────────
         _save_snapshot(snapshot)
+
+        try:
+            from modules import agent_memory
+            agent_memory.update_from_analytics(snapshot)
+        except Exception as e_mem:
+            logger.debug(f"agent_memory update: {e_mem}")
 
         logger.info(
             f"  Analítica completa — {len(merged_videos)} videos | "

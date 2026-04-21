@@ -59,62 +59,237 @@ GROWTH_LOG_FILE      = Path(__file__).parent.parent / "growth_log.json"
 
 # ─── Keywords para buscar videos del nicho ────────────────────────────────────
 
+MIN_VIDEO_VIEWS = 50_000   # filtrar videos con menos de 50K vistas
+
+# Agrupadas por categoría para rotar entre categorías y no repetir nicho
 NICHE_SEARCHES = [
-    # Traición / infidelidad
-    "confesión drama real español",
-    "me traicionó historia real",
-    "descubrí la verdad relato",
-    "infidelidad historia verdadera",
-    "me engañó mi pareja storytime",
-    "relato real traición amor",
-    "me mintió durante años historia",
-    "historia real venganza pareja",
-    "descubrí infidelidad accidente relato",
-    "mi pareja tenía doble vida español",
-    "encontré mensajes en su celular historia",
-    # Familia / secretos
-    "secreto familiar revelado historia",
-    "mi familia me ocultó esto relato",
-    "confesión familiar drama latino",
-    "verdad que cambió mi vida historia",
-    # Drama / AITAH estilo
-    "fui el malo en esta historia español",
-    "¿hice lo correcto storytime español",
-    "historia real drama relación latina",
-    "me arrepiento de esto historia real",
-    "tomé la decisión más difícil relato",
-    # Formato corto viral
-    "storytime dramático español shorts",
-    "confesiones reales tiktok estilo",
-    "drama real latino narrado shorts",
-    "historia impactante relato breve",
-    "me pasó algo terrible historia real",
-    # Palabras clave de bajo competencia pero alto nicho
-    "revenge latina story real",
-    "traición descubierta relato real español",
-    "mi mejor amigo me traicionó historia",
-    "ella tenía otro historia real",
-    "lo perdoné pero no debí relato",
+    # === TRAICIÓN / INFIDELIDAD — BOMBA ===
+    "mi esposo me engañó con mi mejor amiga historia real",
+    "me traicionó con mi hermana y me enteré así relato",
+    "llevaba años engañándome con la misma persona historia",
+    "encontré a mi pareja con otra en mi propia cama relato",
+    "mi pareja tenía una familia secreta historia impactante",
+    "me puso los cuernos con mi prima historia real",
+    "lo pesqué en una mentira y se destapó todo relato",
+    "me engañó 5 años y nadie me dijo nada historia",
+    "descubrí la infidelidad por un mensaje de voz historia",
+    "mi mejor amiga y mi novio una historia que destruyó todo",
+    "me enteré que me ponía los cuernos en su funeral relato",
+    "lo seguí un día y descubrí la verdad historia real",
+    "tenía dos celulares y yo sin saberlo durante años relato",
+    "me mandó un mensaje que era para la otra historia real",
+    "vivíamos juntos y tenía otra mujer en otra ciudad relato",
+    "la app de pasos me confirmó lo que ya sospechaba historia",
+    "su ubicación lo delató y cambió todo relato real",
+    "me traicionaron los dos al mismo tiempo historia impactante",
+    # === FAMILIA TÓXICA / SECRETOS FAMILIARES ===
+    "mi suegra destruyó mi matrimonio y no me arrepiento",
+    "mis padres me echaron de casa por esto historia real",
+    "descubrí que soy adoptado de la peor forma relato",
+    "el secreto oscuro de mi familia que cambió todo historia",
+    "mi hermano me robó todo y desapareció historia real",
+    "mi madre intentó separarnos y casi lo logra relato",
+    "la herencia que partió a mi familia en dos historia",
+    "mi familia me eligió a él antes que a mí relato real",
+    "el secreto que mi abuela se llevó casi a la tumba historia",
+    "descubrí que tengo hermanos que nadie me contó relato",
+    "mi papá tenía una segunda familia y lo descubrí así historia",
+    "mi suegra le contaba todo lo mío a sus amigas relato",
+    "me encerraron en casa por este secreto familiar historia",
+    "la verdad sobre mi origen que me rompió en dos relato",
+    "me desheredaron por casarme con quien yo quería historia",
+    "mi cuñada me tendió una trampa y me costó el matrimonio relato",
+    "mi familia eligió dinero sobre mí historia real dura",
+    # === AMIGOS QUE TRAICIONAN ===
+    "mi mejor amigo me traicionó de la peor forma historia",
+    "llevábamos 10 años de amistad y lo destruyó todo relato",
+    "me robó la pareja y siguió siendo mi amigo historia real",
+    "le conté mi secreto y lo usó en mi contra relato",
+    "era mi amiga pero me odiaba por dentro historia real",
+    "fingió ser mi amiga durante años y yo sin saberlo relato",
+    "me dejó sola en el peor momento de mi vida historia",
+    "le presté dinero y desapareció de mi vida relato real",
+    "me enteré de lo que decía de mí a mis espaldas historia",
+    "mi grupo de amigos me hacía bullying y yo sin verlo relato",
+    # === DECISIONES POLÉMICAS — GENERAN DEBATE ===
+    "lo dejé con todo pagado y me fui sin decir nada relato",
+    "lo perdoné y volvió a traicionarme historia real",
+    "dejé todo por él y me abandonó al año storytime",
+    "me vengué y no me arrepiento historia real relato",
+    "corté a toda mi familia y no volvería atrás historia",
+    "fui el malo de la historia y tenía razón relato",
+    "le dije toda la verdad en su boda y no me arrepiento",
+    "le conté a su esposa todo y fue lo correcto historia",
+    "lo expuse públicamente y la gente se dividió relato",
+    "dejé de hablarle a mi madre y no pienso volver historia",
+    "me fui del país sin avisar y empecé de cero relato",
+    "vendí todo lo que era nuestro sin pedirle permiso historia",
+    "le devolví todo lo que me regaló y corté historia real",
+    "bloqueé a toda su familia y no siento culpa relato",
+    "me fui de la boda antes de decir el sí historia real",
+    # === REVELACIONES IMPACTANTES — GIRO DRAMÁTICO ===
+    "descubrí quién era en realidad y no lo podía creer",
+    "un mensaje en su celular me cambió la vida relato",
+    "la verdad que nadie me dijo durante años historia",
+    "se murió y descubrí todo lo que me ocultó relato",
+    "el secreto que guardó 10 años salió a la luz historia",
+    "me enteré de la verdad por un desconocido en la calle",
+    "encontré fotos que destruyeron todo lo que creía historia",
+    "un comentario en redes me hizo descubrir la verdad relato",
+    "su propia madre me contó lo que él nunca dijo historia",
+    "revisé su correo por accidente y vi algo que no debía",
+    "un número desconocido me mandó todo con pruebas historia",
+    "la niñera me contó lo que pasaba cuando yo no estaba relato",
+    "su historial de búsqueda me lo dijo todo historia real",
+    "me mandaron un video anónimo que lo mostraba todo relato",
+    "su ex me escribió para contarme algo urgente historia",
+    # === RELACIONES TÓXICAS / CONTROL / ABUSO ===
+    "salí de una relación narcisista historia real relato",
+    "me manipuló durante años sin darme cuenta storytime",
+    "gaslight relación tóxica historia real lo que viví",
+    "mi ex me acosó meses después de dejarlo historia",
+    "cómo me di cuenta que era una relación de control relato",
+    "me costó años entender que era abuso emocional historia",
+    "me aislaba de todos y yo creía que era amor relato",
+    "me hacía sentir loca y era todo calculado historia",
+    "me controlaba el teléfono los amigos y el dinero relato",
+    "tardé en irme porque me había convencido que era mi culpa",
+    "el día que entendí que no era amor era posesión historia",
+    "me amenazó si lo dejaba y lo dejé igual relato real",
+    "cómo salí de una relación donde no era libre historia",
+    "me quitó la confianza en mí misma poco a poco relato",
+    # === DINERO / ESTAFA / TRABAJO ===
+    "mi pareja me robó todos los ahorros y se fue historia",
+    "me estafaron y perdí todo lo que tenía relato real",
+    "mi jefe me acosó y tuve que irme yo historia impactante",
+    "me despidieron por negarme a algo ilegal relato real",
+    "mi socio me traicionó y se quedó con todo historia",
+    "invertí mis ahorros en algo y lo perdí todo relato",
+    "me prometió dinero que nunca existió historia real",
+    "trabajé gratis años para alguien que me traicionó relato",
+    "me robaron la idea de negocio y la registraron a su nombre",
+    "descubrí que mi pareja vaciaba mi cuenta en secreto historia",
+    # === EX PAREJA / SEGUNDA OPORTUNIDAD / REGRESO ===
+    "mi ex volvió después de años y lo que pasó historia",
+    "lo dejé y se fue con otra y quiso volver relato",
+    "me pidió una segunda oportunidad y lo que hice historia",
+    "mi ex me escribió el día de mi boda relato real",
+    "lo dejé pasar y me arrepiento hasta hoy historia",
+    "volví con mi ex y fue el peor error de mi vida relato",
+    "me di cuenta demasiado tarde que lo amaba historia real",
+    "él siguió con su vida y yo no pude hacer lo mismo relato",
+    # === SECRETOS DE VIDA DOBLE ===
+    "llevaba una doble vida y nadie lo sabía historia real",
+    "descubrí que no era quien decía ser en nada relato",
+    "trabajaba en algo que me ocultó durante años historia",
+    "tenía deudas que le escondió a toda su familia relato",
+    "su nombre no era el real y tardé en saberlo historia",
+    "mintió sobre su pasado y salió todo a la luz relato",
+    "descubrí que estaba casado y tenía hijos historia real",
+    "era una persona completamente diferente cuando salía relato",
+    # === DRAMA REDES SOCIALES / GENERACIÓN Z ===
+    "me cancelaron en redes y perdí todo relato real",
+    "alguien filtró mis fotos privadas historia impactante",
+    "mi pareja tenía otra cuenta secreta y lo descubrí historia",
+    "me hacía ghosting pero veía todas mis historias relato",
+    "lo expuse en tiktok y se volvió viral historia real",
+    "me bloqueó en todo sin explicación y lo que descubrí relato",
+    "encontré su perfil falso que usaba para ligar historia",
+    "me stalkeo durante meses y yo sin saberlo relato",
+    # === CONFESIONES ÍNTIMAS / ARREPENTIMIENTO ===
+    "hice algo imperdonable y necesito contarlo historia",
+    "nunca le dije la verdad y me arrepiento cada día relato",
+    "guardé ese secreto 20 años y hoy lo cuento historia",
+    "tomé una decisión que destruyó a alguien y fue mi culpa",
+    "le fallé a la persona que más me quería historia real",
+    "mentí una vez y cambió el rumbo de todo relato",
+    "debí hablar antes y no lo hice historia que me pesa",
+    # === FORMATO SHORTS VIRAL — BÚSQUEDAS CORTAS ===
+    "confesión impactante español shorts viral",
+    "historia real que te deja sin palabras español",
+    "drama real latino narrado historia corta",
+    "storytime dramático infidelidad español",
+    "relato corto impactante traición real",
+    "historia verdadera que nadie te cuenta español",
+    "confesiones reales canal latino shorts",
+    "historia de vida dura españa latinoamerica relato",
+    "drama familiar real narrado español",
+    "relato de vida impactante latino corto",
+    "storytime real que te rompe el corazón español",
+    "historias reales de pareja tóxica shorts",
+    # === INGLÉS + ESPAÑOL — AUDIENCIA BILINGÜE ===
+    "cheated with best friend true story español reacción",
+    "toxic relationship storytime español real",
+    "found out the truth story español latino",
+    "my partner had a secret life historia real español",
+    "she betrayed me worst way story reacción latina",
+    "caught him lying for years storytime español",
+    "left everything for him true story español",
+    "narcissist relationship story español real",
+    "family secret revealed true story español reacción",
+    "he had another family story reacción español",
 ]
 
-# ─── Plantillas de comentarios (fallback sin Groq) ────────────────────────────
-# Variadas para que no se repitan exactas — el bot elige una y la varía
+# ─── Sistema de personas para comentarios (fallback sin Groq) ────────────────
+# 6 tipos de espectador distintos → comentarios que suenan a personas reales
 
-_COMMENT_TEMPLATES = [
-    "no puedo creer lo q acabo de ver... qué situación tan fuerte la verdad",
-    "algo muy parecido le pasó a alguien q conozco y todavía no lo supera",
-    "la parte de {kw} me dejó helado/a, no me lo esperaba para nada",
-    "no sé cómo aguantó tanto, yo desde el primer momento me hubiera ido",
-    "estas historias me tocan demasiado... hay traiciones q no se superan",
-    "me quedé pensando en esto un buen rato, hay cosas q no tienen vuelta atrás",
-    "qué historia... ¿y la otra persona nunca dio explicaciones de verdad?",
-    "me recuerda algo q yo viví, uno nunca está listo pa ese momento",
-    "el final me sorprendió 😮 creo q hizo lo correcto aunque duele",
-    "historias así te demuestran q uno nunca conoce del todo a las personas",
-    "bro qué fuerte esto, no me esperaba ese giro",
-    "me pasó algo igual y aún no lo proceso 😶",
-    "lo q más duele es q estas cosas pasan más de lo q creemos",
-]
+_COMMENT_PERSONAS = {
+    "impactado": [
+        "no no no esto no puede ser real te lo juro",
+        "me cayó el veinte con lo de {kw} literalmente",
+        "qué traición tan grande dios mío 😶",
+        "esto está al nivel de película pero es REAL",
+        "bro qué fuerte nunca me lo esperaba así",
+        "me dejó sin palabras de verdad",
+        "eso es lo más fuerte q vi en mucho tiempo",
+        "no puedo con esto q acabo de ver",
+    ],
+    "identificado": [
+        "me pasó algo calcado y todavía duele te lo juro",
+        "eso mismo viví yo y nunca lo superé del todo",
+        "demasiado real esto me tocó el corazón de verdad",
+        "hermano/a yo pasé por algo igual y te entiendo",
+        "esto es más común de lo q la gente cree",
+        "no sabía q alguien más había vivido algo así",
+        "me recuerda tanto a lo q yo viví hace unos años",
+    ],
+    "escéptico": [
+        "algo no me cuadra pero bueno puede ser",
+        "¿y por qué aguantó tanto? eso no me cierra",
+        "hay cosas q no encajan del todo en la historia",
+        "no sé si creerle del todo pero si es real qué fuerte",
+        "me cuesta creer q nadie se diera cuenta antes",
+        "¿en serio nadie le dijo nada? raro eso",
+    ],
+    "curioso": [
+        "necesito saber q pasó con {kw} después",
+        "parte 2 ya esto no puede quedar así",
+        "me quedé con ganas de saber el final de verdad",
+        "¿volvieron a hablar o fue el final definitivo?",
+        "¿y la otra persona qué dijo cuando se supo todo?",
+        "quiero saber cómo terminó esto en serio",
+    ],
+    "opinador": [
+        "desde el primer momento esa persona mostraba quien era",
+        "no se perdona eso, punto",
+        "el error fue perdonarla la primera vez honestamente",
+        "hay cosas q no tienen vuelta y esta es una de ellas",
+        "yo hubiera tomado la misma decisión sin dudar",
+        "lo que hizo no tiene justificación ninguna",
+        "uno tiene q saber cuándo retirarse y punto",
+    ],
+    "solidario": [
+        "fuerza para quien vivió algo así de verdad 🙏",
+        "hay cosas de las q uno no se recupera fácil",
+        "lo importante es q ya salió de ahí",
+        "cuánto dolor dios mío q difícil todo eso",
+        "uno nunca está listo pa recibir algo así",
+        "ojalá esté bien quien vivió esto de verdad",
+    ],
+}
+
+# Fallback plano — por si falla todo lo anterior
+_COMMENT_TEMPLATES = [t for ts in _COMMENT_PERSONAS.values() for t in ts]
 
 # Templates para comentario pineado en tus propios videos
 _PIN_TEMPLATES = [
@@ -233,24 +408,35 @@ async def _generate_comment(video_title: str) -> str:
     if not api_key:
         return _fallback_comment(video_title)
 
-    include_cta = random.random() < 0.25  # 25% de comentarios con CTA suave
+    # Persona aleatoria → cada comentario suena a una persona distinta
+    persona, descripcion, longitud = random.choice([
+        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",            "4-8 palabras, muy corto"),
+        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",            "10-16 palabras"),
+        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",             "8-15 palabras"),
+        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",             "12-18 palabras"),
+        ("ESCÉPTICO",    "duda de algo en la historia o hace notar algo raro",       "8-14 palabras"),
+        ("CURIOSO",      "pregunta qué pasó después o pide parte 2",                "5-12 palabras"),
+        ("OPINADOR",     "da su opinión directa sin filtro sobre la situación",      "10-18 palabras"),
+        ("SOLIDARIO",    "expresa empatía o apoyo emocional hacia el narrador",      "6-12 palabras"),
+    ])
+    include_cta = random.random() < 0.20
     cta_line = (
-        "El comentario puede terminar con una frase corta como 'sígueme si te gusta este tipo de contenido' "
-        "o 'te sigo' (natural, no forzado)."
+        "Puede terminar con 'te sigo' o 'sígueme' si suena natural (no forzado)."
         if include_cta else
-        "NO incluyas auto-promoción ni links."
+        "NO incluyas auto-promoción."
     )
     prompt = (
-        f'Eres un espectador real de YouTube de Latinoamérica, escribiendo desde el celular. '
-        f'Acabas de ver un video titulado: "{video_title}"\n'
-        "Escribe UN comentario corto en español latino muy casual (máx 18 palabras, 1 frase).\n"
-        "ESTILO OBLIGATORIO: habla de barrio, rápido, como WhatsApp. "
-        "Usa 'q' en vez de 'que', 'pa' en vez de 'para', 'xq' para 'porque'. "
-        "Omite el punto final. Sin mayúsculas al inicio si da más natural. "
-        "Puedes poner algún error menor de tipeo real (letra cambiada, palabra repetida).\n"
-        "Opciones: reacción emocional genuina, experiencia personal brevísima, o pregunta al creador.\n"
-        f"{cta_line} PROHIBIDO: más de 1 emoji.\n"
-        "Responde SOLO con el texto del comentario, sin comillas ni explicación."
+        f'Eres un espectador real de YouTube latinoamericano escribiendo desde el celular.\n'
+        f'Video que acabas de ver: "{video_title}"\n'
+        f'TU PERSONALIDAD HOY: {persona} — {descripcion}.\n'
+        f'LONGITUD EXACTA: {longitud}.\n'
+        "ESTILO: habla de barrio, como WhatsApp. "
+        "Usa 'q'/'pa'/'xq'/'bro'/'hermano' según suene natural. "
+        "Omite punto final. Sin mayúscula al inicio si da más natural. "
+        "Algún error de tipeo menor es ok (no exageres).\n"
+        f"{cta_line}\n"
+        "PROHIBIDO: más de 1 emoji. PROHIBIDO: mencionar el canal.\n"
+        "Responde SOLO con el comentario, sin comillas ni explicación."
     )
 
     try:
@@ -339,69 +525,115 @@ def _parse_yt_duration(text: str) -> int:
 
 
 def _fallback_comment(video_title: str) -> str:
-    template = random.choice(_COMMENT_TEMPLATES)
+    persona = random.choice(list(_COMMENT_PERSONAS.keys()))
+    template = random.choice(_COMMENT_PERSONAS[persona])
     words = [w for w in video_title.split() if len(w) > 4 and not w.startswith("#")]
     kw = random.choice(words).lower() if words else "esa parte"
     comment = template.replace("{kw}", kw)
-    endings = ["", "...", " en serio", " de verdad"]
+    endings = ["", "...", " en serio", " de verdad", " pa siempre", " q fuerte"]
     return comment + random.choice(endings)
+
+
+# ─── Helpers de filtrado ──────────────────────────────────────────────────────
+
+def _parse_views(text: str) -> int:
+    """Convierte '1,5 M de vistas' / '345 mil' / '45K' a entero."""
+    if not text:
+        return 0
+    t = text.lower().replace("\xa0", " ").replace(",", ".").strip()
+    m = re.search(r"([\d.]+)\s*m(?:ill|de|\b)", t)
+    if m:
+        try: return int(float(m.group(1)) * 1_000_000)
+        except: pass
+    m = re.search(r"([\d.]+)\s*(?:mil\b|k\b)", t)
+    if m:
+        try: return int(float(m.group(1)) * 1_000)
+        except: pass
+    m = re.search(r"[\d]+", t.replace(".", ""))
+    if m:
+        try: return int(m.group())
+        except: pass
+    return 0
 
 
 # ─── Buscar videos del nicho ──────────────────────────────────────────────────
 
 async def _search_niche_videos(browser, keyword: str, log: dict) -> list[dict]:
-    """Busca en YouTube y retorna videos del nicho no comentados aún."""
+    """Busca en YouTube y retorna videos del nicho con buen volumen no comentados aún."""
+    # Variar el filtro: semana (viral reciente), mes, o más vistos — no siempre lo mismo
+    search_filter = random.choice([
+        "&sp=EgIQAQ%3D%3D",  # esta semana (viral reciente)
+        "&sp=EgIQAQ%3D%3D",  # esta semana (peso doble — priorizamos frescura)
+        "&sp=EgIQAg%3D%3D",  # este mes
+        "&sp=CAM%3D",         # más vistos (evergreen)
+    ])
     search_url = (
         "https://www.youtube.com/results?search_query="
         + keyword.replace(" ", "+")
+        + search_filter
     )
     try:
         page = await browser.get(search_url)
         await _delay(3.0, 6.0)
         await _dismiss_consent(page)
-        await _scroll(page, random.randint(200, 450))
+        await _scroll(page, random.randint(200, 500))
         await _random_mouse_wander(page)
         await _delay(1.5, 3.0)
 
-        # nodriver no deserializa arrays correctamente — usar JSON.stringify y parsear en Python
         videos_json = await _eval_safe(page, """(function() {
             var results = [];
-            var links = document.querySelectorAll(
-                'a#video-title[href*="watch"], a#video-title-link[href*="watch"]'
-            );
-            for (var i = 0; i < links.length; i++) {
+            var renderers = document.querySelectorAll('ytd-video-renderer');
+            for (var i = 0; i < renderers.length; i++) {
                 try {
-                    var a = links[i];
-                    var title = a.getAttribute('title') || '';
+                    var r   = renderers[i];
+                    var a   = r.querySelector('a#video-title');
+                    if (!a) continue;
+                    var title = (a.getAttribute('title') || a.innerText || '').trim();
                     var href  = a.href || '';
                     var m = href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-                    if (m && title.length > 3)
-                        results.push({id: m[1], title: title, url: 'https://www.youtube.com/watch?v=' + m[1]});
+                    if (!m || !title || title.length < 4) continue;
+                    var spans    = r.querySelectorAll('#metadata-line span');
+                    var viewText = spans.length > 0 ? (spans[0].innerText || '') : '';
+                    var dateText = spans.length > 1 ? (spans[1].innerText || '') : '';
+                    results.push({
+                        id: m[1],
+                        title: title,
+                        url: 'https://www.youtube.com/watch?v=' + m[1],
+                        views: viewText,
+                        date: dateText
+                    });
                 } catch(e) {}
             }
-            return JSON.stringify(results.slice(0, 20));
+            return JSON.stringify(results.slice(0, 30));
         })()""")
 
         try:
             videos_raw = json.loads(videos_json) if videos_json else []
         except Exception:
             videos_raw = []
-        logger.info(f"  Videos brutos: {len(videos_raw)}")
+
         channel_name = getattr(config, "CHANNEL_NAME", "").lower()
         filtered = []
         for v in videos_raw:
             if not isinstance(v, dict):
                 continue
             vid_id = v.get("id", "")
-            title = v.get("title", "")
+            title  = v.get("title", "")
             if not vid_id or not title:
                 continue
             if channel_name and channel_name in title.lower():
                 continue
             if _already_commented(log, vid_id):
                 continue
+            views = _parse_views(v.get("views", ""))
+            if views > 0 and views < MIN_VIDEO_VIEWS:
+                continue  # ignorar videos con pocas vistas
             filtered.append(v)
 
+        logger.info(
+            f"  '{keyword[:45]}': {len(videos_raw)} brutos → "
+            f"{len(filtered)} con ≥{MIN_VIDEO_VIEWS//1000}K vistas"
+        )
         return filtered[:6]
 
     except Exception as e:
@@ -579,55 +811,62 @@ async def _get_channel_id(browser) -> str | None:
 
 # ─── Engagement en canal propio ───────────────────────────────────────────────
 
-async def _engage_own_channel(browser, log: dict) -> int:
+async def _engage_own_channel(browser, log: dict, own_video_url: str = "") -> int:
     """Pinea pregunta + responde comentarios en el video más reciente del canal. Retorna replies hechos."""
     own_done = 0
     try:
-        # Obtener channel ID desde YouTube Studio
-        channel_id = await _get_channel_id(browser)
-        if not channel_id:
-            logger.warning("  No se pudo obtener el channel ID — ¿sesión iniciada?")
-            return
-        logger.info(f"  Channel ID: {channel_id}")
+        if own_video_url:
+            # URL directa del video recién subido — más fiable que scraping del canal
+            import re as _re
+            m = _re.search(r"[?&]v=([a-zA-Z0-9_-]{11})|/shorts/([a-zA-Z0-9_-]{11})", own_video_url)
+            if m:
+                vid_id = m.group(1) or m.group(2)
+                video_url = f"https://www.youtube.com/watch?v={vid_id}"
+                logger.info(f"  Video objetivo (URL directa): {video_url}")
+            else:
+                video_url = own_video_url
+                logger.info(f"  Video objetivo (URL directa): {video_url}")
+        else:
+            # Fallback: obtener channel ID y scraping del canal
+            channel_id = await _get_channel_id(browser)
+            if not channel_id:
+                logger.warning("  No se pudo obtener el channel ID — ¿sesión iniciada?")
+                return 0
+            logger.info(f"  Channel ID: {channel_id}")
 
-        # Página PÚBLICA del canal — sin Shadow DOM, selectores estándar funcionan
-        page = await browser.get(
-            f"https://www.youtube.com/channel/{channel_id}/videos"
-        )
-        await _delay(5.0, 9.0)
-        await _scroll(page, random.randint(100, 300))
-        await _delay(2.0, 4.0)
+            page = await browser.get(
+                f"https://www.youtube.com/channel/{channel_id}/videos"
+            )
+            await _delay(5.0, 9.0)
+            await _scroll(page, random.randint(100, 300))
+            await _delay(2.0, 4.0)
 
-        # Extraer ID del video/short más reciente — maneja Shorts (/shorts/ID) y videos normales
-        vid_id = None
-        vid_is_short = False
-        for attempt in range(4):
-            result_json = await page.evaluate("""(function() {
-                var el, m;
-                el = document.querySelector('a[href*="/shorts/"]');
-                if (el && el.href) { m = el.href.match(/\\/shorts\\/([a-zA-Z0-9_-]{11})/); if (m) return JSON.stringify({id: m[1], short: true}); }
-                el = document.querySelector('a#video-title-link[href*="watch"], a#video-title[href*="watch"], a[href*="watch?v="]');
-                if (el && el.href) { m = el.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/); if (m) return JSON.stringify({id: m[1], short: false}); }
-                return null;
-            })()""")
-            try:
-                parsed = json.loads(result_json) if result_json else None
-                if parsed:
-                    vid_id = parsed["id"]
-                    vid_is_short = parsed.get("short", False)
-                    break
-            except Exception:
-                pass
-            logger.debug(f"  Intento {attempt + 1}/4 esperando hidratación...")
-            await asyncio.sleep(4.0)
+            vid_id = None
+            for attempt in range(4):
+                result_json = await page.evaluate("""(function() {
+                    var el, m;
+                    el = document.querySelector('a[href*="/shorts/"]');
+                    if (el && el.href) { m = el.href.match(/\\/shorts\\/([a-zA-Z0-9_-]{11})/); if (m) return JSON.stringify({id: m[1], short: true}); }
+                    el = document.querySelector('a#video-title-link[href*="watch"], a#video-title[href*="watch"], a[href*="watch?v="]');
+                    if (el && el.href) { m = el.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/); if (m) return JSON.stringify({id: m[1], short: false}); }
+                    return null;
+                })()""")
+                try:
+                    parsed = json.loads(result_json) if result_json else None
+                    if parsed:
+                        vid_id = parsed["id"]
+                        break
+                except Exception:
+                    pass
+                logger.debug(f"  Intento {attempt + 1}/4 esperando hidratación...")
+                await asyncio.sleep(4.0)
 
-        if not vid_id:
-            logger.warning("  No se encontró ningún video en el canal público")
-            return
+            if not vid_id:
+                logger.warning("  No se encontró ningún video en el canal público")
+                return 0
 
-        # Siempre usar /watch?v= para comentar — Shorts UI tiene layout distinto
-        video_url = f"https://www.youtube.com/watch?v={vid_id}"
-        logger.info(f"  Video objetivo: {video_url} (Short: {vid_is_short})")
+            video_url = f"https://www.youtube.com/watch?v={vid_id}"
+            logger.info(f"  Video objetivo (canal scraping): {video_url}")
 
         # Navegar al video y verificar que esté disponible
         page = await browser.get(video_url)
@@ -885,7 +1124,7 @@ async def _dismiss_consent(page) -> None:
         pass
 
 
-async def _growth_session_async(do_own: bool = True) -> dict:
+async def _growth_session_async(do_own: bool = True, own_video_url: str = "") -> dict:
     log = _load_log()
     ext_count, own_count = _daily_counts(log)
     results = {"external": 0, "own": 0, "skipped": 0}
@@ -947,16 +1186,21 @@ async def _growth_session_async(do_own: bool = True) -> dict:
 
         # ── Comentar en videos del nicho ──────────────────────────────────────
         if ext_count < DAILY_EXTERNAL_LIMIT:
-            # Rotar keywords: priorizar las NO usadas recientemente
+            # Rotar keywords con ventana de 48h: cada keyword puede volver a usarse
+            # pasadas 48h → nunca se queda sin keywords frescas aunque el pool sea pequeño
             log = _load_log()
-            used_kws = set(log.get("used_keywords", {}).keys())
-            fresh = [k for k in NICHE_SEARCHES if k not in used_kws]
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d")
+            used_kws = log.get("used_keywords", {})
+            # Solo mantener keywords usadas en últimas 48h (bloqueadas)
+            active_used = {k: d for k, d in used_kws.items() if d >= cutoff}
+            fresh = [k for k in NICHE_SEARCHES if k not in active_used]
             if len(fresh) < 3:
-                # Resetear si ya se usaron todas
-                log["used_keywords"] = {}
-                _save_log(log)
+                active_used = {}  # si se agotaron, resetear todas
                 fresh = list(NICHE_SEARCHES)
             keywords = random.sample(fresh, k=min(3, len(fresh)))
+            log["used_keywords"] = active_used
+            _save_log(log)
 
             # Batches de 2-3 comentarios con micro-break entre bloques
             BATCH_SIZE = random.randint(2, 3)
@@ -1006,7 +1250,7 @@ async def _growth_session_async(do_own: bool = True) -> dict:
             _, own_count = _daily_counts(log)
             if own_count < DAILY_OWN_LIMIT:
                 logger.info("Iniciando engagement en canal propio...")
-                results["own"] += await _engage_own_channel(browser, log)
+                results["own"] += await _engage_own_channel(browser, log, own_video_url=own_video_url)
 
     except Exception as e:
         logger.error(f"Error en sesión de crecimiento: {e}", exc_info=True)
@@ -1026,10 +1270,15 @@ async def _growth_session_async(do_own: bool = True) -> dict:
 
 # ─── API pública ──────────────────────────────────────────────────────────────
 
-def run_growth_session(do_own: bool = True) -> dict:
+def run_growth_session(do_own: bool = True, own_video_url: str = "") -> dict:
     """
     Ejecuta una sesión de crecimiento.
     Se llama desde main.py después de cada upload y 2x por día extra.
+
+    Args:
+        do_own: Si True, deja comentario/pin en el canal propio.
+        own_video_url: URL del video recién subido para comentar directamente
+                       (evita scraping del canal, útil cuando el video aún procesa).
     """
     logger.info("=== GROWTH AGENT — inicio de sesión ===")
 
@@ -1037,13 +1286,20 @@ def run_growth_session(do_own: bool = True) -> dict:
         loop = asyncio.ProactorEventLoop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(_growth_session_async(do_own=do_own))
+            return loop.run_until_complete(
+                _growth_session_async(do_own=do_own, own_video_url=own_video_url)
+            )
         finally:
             try:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    for t in pending:
+                        t.cancel()
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                 loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception:
                 pass
             loop.close()
             asyncio.set_event_loop(None)
     else:
-        return asyncio.run(_growth_session_async(do_own=do_own))
+        return asyncio.run(_growth_session_async(do_own=do_own, own_video_url=own_video_url))

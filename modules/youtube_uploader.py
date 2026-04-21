@@ -286,16 +286,65 @@ async def _random_mouse_wander(page) -> None:
 
 # ─── Tipeo humano ─────────────────────────────────────────────────────────────
 
+# Teclas vecinas en teclado QWERTY — para simular errores de tipeo realistas
+_KEYBOARD_NEIGHBORS: dict[str, str] = {
+    "a": "sqwz", "b": "vghn", "c": "xdfv", "d": "serfcx", "e": "wsrd",
+    "f": "drtgvc", "g": "ftyhbv", "h": "gyujnb", "i": "uojk", "j": "huikmnb",
+    "k": "jiolm", "l": "kop", "m": "njk", "n": "bhjm", "o": "iklp",
+    "p": "ol", "q": "wa", "r": "edft", "s": "awedxz", "t": "rfgy",
+    "u": "yhij", "v": "cfgb", "w": "qase", "x": "zsdc", "y": "tghu",
+    "z": "asx",
+}
+
+
+async def _type_char(element, char: str) -> None:
+    """Inserta un único carácter vía execCommand."""
+    char_json = _json.dumps(char)
+    await element.apply(
+        "(el) => { el.focus(); document.execCommand('insertText', false, "
+        + char_json + "); }"
+    )
+
+
+async def _backspace(element) -> None:
+    """Borra el último carácter (simula Backspace)."""
+    await element.apply(
+        "(el) => { el.focus(); document.execCommand('delete', false, null); }"
+    )
+
+
 async def _human_type(element, text: str, clear_first: bool = True) -> None:
     """
     Escribe carácter a carácter vía execCommand('insertText').
     Velocidad variable (~60 WPM), pausas de 'pensar' periódicas,
-    y ocasionales errores de tipeo corregidos.
+    y errores reales de tipeo corregidos (~1% por carácter):
+      - Error de tecla vecina: escribe letra adyacente, pausa, borra, reescribe
+      - Doble tipeo: repite el mismo carácter, pausa breve, borra el extra
     """
     if clear_first:
+        # Range API — más confiable que execCommand('selectAll') en contenteditable
+        # de shadow DOM como los de YouTube Studio
         await element.apply(
-            "(el) => { el.focus(); document.execCommand('selectAll', false, null); "
-            "document.execCommand('delete', false, null); }"
+            "(el) => {"
+            "  el.focus();"
+            "  const range = document.createRange();"
+            "  range.selectNodeContents(el);"
+            "  const sel = window.getSelection();"
+            "  sel.removeAllRanges();"
+            "  sel.addRange(range);"
+            "  document.execCommand('delete', false, null);"
+            "}"
+        )
+        await asyncio.sleep(random.uniform(0.25, 0.5))
+        # Segunda pasada: si quedó algo, fuerza borrado total
+        await element.apply(
+            "(el) => {"
+            "  if (el.innerText && el.innerText.trim().length > 0) {"
+            "    el.focus();"
+            "    document.execCommand('selectAll', false, null);"
+            "    document.execCommand('delete', false, null);"
+            "  }"
+            "}"
         )
     else:
         await element.apply("(el) => el.focus()")
@@ -303,17 +352,37 @@ async def _human_type(element, text: str, clear_first: bool = True) -> None:
 
     chars_since_pause = 0
     next_pause_at = random.randint(8, 22)
-    # Simular velocidad de escritura variable (burst rápido luego lento)
     wpm_factor = random.uniform(0.8, 1.3)
 
-    for i, char in enumerate(text):
-        char_json = _json.dumps(char)
-        await element.apply(
-            "(el) => { el.focus(); document.execCommand('insertText', false, "
-            + char_json + "); }"
-        )
+    for char in text:
+        # ── Errores de tipeo (~1 en 100 caracteres) ──────────────────────────
+        roll = random.random()
+        char_lower = char.lower()
 
-        # Velocidad según tipo de carácter
+        if roll < 0.007 and char_lower in _KEYBOARD_NEIGHBORS:
+            # Error de tecla vecina: escribe la tecla incorrecta, nota el error, corrige
+            wrong = random.choice(_KEYBOARD_NEIGHBORS[char_lower])
+            if char.isupper():
+                wrong = wrong.upper()
+            await _type_char(element, wrong)
+            await asyncio.sleep(random.uniform(0.18, 0.52))  # "nota el error"
+            await _backspace(element)
+            await asyncio.sleep(random.uniform(0.09, 0.25))  # breve antes de corregir
+            await _type_char(element, char)
+
+        elif roll < 0.010 and char not in " \n":
+            # Doble tipeo: presiona la misma tecla dos veces, borra el extra
+            await _type_char(element, char)
+            await asyncio.sleep(random.uniform(0.06, 0.18))
+            await _type_char(element, char)
+            await asyncio.sleep(random.uniform(0.22, 0.55))  # "nota el duplicado"
+            await _backspace(element)
+            await asyncio.sleep(random.uniform(0.08, 0.20))
+
+        else:
+            await _type_char(element, char)
+
+        # ── Velocidad según tipo de carácter ─────────────────────────────────
         if char == " ":
             base = random.uniform(0.07, 0.20)
         elif char in ".,;:!?\n":
@@ -365,8 +434,7 @@ async def _inject_stealth(page) -> None:
 async def _session_warmup(browser) -> None:
     """
     Un humano no abre Chrome y va directo a Studio.
-    Visita YouTube home brevemente, lee un poco, luego navega a Studio.
-    Esto establece un historial de navegación normal antes de hacer el upload.
+    Visita YouTube home, lee un poco, y opcionalmente abre un video brevemente.
     """
     try:
         logger.info("Warm-up: visitando YouTube home...")
@@ -375,6 +443,22 @@ async def _session_warmup(browser) -> None:
         await _scroll(page, random.randint(150, 350))
         await _random_mouse_wander(page)
         await _delay(2.0, 4.5)
+
+        # 40% de las veces: abrir un video recomendado brevemente (más humano)
+        if random.random() < 0.4:
+            try:
+                video_links = await page.select_all("a#video-title", timeout=5)
+                if video_links:
+                    pick = random.choice(video_links[:8])
+                    await _human_click(page, pick)
+                    await _delay(4.0, 9.0)
+                    await _scroll(page, random.randint(80, 200))
+                    await _random_mouse_wander(page)
+                    await browser.get("https://www.youtube.com")
+                    await _delay(1.5, 3.5)
+            except Exception:
+                pass
+
         await _scroll(page, random.randint(-100, -50))
         await asyncio.sleep(random.uniform(1.0, 2.5))
         logger.info("Warm-up completado")
@@ -468,14 +552,41 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
 # ─── Esperar upload completo ──────────────────────────────────────────────────
 
 async def _wait_upload_complete(page, timeout: int = 360) -> None:
+    """
+    Espera hasta que el upload termine y el botón Publicar esté habilitado.
+
+    YouTube Studio siempre muestra #done-button en la pantalla de visibilidad,
+    pero lo tiene deshabilitado mientras el video aún se está subiendo.
+    Esta función espera hasta que el botón NO esté disabled.
+    """
     logger.info("Esperando que el video termine de subirse...")
     start = time.time()
     while time.time() - start < timeout:
         try:
             done = await page.select("ytcp-button#done-button", timeout=3)
             if done:
-                logger.info("Upload completo — botón Guardar disponible")
-                return
+                # Verificar que el botón está habilitado (no deshabilitado por upload en curso)
+                disabled = await done.apply(
+                    "(el) => {"
+                    "  if (el.hasAttribute('disabled')) return true;"
+                    "  if (el.getAttribute('aria-disabled') === 'true') return true;"
+                    "  const inner = el.querySelector('button');"
+                    "  if (inner && inner.hasAttribute('disabled')) return true;"
+                    "  return false;"
+                    "}"
+                )
+                if not disabled:
+                    btn_text = ""
+                    try:
+                        btn_text = await done.apply("(el) => (el.innerText || '').trim()")
+                    except Exception:
+                        pass
+                    logger.info(f"Upload completo — botón habilitado: '{btn_text}'")
+                    return
+                else:
+                    elapsed = int(time.time() - start)
+                    if elapsed % 20 == 0:
+                        logger.info(f"Botón presente pero deshabilitado (upload en curso)... {elapsed}s")
         except Exception:
             pass
         # Mouse wander mientras espera (comportamiento humano idle)
@@ -485,7 +596,7 @@ async def _wait_upload_complete(page, timeout: int = 360) -> None:
         elapsed = int(time.time() - start)
         if elapsed % 30 == 0:
             logger.info(f"Esperando upload... ({elapsed}s)")
-    logger.warning(f"Timeout esperando upload ({timeout}s)")
+    logger.warning(f"Timeout esperando upload ({timeout}s) — intentando publicar de todas formas")
 
 
 # ─── Pipeline principal ───────────────────────────────────────────────────────
@@ -629,7 +740,10 @@ async def _upload_async(
             logger.error("No se encontró el botón 'Crear'")
             return False, ""
 
+        # Micro-pausa y hover sobre el botón antes de click (más humano)
+        await _random_mouse_wander(page)
         await _think()
+        await asyncio.sleep(random.uniform(0.4, 1.1))
         await _human_click(page, create_btn)
         await _delay(1.5, 3.0)
 
@@ -648,9 +762,10 @@ async def _upload_async(
             logger.error("No se encontró la opción 'Subir vídeos'")
             return False, ""
 
-        await asyncio.sleep(random.uniform(0.5, 1.2))
+        # Mover el mouse sobre la opción, leer un momento, luego click
+        await asyncio.sleep(random.uniform(0.6, 1.4))
         await _human_click(page, upload_opt)
-        await _delay(2.0, 4.5)
+        await _delay(2.5, 5.0)
 
         # ── Seleccionar archivo ───────────────────────────────────────────────
         logger.info(f"Cargando archivo: {video_path.name}")
@@ -658,14 +773,20 @@ async def _upload_async(
         await file_input.send_file(str(video_path.absolute()))
         logger.info("Archivo enviado — esperando modal de detalles...")
         await _random_mouse_wander(page)
-        await _delay(5.0, 9.0)
+        # Espera extra: YouTube pre-rellena el título con el nombre del archivo
+        # y lo hace de forma asíncrona; hay que darle tiempo antes de borrar
+        await _delay(8.0, 12.0)
 
         # ── Título ───────────────────────────────────────────────────────────
         logger.info("Escribiendo título...")
         title_input = await page.select("#title-textarea #textbox", timeout=30)
         await _think()
         await _human_click(page, title_input)
-        await _delay(1.5, 3.5)
+        await _delay(2.0, 4.0)
+        # Verificar que el campo esté visible y tenga el texto pre-rellenado
+        prefilled = await title_input.apply("(el) => el.innerText || ''")
+        if prefilled and prefilled.strip():
+            logger.info(f"Campo título pre-rellenado con: '{prefilled.strip()[:40]}' — borrando...")
         await _human_type(title_input, title)
         await _random_mouse_wander(page)
         await _delay(1.5, 3.5)
@@ -762,7 +883,45 @@ async def _upload_async(
         await _delay(2.0, 4.5)
         await _human_click(page, public_radio)
         logger.info("Visibilidad: Público seleccionado")
-        await _delay(4.0, 9.0)
+        await _delay(3.0, 5.0)
+
+        # ── Verificar que Público quedó realmente seleccionado ────────────────
+        public_confirmed = False
+        for verify_attempt in range(3):
+            try:
+                checked = await public_radio.apply(
+                    "(el) => {"
+                    "  if (el.getAttribute('aria-checked') === 'true') return true;"
+                    "  if (el.hasAttribute('checked')) return true;"
+                    "  const inner = el.querySelector('[aria-checked=\"true\"]');"
+                    "  return inner !== null;"
+                    "}"
+                )
+                if checked:
+                    public_confirmed = True
+                    logger.info("Verificado: visibilidad Público confirmada")
+                    break
+                else:
+                    logger.warning(f"Público no confirmado (intento {verify_attempt+1}/3) — reintentando click")
+                    await _delay(1.5, 3.0)
+                    await _human_click(page, public_radio)
+                    await _delay(2.0, 3.5)
+            except Exception as e:
+                logger.debug(f"Verificación Público intento {verify_attempt+1}: {e}")
+                await _delay(1.5, 2.5)
+
+        if not public_confirmed:
+            # Último recurso: buscar el radio por texto visible
+            try:
+                pub_label = await page.find("Pública", timeout=5)
+                if pub_label is None:
+                    pub_label = await page.find("Public", timeout=3)
+                if pub_label:
+                    await _human_click(page, pub_label)
+                    await _delay(2.0, 3.5)
+                    logger.info("Visibilidad: click por texto 'Pública'")
+            except Exception:
+                pass
 
         # ── Esperar upload + guardar ──────────────────────────────────────────
         await _wait_upload_complete(page)
@@ -771,11 +930,31 @@ async def _upload_async(
         await _random_mouse_wander(page)
         await _think()
 
+        # Screenshot diagnóstico antes de guardar — ver visibilidad seleccionada
+        ts_pre = time.strftime("%Y%m%d_%H%M%S")
+        try:
+            await page.save_screenshot(str(config.LOGS_DIR / f"pre_save_{ts_pre}.png"))
+        except Exception:
+            pass
+
         logger.info("Guardando video...")
         save_btn = await page.select("ytcp-button#done-button", timeout=30)
         if save_btn is None:
             logger.error("No se encontró el botón Guardar")
             return False, ""
+
+        # Verificar que el botón dice "Publicar" (confirma que Público está activo)
+        try:
+            btn_text = await save_btn.apply("(el) => (el.innerText || '').trim()")
+            if btn_text:
+                logger.info(f"Botón final: '{btn_text}'")
+                if "priv" in btn_text.lower() or "draft" in btn_text.lower() or "borrador" in btn_text.lower():
+                    logger.warning(f"ALERTA: el botón dice '{btn_text}' — visibilidad podría ser Privado. Reintentando PUBLIC...")
+                    if public_radio:
+                        await _human_click(page, public_radio)
+                        await _delay(2.5, 4.0)
+        except Exception:
+            pass
 
         await _human_click(page, save_btn)
         await _delay(5.0, 10.0)
@@ -871,6 +1050,12 @@ def upload_to_youtube(
                     )
                 finally:
                     try:
+                        # Cancelar tareas pendientes de nodriver/websockets antes de cerrar
+                        pending = asyncio.all_tasks(loop)
+                        if pending:
+                            for t in pending:
+                                t.cancel()
+                            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                         loop.run_until_complete(loop.shutdown_asyncgens())
                     except Exception:
                         pass

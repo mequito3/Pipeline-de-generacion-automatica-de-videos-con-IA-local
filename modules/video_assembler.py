@@ -31,6 +31,264 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# ─── Stickers virales (overlay sobre clips de escena) ────────────────────────
+# Texto + color de fondo + color de texto — estilo TikTok/Reels
+_STICKER_DATA = [
+    # ── Shock / reacción ──────────────────────────────────────────────────────
+    ("¡NO PUEDE SER!",      (220,  20,  60), (255, 255, 255)),
+    ("¡NO LO CREO!",        (220,  20,  60), (255, 255, 255)),
+    ("¡QUÉ FUERTE!",        (200,  10,  50), (255, 255, 255)),
+    ("¡INCREÍBLE!",         (190,   0,  40), (255, 255, 255)),
+    ("¡DIOS MÍO!",          (220,  20,  60), (255, 255, 0  )),
+    ("¡QUÉ LOCURA!",        (180,   0,  80), (255, 255, 255)),
+    ("¡ME DEJÓ SIN PALABRAS!", (210, 10, 50), (255, 255, 255)),
+    ("¡IMPRESIONANTE!",     (200,  20,  60), (255, 255, 255)),
+    ("¡ESTO ES REAL!",      (220,  20,  60), (255, 230,   0)),
+    ("¡QUÉ BARBARIDAD!",    (200,   0,  50), (255, 255, 255)),
+    # ── Traición / drama ─────────────────────────────────────────────────────
+    ("¡QUÉ TRAICIÓN!",      (220,  20,  60), (255, 255, 255)),
+    ("¡TRAICIONADO/A!",     (190,   0,  40), (255, 255, 255)),
+    ("¡DRAMA REAL!",        (170,   0, 160), (255, 255, 255)),
+    ("¡QUÉ DRAMA!",         (160,   0, 150), (255, 255, 255)),
+    ("¡QUÉ BAJEZA!",        (200,  20,  60), (255, 255, 255)),
+    ("¡CERO LEALTAD!",      (220,  20,  60), (255, 255, 255)),
+    ("¡QUÉ DECEPCIÓN!",     (180,  10,  50), (255, 255, 255)),
+    ("¡TRAICIÓN PURA!",     (210,  10,  40), (255, 255, 255)),
+    ("¡LO PEOR!",           (220,  20,  60), (255, 255, 255)),
+    ("¡DOBLE CARA!",        (150,   0, 130), (255, 255, 255)),
+    # ── Verificación / autenticidad ───────────────────────────────────────────
+    ("HISTORIA REAL",       (0,   140, 200), (255, 255, 255)),
+    ("100% REAL",           (0,   100, 220), (255, 255, 255)),
+    ("SIN FILTROS",         (10,   10,  10), (255,  50,  70)),
+    ("SIN CENSURA",         (20,   20,  20), (255,  40,  60)),
+    ("CASO REAL",           (0,   130, 190), (255, 255, 255)),
+    ("HISTORIA VERDADERA",  (0,   120, 180), (255, 255, 255)),
+    ("CONFESIÓN REAL",      (0,   140, 200), (255, 230,   0)),
+    ("RELATO REAL",         (0,   110, 170), (255, 255, 255)),
+    ("TESTIMONIO REAL",     (0,   130, 190), (255, 255, 255)),
+    ("ESTO PASÓ DE VERDAD", (0,   150, 210), (255, 255, 255)),
+    # ── Preguntas / debate ────────────────────────────────────────────────────
+    ("¿EN SERIO?",          (255, 155,   0), (0,   0,   0)),
+    ("¿LO PERDONARÍAS?",    (255, 140,   0), (0,   0,   0)),
+    ("¿QUÉ HARÍAS TÚ?",     (255, 160,  10), (0,   0,   0)),
+    ("¿CULPABLE O NO?",     (255, 145,   0), (0,   0,   0)),
+    ("¿ESTO ES NORMAL?",    (255, 150,   0), (0,   0,   0)),
+    ("¿TÚ LO SABÍAS?",      (255, 140,  10), (0,   0,   0)),
+    ("¿QUIÉN TIENE RAZÓN?", (255, 130,   0), (0,   0,   0)),
+    ("¿SE LO MERECE?",      (255, 155,   0), (0,   0,   0)),
+    ("¿LO HUBIERAS HECHO?", (255, 145,   5), (0,   0,   0)),
+    ("¿PERDÓN O JAMÁS?",    (255, 140,   0), (0,   0,   0)),
+    # ── Giro / revelación ────────────────────────────────────────────────────
+    ("¡GIRO IMPACTANTE!",   (0,   170, 100), (255, 255, 255)),
+    ("¡SHOCKING!",          (0,   160,  90), (255, 255, 255)),
+    ("¡REVELACIÓN!",        (0,   180, 110), (255, 255, 255)),
+    ("¡SPOILER ALERT!",     (50,  170,  80), (255, 255, 255)),
+    ("¡ESTO CAMBIA TODO!",  (0,   155,  90), (255, 255, 255)),
+    ("¡GIRO TOTAL!",        (0,   160,  80), (255, 255, 255)),
+    ("¡LO QUE DESCUBRIÓ!",  (0,   175, 105), (255, 255, 255)),
+    ("¡IMPACTANTE!",        (255, 155,   0), (0,   0,   0)),
+    ("¡ATENCIÓN!",          (255,  60,  20), (255, 255, 255)),
+    ("¡ESTO ES MUY SERIO!", (0,   160,  80), (255, 255, 255)),
+    # ── Enganche / TikTok viral ───────────────────────────────────────────────
+    ("ESPERA EL FINAL",     (80,   0, 200), (255, 255, 255)),
+    ("VE HASTA EL FINAL",   (90,  10, 210), (255, 255, 255)),
+    ("NO TE LO PIERDAS",    (70,   0, 190), (255, 255, 255)),
+    ("SIGUE MIRANDO",       (85,   5, 200), (255, 255, 255)),
+    ("LO MEJOR AL FINAL",   (75,   0, 195), (255, 255, 255)),
+    ("PARTE 2 YA",          (80,  10, 210), (255, 230,   0)),
+    ("¡AGUANTA AHÍ!",       (70,   0, 200), (255, 255, 255)),
+    ("EL FINAL TE ROMPE",   (90,   5, 210), (255, 255, 255)),
+    ("NO HAGAS SWIPE",      (80,   0, 200), (255, 255,   0)),
+    ("SUBE EL VOLUMEN",     (75,  10, 195), (255, 255, 255)),
+    # ── Emocional / empatía ───────────────────────────────────────────────────
+    ("¡QUÉ DOLOR!",         (100,  20, 180), (255, 255, 255)),
+    ("¡CORAZÓN ROTO!",      (220,  20,  60), (255, 255, 255)),
+    ("¡QUÉ INJUSTO!",       (110,  10, 170), (255, 255, 255)),
+    ("¡CUÁNTO SUFRIÓ!",     (100,  15, 175), (255, 255, 255)),
+    ("¡SE LO MERECÍA!",     (190,   0,  60), (255, 255, 255)),
+    ("¡FUERZA!",            (100,  20, 180), (255, 255, 255)),
+    ("¡QUÉ VALIENTE!",      (0,   140, 200), (255, 255, 255)),
+    ("¡ME LLEGÓ AL ALMA!",  (110,  10, 175), (255, 255, 255)),
+    ("¡LLORANDO AQUÍ!",     (100,  15, 180), (255, 255, 255)),
+    ("¡ESTO DUELE!",        (200,  20,  60), (255, 255, 255)),
+    # ── Picante / polémica ───────────────────────────────────────────────────
+    ("¡POLÉMICO!",          (255,  60,  20), (255, 255, 255)),
+    ("¡CONTENIDO FUERTE!",  (240,  50,  10), (255, 255, 255)),
+    ("¡SIN PALABRAS!",      (255,  50,  20), (255, 255, 255)),
+    ("¡ESCÁNDALO!",         (230,  40,  10), (255, 255, 255)),
+    ("¡LO CONTÓ TODO!",     (255,  55,  15), (255, 255, 255)),
+    ("¡PICANTE!",           (255,  70,  10), (255, 255, 0  )),
+    ("¡NADIE LO SABE!",     (240,  45,  10), (255, 255, 255)),
+    ("¡SECRETO REVELADO!",  (220,  35,  10), (255, 255, 255)),
+    ("¡SE ARMÓ!",           (255,  60,  20), (255, 255, 255)),
+    ("¡TODO SALIÓ!",        (240,  50,  10), (255, 255, 255)),
+    # ── Noir / oscuro / tenso ─────────────────────────────────────────────────
+    ("HISTORIA OSCURA",     (10,   10,  10), (200, 200, 200)),
+    ("CONTENIDO REAL",      (20,   20,  20), (180, 180, 180)),
+    ("ALERTA EMOCIONAL",    (10,   10,  10), (255,  60,  60)),
+    ("CASO PERTURBADOR",    (15,   15,  15), (255,  50,  50)),
+    ("RELATO PERTURBADOR",  (10,   10,  10), (200, 200, 200)),
+    ("HISTORIA DURA",       (20,   20,  20), (255, 200,   0)),
+    ("CONFESIÓN OSCURA",    (10,   10,  10), (220, 220, 220)),
+    ("VERDAD INCÓMODA",     (15,   15,  15), (255, 230,   0)),
+    ("LO QUE NADIE DICE",   (10,   10,  10), (200, 200, 200)),
+    ("SIN TAPUJOS",         (20,   20,  20), (255,  50,  70)),
+    # ── Redes sociales / Gen Z ───────────────────────────────────────────────
+    ("STORYTIME REAL",      (255,  20, 147), (255, 255, 255)),
+    ("RELATAME ESO",        (255,  10, 130), (255, 255, 255)),
+    ("NO ME CREO NADA",     (255,  30, 147), (255, 255, 255)),
+    ("¡QUÉ BUEN DRAMA!",    (255,  20, 147), (255, 255, 255)),
+    ("NIVEL SERIE",         (240,  10, 140), (255, 255, 255)),
+    ("PEOR QUE NETFLIX",    (255,  20, 147), (255, 255,   0)),
+    ("VIRAL EN 3... 2...",  (255,  30, 147), (255, 255, 255)),
+    ("¡TRENDING!",          (240,  10, 130), (255, 255, 255)),
+    ("COMENTA ABAJO",       (255,  20, 147), (255, 255, 255)),
+    ("¡SÍGUEME YA!",        (255,  15, 140), (255, 255, 255)),
+    # ── Engagement directo ───────────────────────────────────────────────────
+    ("¿TÚ QUÉ OPINAS?",     (0,   170, 170), (255, 255, 255)),
+    ("DEJA TU OPINIÓN",     (0,   160, 160), (255, 255, 255)),
+    ("COMENTA QUÉ HARÍAS",  (0,   175, 175), (255, 255, 255)),
+    ("¿EQUIPO A O B?",      (0,   165, 165), (255, 255, 255)),
+    ("VOTA EN COMENTARIOS", (0,   155, 155), (255, 255, 255)),
+    ("¿PERDONAR O CORTAR?", (0,   170, 165), (255, 255, 255)),
+    ("TU OPINIÓN IMPORTA",  (0,   160, 160), (255, 255, 255)),
+    ("DILO EN COMENTARIOS", (0,   175, 170), (255, 255, 255)),
+    ("¿QUÉ HARÍAS?",        (0,   160, 155), (255, 255, 255)),
+    ("CUÉNTAME TU CASO",    (0,   170, 165), (255, 255, 255)),
+    # ── Tiempo / urgencia ────────────────────────────────────────────────────
+    ("¡ATENCIÓN!",          (255,  60,  20), (255, 255, 255)),
+    ("MOMENTO CLAVE",       (255,  50,  10), (255, 255, 255)),
+    ("¡ESTO ES SERIO!",     (240,  40,  10), (255, 255, 255)),
+    ("PUNTO DE QUIEBRE",    (255,  55,  15), (255, 255, 255)),
+    ("AQUÍ CAMBIA TODO",    (220,  30,  10), (255, 255, 255)),
+    ("¡CUIDADO!",           (255,  60,  20), (255, 255,   0)),
+    ("EL MOMENTO EXACTO",   (240,  45,  10), (255, 255, 255)),
+    ("¡OJO CON ESTO!",      (255,  50,  20), (255, 255, 255)),
+    ("¡ESTO LO CAMBIA!",    (230,  35,  10), (255, 255, 255)),
+    ("¡LO QUE VIENE!",      (255,  55,  20), (255, 255, 255)),
+]
+
+
+def _make_sticker_png(out_path: Path, scene_idx: int) -> dict | None:
+    """
+    Genera un sticker PNG con fondo de color, texto bold y rotación ligera.
+    Retorna dict con {path, x, y} para el overlay, o None si falla.
+    """
+    try:
+        W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+        text, bg_rgb, fg_rgb = random.choice(_STICKER_DATA)
+        font_path = _find_font()
+        font_size = random.choice([48, 52, 56, 60])
+        font      = _load_font(font_path, font_size)
+
+        dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        bbox  = dummy.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad_x, pad_y = 28, 18
+        sw, sh = tw + 2 * pad_x, th + 2 * pad_y
+
+        box = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+        bd  = ImageDraw.Draw(box)
+        bd.rectangle([0, 0, sw - 1, sh - 1], fill=(*bg_rgb, 230))
+        bd.rectangle([0, 0, sw - 1, sh - 1], outline=(*fg_rgb, 200), width=4)
+        bd.text((pad_x, pad_y), text, font=font, fill=(*fg_rgb, 255))
+
+        angle = random.choice([-5, -3, -2, 0, 0, 2, 3, 5])
+        if angle:
+            box = box.rotate(angle, expand=True, resample=Image.BICUBIC)
+
+        box.save(str(out_path), "PNG")
+        fw, fh = box.size
+
+        # 8 zonas seguras: no cubre subtítulos (60% inferior) ni watermark (top-right corner)
+        # scene_idx determina la zona base para que escenas consecutivas no colisionen
+        zones = [
+            (30,            120),              # sup-izq
+            (W // 2 - fw // 2, 120),           # sup-centro
+            (30,            420),              # mid-izq
+            (W - fw - 30,   H // 3),           # mid-der
+            (30,            H // 2 - fh // 2), # centro-izq
+            (W - fw - 30,   H // 2 - fh // 2), # centro-der
+            (30,            H - fh - 460),     # inf-izq (sobre subtítulos)
+            (W - fw - 30,   H - fh - 460),     # inf-der (sobre subtítulos)
+        ]
+        base_zone = zones[scene_idx % len(zones)]
+        jitter_x = random.randint(-30, 30)
+        jitter_y = random.randint(-20, 20)
+        x = base_zone[0] + jitter_x
+        y = base_zone[1] + jitter_y
+        x = max(10, min(x, W - fw - 10))
+        y = max(80, min(y, H - fh - 420))
+
+        return {"path": str(out_path), "x": x, "y": y}
+    except Exception as e:
+        logger.debug(f"  Sticker fallido escena {scene_idx}: {e}")
+        return None
+
+
+# Grading de color y grano de película — elegidos al azar para que cada video tenga look distinto
+_COLOR_GRADES = [
+    "",  # neutro (sin cambio)
+    "eq=brightness=0.02:contrast=1.08:saturation=1.12,colorchannelmixer=rr=1.06:bb=0.88",   # cálido/dramático
+    "eq=brightness=-0.02:contrast=1.10:saturation=1.05,colorchannelmixer=rr=0.92:bb=1.12",  # frío/suspense
+    "eq=brightness=-0.04:contrast=1.22:saturation=1.18:gamma=0.92",                          # noir/oscuro
+    "eq=brightness=0.04:contrast=0.93:saturation=0.72",                                      # vintage/desaturado
+]
+_GRAIN_LEVELS = [0, 0, 6, 8, 10, 12]  # 0 aparece 2× = 33% sin grano, resto con intensidad variada
+
+# Duración de cada transición xfade (en segundos) — usada en scene_duration y apad
+_XFADE_DUR = 0.4
+
+# ─── Temas visuales rotativos ─────────────────────────────────────────────────
+# Cada video elige uno al azar → paleta, posición del watermark y estilo del outro distintos
+_VIDEO_THEMES = [
+    {   # 1 — Rojo dramático (actual marca GATA CURIOSA)
+        "name":    "rojo_drama",
+        "primary": (204,   0,   0),   # rojo canal
+        "accent":  (255, 210,  40),   # dorado
+        "q_color": (255, 220,   0),   # amarillo pregunta
+        "sep_color": (255, 210, 40),  # separador dorado
+        "bg_alpha": 191,              # overlay negro 75%
+        "wm_x": "w-tw-28", "wm_y": "28",       "wm_size": 36,
+    },
+    {   # 2 — Azul misterio / suspense
+        "name":    "azul_misterio",
+        "primary": (0,   70, 200),
+        "accent":  (0,  210, 255),
+        "q_color": (0,  230, 255),
+        "sep_color": (0, 210, 255),
+        "bg_alpha": 200,
+        "wm_x": "28",      "wm_y": "28",       "wm_size": 34,
+    },
+    {   # 3 — Negro noir / tenso
+        "name":    "negro_noir",
+        "primary": (20,  20,  20),
+        "accent":  (210, 210, 210),
+        "q_color": (255, 255, 255),
+        "sep_color": (180, 180, 180),
+        "bg_alpha": 215,
+        "wm_x": "w-tw-28", "wm_y": "h-th-28",  "wm_size": 38,
+    },
+    {   # 4 — Morado telenovela
+        "name":    "morado_drama",
+        "primary": (110,   0, 170),
+        "accent":  (255,  80, 200),
+        "q_color": (255,  90, 210),
+        "sep_color": (255, 80, 200),
+        "bg_alpha": 195,
+        "wm_x": "28",      "wm_y": "h-th-28",  "wm_size": 34,
+    },
+    {   # 5 — Verde impacto / viral
+        "name":    "verde_impacto",
+        "primary": (0,  145,  70),
+        "accent":  (255, 230,   0),
+        "q_color": (255, 235,   0),
+        "sep_color": (255, 230, 0),
+        "bg_alpha": 185,
+        "wm_x": "(w-tw)/2", "wm_y": "h-th-28", "wm_size": 36,
+    },
+]
+
 
 # ─── Utilidades de fuentes ────────────────────────────────────────────────────
 
@@ -310,54 +568,91 @@ def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str
 
     font_path    = _find_font()
     font_channel = _load_font(font_path, 34)
-    font_hook    = _load_font(font_path, 100)   # Grande — impacto máximo
+    font_hook    = _load_font(font_path, 96)   # Grande — impacto máximo
+    font_badge   = _load_font(font_path, 30)
 
-    # Franja roja superior (62px) + barra dorada (5px)
+    # ── Franja roja superior (62px) + barra dorada (5px) ─────────────────────
     stripe_h = 62
     draw.rectangle([0, 0, W_T, stripe_h], fill=(*RED, 235))
     draw.rectangle([0, stripe_h, W_T, stripe_h + 5], fill=GOLD)
 
     # Nombre del canal centrado en la franja
-    channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
+    channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMATICAS")
     c_bbox  = draw.textbbox((0, 0), channel, font=font_channel)
     c_w, c_h = c_bbox[2] - c_bbox[0], c_bbox[3] - c_bbox[1]
     draw.text(((W_T - c_w) // 2, (stripe_h - c_h) // 2),
               channel, font=font_channel, fill=WHITE)
 
-    # Hook text en tercio inferior — máx 2 líneas, texto grande + borde grueso
-    hook = script.get("title", script.get("hook", ""))
-    hook_short = " ".join(hook.split()[:9])  # máx 9 palabras para no saturar
-    hook_lines = _wrap_text(draw, hook_short, font_hook, W_T - 60)[:2]
-    line_h     = 112   # espaciado proporcional a font_size 100
-    block_h    = len(hook_lines) * line_h
+    # ── Badge "HISTORIA REAL" — esquina superior izquierda ───────────────────
+    badge_text = "HISTORIA REAL"
+    b_bbox = draw.textbbox((0, 0), badge_text, font=font_badge)
+    bw, bh = b_bbox[2] - b_bbox[0] + 24, b_bbox[3] - b_bbox[1] + 14
+    bx, by = 18, stripe_h + 14
+    # Fondo rojo oscuro con borde amarillo
+    draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=8, fill=(160, 0, 0))
+    draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=8, outline=GOLD, width=3)
+    draw.text((bx + 12, by + 7), badge_text, font=font_badge, fill=YELLOW)
 
-    # Anclar el bloque de texto a ~80% vertical (tercio inferior)
-    y_start = int(H_T * 0.78) - block_h
+    # ── Badge narrador (M/F) — esquina superior derecha ──────────────────────
+    narrator_g = script.get("narrator_gender", "female")
+    narrator_label = "ELLA" if narrator_g == "female" else "EL"
+    n_bbox = draw.textbbox((0, 0), narrator_label, font=font_badge)
+    nw, nh = n_bbox[2] - n_bbox[0] + 24, n_bbox[3] - n_bbox[1] + 14
+    nx = W_T - nw - 18
+    ny = stripe_h + 14
+    badge_color = (180, 0, 120) if narrator_g == "female" else (0, 80, 180)
+    draw.rounded_rectangle([nx, ny, nx + nw, ny + nh], radius=8, fill=badge_color)
+    draw.rounded_rectangle([nx, ny, nx + nw, ny + nh], radius=8, outline=WHITE, width=2)
+    draw.text((nx + 12, ny + 7), narrator_label, font=font_badge, fill=WHITE)
+
+    # ── Hook text en tercio inferior (2 líneas máx) ───────────────────────────
+    hook = script.get("title", script.get("hook", ""))
+    hook_short = " ".join(hook.split()[:9])
+    hook_lines = _wrap_text(draw, hook_short, font_hook, W_T - 80)[:2]
+    line_h  = 108
+    block_h = len(hook_lines) * line_h
+    y_start = int(H_T * 0.76) - block_h
 
     for i, line in enumerate(hook_lines):
         bbox = draw.textbbox((0, 0), line, font=font_hook)
         x    = (W_T - (bbox[2] - bbox[0])) // 2
-        # Stroke doble: negro grueso exterior + amarillo fino para vibrar
-        _draw_text_with_stroke(draw, x, y_start + i * line_h, line, font_hook, WHITE, 7)
+        _draw_text_with_stroke(draw, x, y_start + i * line_h, line, font_hook, WHITE, 8)
+
+    # ── Barra de urgencia inferior (30px roja con texto MIRA ESTO) ───────────
+    urgency_y = H_T - 38
+    draw.rectangle([0, urgency_y, W_T, H_T], fill=(*RED, 220))
+    urgency_texts = ["MIRA ESTO", "HISTORIA IMPACTANTE", "NO PUEDO CREERLO", "DEBES VERLO"]
+    urgency = random.choice(urgency_texts)
+    u_font  = _load_font(font_path, 22)
+    u_bbox  = draw.textbbox((0, 0), urgency, font=u_font)
+    uw      = u_bbox[2] - u_bbox[0]
+    draw.text(((W_T - uw) // 2, urgency_y + 8), urgency, font=u_font, fill=YELLOW)
 
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     bg.save(str(out_path), "JPEG", quality=95)
-    logger.info(f"Thumbnail generado: {out_path.name} ({W_T}×{H_T})")
+    logger.info(f"Thumbnail generado: {out_path.name} ({W_T}x{H_T}) | badge={narrator_label} | urgency='{urgency}'")
     return str(out_path)
 
 
-def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image:
+def _render_outro_png(
+    question: str,
+    last_image_path: str | None,
+    theme: dict | None = None,
+) -> Image.Image:
     """
-    Renderiza el frame del outro/CTA como imagen PIL.
-    Diseño: última imagen + overlay negro 75%, pregunta en amarillo,
-    CTA de comentarios y suscripción.
+    Renderiza el frame del outro/CTA aplicando el tema visual del video.
+    Cada tema tiene paleta propia → los outros se ven distintos entre videos.
     """
-    W, H   = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    YELLOW = (255, 220, 0)
-    WHITE  = (255, 255, 255)
-    GRAY   = (200, 200, 200)
-    GOLD   = (255, 210, 40)
+    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    t    = theme or _VIDEO_THEMES[0]  # fallback al primer tema
+
+    Q_COLOR  = t["q_color"]
+    SEP_COL  = t["sep_color"]
+    PRIMARY  = t["primary"]
+    BG_ALPHA = t["bg_alpha"]
+    WHITE    = (255, 255, 255)
+    GRAY     = (190, 190, 190)
 
     # Fondo: último clip/imagen de escena
     if last_image_path:
@@ -365,8 +660,8 @@ def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image
     else:
         bg = Image.new("RGB", (W, H), (10, 10, 20))
 
-    # Overlay negro 75%
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 191))  # 191 ≈ 75% de 255
+    # Overlay oscuro (intensidad según tema)
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, BG_ALPHA))
     bg = Image.alpha_composite(bg.convert("RGBA"), ov).convert("RGB")
     draw = ImageDraw.Draw(bg)
 
@@ -378,7 +673,11 @@ def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image
 
     center_y = H // 2
 
-    # Pregunta de engagement en amarillo — centrada horizontalmente
+    # Franja de color (tema) — parte superior del outro
+    stripe_h = 8
+    draw.rectangle([0, 0, W, stripe_h], fill=PRIMARY)
+
+    # Pregunta de engagement — color del tema
     q_lines = _wrap_text(draw, question, font_question, W - 100)[:3]
     line_h  = 72
     block_h = len(q_lines) * line_h
@@ -387,32 +686,35 @@ def _render_outro_png(question: str, last_image_path: str | None) -> Image.Image
     for i, line in enumerate(q_lines):
         bbox = draw.textbbox((0, 0), line, font=font_question)
         x    = (W - (bbox[2] - bbox[0])) // 2
-        _draw_text_with_stroke(draw, x, q_y + i * line_h, line, font_question, YELLOW, 3)
+        _draw_text_with_stroke(draw, x, q_y + i * line_h, line, font_question, Q_COLOR, 3)
 
-    # Línea separadora dorada
+    # Línea separadora (color del acento del tema)
     sep_y = q_y + block_h + 24
-    draw.rectangle([80, sep_y, W - 80, sep_y + 3], fill=GOLD)
+    draw.rectangle([80, sep_y, W - 80, sep_y + 3], fill=SEP_COL)
 
-    # CTA: comenta (rotativo)
-    cta1     = random.choice(getattr(config, "CTA_COMMENTS", ["Comenta tu respuesta abajo"]))
-    c1_bbox  = draw.textbbox((0, 0), cta1, font=font_cta)
-    c1_x     = (W - (c1_bbox[2] - c1_bbox[0])) // 2
-    cta1_y   = sep_y + 36
+    # CTA: comenta
+    cta1    = random.choice(getattr(config, "CTA_COMMENTS", ["Comenta tu respuesta abajo"]))
+    c1_bbox = draw.textbbox((0, 0), cta1, font=font_cta)
+    c1_x    = (W - (c1_bbox[2] - c1_bbox[0])) // 2
+    cta1_y  = sep_y + 36
     _draw_text_with_stroke(draw, c1_x, cta1_y, cta1, font_cta, WHITE, 2)
 
-    # CTA: sígueme (rotativo)
-    cta2    = random.choice(getattr(config, "CTA_FOLLOW", ["Sígueme para más historias reales"]))
+    # CTA: sígueme
+    cta2    = random.choice(getattr(config, "CTA_FOLLOW", ["Sigue para más historias reales"]))
     c2_bbox = draw.textbbox((0, 0), cta2, font=font_follow)
     c2_x    = (W - (c2_bbox[2] - c2_bbox[0])) // 2
     cta2_y  = cta1_y + 70
     _draw_text_with_stroke(draw, c2_x, cta2_y, cta2, font_follow, GRAY, 2)
 
-    # Nombre del canal abajo del todo
-    channel   = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
-    ch_bbox   = draw.textbbox((0, 0), channel, font=font_channel)
-    ch_x      = (W - (ch_bbox[2] - ch_bbox[0])) // 2
-    ch_y      = H - 110
-    _draw_text_with_stroke(draw, ch_x, ch_y, channel, font_channel, (180, 180, 180), 2)
+    # Nombre del canal
+    channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
+    ch_bbox = draw.textbbox((0, 0), channel, font=font_channel)
+    ch_x    = (W - (ch_bbox[2] - ch_bbox[0])) // 2
+    ch_y    = H - 110
+    _draw_text_with_stroke(draw, ch_x, ch_y, channel, font_channel, (170, 170, 170), 2)
+
+    # Barra inferior del tema
+    draw.rectangle([0, H - stripe_h, W, H], fill=PRIMARY)
 
     return bg
 
@@ -502,46 +804,86 @@ def _build_scene_clip_from_video(
     Usa libx264 (CPU) porque los clips ya tienen movimiento real — no necesitan GPU.
     """
     W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    fade_d = round(min(0.30, duration * 0.12), 3)
+    fade_d = round(min(random.choice([0.05, 0.15, 0.25, 0.35]), duration * 0.18), 3)
     fade_out_start = round(max(0.0, duration - fade_d), 3)
 
+    # Slow camera drift: scale a 110% → portrait center-crop → deriva en dirección aleatoria
+    SW, SH = int(W * 1.10), int(H * 1.10)   # 1188 × 2112
+    dx, dy = SW - W, SH - H                  # 108, 192 px disponibles para driftar
+    spd_x  = round(dx / max(duration, 1.0), 2)
+    spd_y  = round(dy / max(duration, 1.0), 2)
+    drift  = random.choice(["pan_right", "pan_left", "pan_up", "pan_down", "static"])
+
+    if drift == "pan_right":
+        crop_expr = f"crop={W}:{H}:x='min({dx},t*{spd_x})':y={dy//2}"
+    elif drift == "pan_left":
+        crop_expr = f"crop={W}:{H}:x='max(0,{dx}-t*{spd_x})':y={dy//2}"
+    elif drift == "pan_up":
+        crop_expr = f"crop={W}:{H}:x={dx//2}:y='min({dy},t*{spd_y})'"
+    elif drift == "pan_down":
+        crop_expr = f"crop={W}:{H}:x={dx//2}:y='max(0,{dy}-t*{spd_y})'"
+    else:
+        crop_expr = f"crop={W}:{H}:x={dx//2}:y={dy//2}"
+
     vf = (
-        f"scale={W}:{H}:force_original_aspect_ratio=increase,"
-        f"crop={W}:{H},"
+        f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
+        f"crop={SW}:{SH},"
+        f"{crop_expr},"
         f"fade=t=in:st=0:d={fade_d},"
         f"fade=t=out:st={fade_out_start}:d={fade_d}"
     )
 
     clip_dur = _get_audio_duration(video_path)
-    # Offset aleatorio para variedad cuando el mismo clip se reutiliza
     max_offset = max(0.0, clip_dur - duration - 0.5)
     start_offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 0 else 0.0
 
+    # Sticker viral: 40% de probabilidad por escena
+    sticker = None
+    if random.random() < 0.40:
+        sticker_png = out_path.parent / f"sticker_{scene_idx:03d}.png"
+        sticker = _make_sticker_png(sticker_png, scene_idx)
+        if sticker:
+            logger.info(f"  Escena {scene_idx + 1}: sticker en ({sticker['x']},{sticker['y']})")
+
+    def _build_ffmpeg_cmd(input_prefix: list[str]) -> list[str]:
+        """Construye los argumentos de FFmpeg con o sin sticker."""
+        if sticker:
+            sx, sy = sticker["x"], sticker["y"]
+            appear  = round(random.uniform(0.4, max(0.4, duration * 0.35)), 2)
+            vanish  = round(min(duration - 0.2, appear + random.uniform(2.0, 3.2)), 2)
+            fc = (f"[0:v]{vf}[base];"
+                  f"[base][1:v]overlay=x={sx}:y={sy}:"
+                  f"enable='between(t,{appear},{vanish})'[out]")
+            return [
+                *input_prefix,
+                "-i", sticker["path"],
+                "-t", str(duration),
+                "-filter_complex", fc,
+                "-map", "[out]",
+                "-r", str(fps),
+                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-an",
+                str(out_path),
+            ]
+        else:
+            return [
+                *input_prefix,
+                "-t", str(duration),
+                "-vf", vf,
+                "-r", str(fps),
+                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-an",
+                str(out_path),
+            ]
+
     if clip_dur < duration:
-        # Clip corto: loopeamos antes de recortar
-        _ffmpeg(
-            "-stream_loop", "-1",
-            "-i", video_path,
-            "-t", str(duration),
-            "-vf", vf,
-            "-r", str(fps),
-            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-            "-an",
-            str(out_path),
-            desc=f"escena {scene_idx} (stock video, loop)",
-        )
+        cmd = _build_ffmpeg_cmd(["-stream_loop", "-1", "-i", video_path])
+        label = f"escena {scene_idx} (loop{'+ sticker' if sticker else ''})"
     else:
-        _ffmpeg(
-            "-ss", str(start_offset),
-            "-i", video_path,
-            "-t", str(duration),
-            "-vf", vf,
-            "-r", str(fps),
-            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-            "-an",
-            str(out_path),
-            desc=f"escena {scene_idx} (stock video)",
-        )
+        cmd = _build_ffmpeg_cmd(["-ss", str(start_offset), "-i", video_path])
+        label = f"escena {scene_idx} (stock video{'+ sticker' if sticker else ''})"
+
+    _ffmpeg(*cmd, desc=label)
 
 
 
@@ -585,6 +927,85 @@ def _mix_with_music(tts_path: Path, out_path: Path, music_vol: float = 0.10) -> 
         desc="mezcla TTS + música de fondo",
     )
     return out_path
+
+
+# ─── Concat con transiciones xfade ───────────────────────────────────────────
+
+def _concat_with_xfade(clip_paths: list[Path], tmp_dir: Path, fps: int) -> Path:
+    """
+    Concatena clips aplicando transiciones xfade variadas entre cada corte.
+    Offset formula: offset_i = sum(dur[0..i-1]) - i * XFADE_DUR
+    Si xfade falla (FFmpeg antiguo), cae a concat copy silenciosamente.
+    """
+    out = tmp_dir / "concat_xfade.mp4"
+    n   = len(clip_paths)
+
+    if n == 1:
+        shutil.copy(str(clip_paths[0]), str(out))
+        return out
+
+    TRANSITIONS = [
+        "fade", "fadeblack", "dissolve",
+        "wipeleft", "wiperight",
+        "smoothleft", "smoothright",
+        "slideup", "slideleft",
+    ]
+    XFADE_DUR = _XFADE_DUR
+
+    durations = []
+    for p in clip_paths:
+        try:
+            durations.append(_get_audio_duration(str(p)))
+        except Exception:
+            durations.append(5.0)
+
+    input_args: list[str] = []
+    for p in clip_paths:
+        input_args.extend(["-i", str(p)])
+
+    filter_parts: list[str] = []
+    prev_label   = "[0:v]"
+    cumulative   = 0.0
+
+    for i in range(1, n):
+        cumulative += durations[i - 1]
+        offset      = max(0.1, cumulative - i * XFADE_DUR)
+        trans       = random.choice(TRANSITIONS)
+        new_label   = f"[v{i}]"
+        filter_parts.append(
+            f"{prev_label}[{i}:v]xfade=transition={trans}"
+            f":duration={XFADE_DUR}:offset={offset:.3f}{new_label}"
+        )
+        prev_label = new_label
+
+    used = [p.split("transition=")[1].split(":")[0] for p in filter_parts]
+    logger.info(f"  xfade: {n} clips → transiciones: {used}")
+
+    try:
+        _ffmpeg(
+            *input_args,
+            "-filter_complex", ";".join(filter_parts),
+            "-map", prev_label,
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            str(out),
+            desc="concat xfade",
+        )
+        return out
+    except RuntimeError as e:
+        logger.warning(f"xfade falló ({type(e).__name__}) — usando concat copy")
+        concat_txt = tmp_dir / "concat_fb.txt"
+        concat_txt.write_text(
+            "\n".join(f"file '{p.as_posix()}'" for p in clip_paths),
+            encoding="utf-8",
+        )
+        fallback = tmp_dir / "concat_copy.mp4"
+        _ffmpeg(
+            "-f", "concat", "-safe", "0", "-i", str(concat_txt),
+            "-c", "copy", str(fallback),
+            desc="concat copy fallback",
+        )
+        return fallback
 
 
 # ─── ASS Offset Helper ────────────────────────────────────────────────────────
@@ -656,10 +1077,19 @@ def assemble_video(
 
     # ── 1. Duración del audio ──────────────────────────────────────────────────
     total_duration = _get_audio_duration(str(audio_path))
-    scene_duration = total_duration / len(valid_images)
+
+    # Compensar xfade: cada transición resta XFADE_DUR del timeline total.
+    # Sin compensación el outro aparece N*0.4s antes de que acabe la narración.
+    # Fórmula: scene_duration = TTS/n_scenes + XFADE_DUR garantiza que el
+    # offset del xfade scene→outro caiga exactamente en t=total_duration.
+    scene_duration = total_duration / len(valid_images) + _XFADE_DUR
+
+    # Elegir tema visual para este video
+    theme = random.choice(_VIDEO_THEMES)
     logger.info(
         f"Audio: {total_duration:.1f}s | "
-        f"{len(valid_images)} escenas x {scene_duration:.1f}s"
+        f"{len(valid_images)} escenas x {scene_duration:.1f}s | "
+        f"tema: {theme['name']}"
     )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="csf_video_"))
@@ -751,7 +1181,7 @@ def assemble_video(
 
         question    = script.get("pregunta", "Y tu, que harias en mi lugar?")
         last_img    = valid_images[-1] if valid_images else None
-        outro_img   = _render_outro_png(question, last_img)
+        outro_img   = _render_outro_png(question, last_img, theme=theme)
         outro_png   = tmp_dir / "outro.png"
         outro_clip  = tmp_dir / "clip_outro.mp4"
         outro_img.save(str(outro_png), "PNG")
@@ -774,22 +1204,11 @@ def assemble_video(
         clip_paths.append(outro_clip)
         logger.info(f"Outro listo en {time.time()-t0:.1f}s")
 
-        # ── 5. Concat ──────────────────────────────────────────────────────────
-        logger.info("Concatenando clips...")
+        # ── 5. Concat con transiciones xfade ──────────────────────────────────
+        logger.info("Concatenando clips con transiciones xfade...")
         t0         = time.time()
-        concat_txt = tmp_dir / "concat.txt"
-        concat_txt.write_text(
-            "\n".join(f"file '{p.as_posix()}'" for p in clip_paths),
-            encoding="utf-8"
-        )
-        concat_mp4 = tmp_dir / "concat.mp4"
-        _ffmpeg(
-            "-f", "concat", "-safe", "0", "-i", str(concat_txt),
-            "-c", "copy",
-            str(concat_mp4),
-            desc="concat",
-        )
-        logger.info(f"Concat en {time.time()-t0:.1f}s")
+        concat_mp4 = _concat_with_xfade(clip_paths, tmp_dir, config.FPS)
+        logger.info(f"Concat con transiciones en {time.time()-t0:.1f}s")
 
         # ── 6. Mezclar audio (TTS + música) y añadir ASS ───────────────────────
         logger.info("Mezclando audio e inyectando subtítulos dinámicos ASS...")
@@ -800,11 +1219,12 @@ def assemble_video(
         music_vol   = getattr(config, "MUSIC_VOLUME", 0.10)
         final_audio_raw = _mix_with_music(audio_path, mixed_audio, music_vol=music_vol)
 
-        # Añadir silencio al final para cubrir el outro (sin cortar el video)
+        # Padding de audio: outro_dur + XFADE_DUR para que el silencio cubra
+        # el overlap del último xfade (scene→outro) sin cortar el CTA.
         padded_audio = tmp_dir / "audio_padded.aac"
         _ffmpeg(
             "-i", str(final_audio_raw),
-            "-af", f"apad=pad_dur={outro_dur}",
+            "-af", f"apad=pad_dur={outro_dur + _XFADE_DUR}",
             "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
             str(padded_audio),
             desc="audio padding outro",
@@ -822,8 +1242,19 @@ def assemble_video(
         )
         final_audio = audio_delayed
 
+        # Estilo visual aleatorio para este video (color grade + grain)
+        grade  = random.choice(_COLOR_GRADES)
+        grain  = random.choice(_GRAIN_LEVELS)
+        grade_label = grade[:45] if grade else "neutro"
+        logger.info(f"Estilo visual: grade='{grade_label}' | grain={grain}")
+
         ass_path  = audio_path.with_suffix(".ass")
         filters   = []          # lista de filtros vf que se unirán con coma
+        if grade:
+            filters.append(grade)
+        if grain > 0:
+            filters.append(f"noise=c0s={grain}:c0f=t+u")
+        filters.append("vignette=angle=PI/5:mode=forward")
         temp_subs = tmp_dir / "subtitles.ass"
 
         if ass_path.exists():
@@ -838,22 +1269,26 @@ def assemble_video(
         else:
             logger.warning("Sin archivo ASS — video sin subtítulos")
 
-        # Watermark: nombre del canal esquina superior derecha
-        channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
-        font_fp  = _find_font()
+        # Watermark: posición y tamaño según tema visual
+        channel   = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
+        wm_x      = theme["wm_x"]
+        wm_y      = theme["wm_y"]
+        wm_size   = theme["wm_size"]
+        wm_alpha  = 0.55
+        font_fp   = _find_font()
         if font_fp:
             safe_font = font_fp.replace("\\", "/")
             if len(safe_font) >= 2 and safe_font[1] == ":":
                 safe_font = safe_font[0] + "\\:" + safe_font[2:]
             wm = (f"drawtext=text='{channel}':"
                   f"fontfile='{safe_font}':"
-                  f"fontsize=36:fontcolor=white@0.55:"
-                  f"x=w-tw-28:y=28:"
+                  f"fontsize={wm_size}:fontcolor=white@{wm_alpha}:"
+                  f"x={wm_x}:y={wm_y}:"
                   f"shadowcolor=black@0.75:shadowx=2:shadowy=2")
         else:
             wm = (f"drawtext=text='{channel}':"
-                  f"fontsize=36:fontcolor=white@0.55:"
-                  f"x=w-tw-28:y=28:"
+                  f"fontsize={wm_size}:fontcolor=white@{wm_alpha}:"
+                  f"x={wm_x}:y={wm_y}:"
                   f"shadowcolor=black@0.75:shadowx=2:shadowy=2")
         filters.append(wm)
 

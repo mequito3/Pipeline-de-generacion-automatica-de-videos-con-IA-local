@@ -13,6 +13,7 @@ Ejemplo de uso:
 
 import asyncio
 import logging
+import random
 import sys
 import tempfile
 import time
@@ -39,6 +40,449 @@ EDGE_VOICES_MALE = [
 
 # Lista completa como fallback
 EDGE_VOICES_ES_LATAM = EDGE_VOICES_FEMALE + EDGE_VOICES_MALE
+
+# ─── Paletas de subtítulos por emoción ───────────────────────────────────────
+# Formato ASS: &H00BBGGRR& (Alpha=00 = completamente opaco)
+# Cada emoción tiene 3 colores:
+#   active  → la palabra que se está diciendo en este momento
+#   context → las otras palabras del mismo grupo (en pantalla al mismo tiempo)
+#   tension → palabras de alta carga dramática (traición, mentira, jamás…)
+
+SUBTITLE_SCHEMES: dict[str, dict] = {
+    # ── TRAICIÓN / INFIDELIDAD ── 5 variantes ────────────────────────────────
+    "traicion": {
+        "name":    "traicion_rojo_vivo",
+        "active":  r"\c&H000000FF&",   # rojo puro
+        "context": r"\c&H006688FF&",   # salmón suave
+        "tension": r"\c&H000000CC&",   # carmesí oscuro
+    },
+    "traicion_2": {
+        "name":    "traicion_rojo_sangre",
+        "active":  r"\c&H000000CC&",   # rojo oscuro
+        "context": r"\c&H00AAAAAA&",   # gris medio
+        "tension": r"\c&H000000FF&",   # rojo brillante
+    },
+    "traicion_3": {
+        "name":    "traicion_naranja_rabia",
+        "active":  r"\c&H000066FF&",   # naranja intenso
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "traicion_4": {
+        "name":    "traicion_coral",
+        "active":  r"\c&H00507FFF&",   # coral
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "traicion_5": {
+        "name":    "traicion_rosa_herida",
+        "active":  r"\c&H00CC44FF&",   # rosa intenso
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000CC&",   # rojo oscuro
+    },
+
+    # ── SHOCK / DESCUBRIMIENTO ── 5 variantes ────────────────────────────────
+    "shock": {
+        "name":    "shock_amarillo_viral",
+        "active":  r"\c&H0000FFFF&",   # amarillo brillante
+        "context": r"\c&H00FFFFFF&",   # blanco puro
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "shock_2": {
+        "name":    "shock_amarillo_neon",
+        "active":  r"\c&H0000EEFF&",   # amarillo neón
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "shock_3": {
+        "name":    "shock_blanco_pop",
+        "active":  r"\c&H00FFFFFF&",   # blanco puro
+        "context": r"\c&H00AAAAAA&",   # gris
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "shock_4": {
+        "name":    "shock_dorado_revelacion",
+        "active":  r"\c&H0000D7FF&",   # dorado
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "shock_5": {
+        "name":    "shock_cyan_frio",
+        "active":  r"\c&H00FFFF00&",   # cyan helado
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H000000FF&",   # rojo para tensión
+    },
+
+    # ── TRISTEZA / ABANDONO ── 5 variantes ───────────────────────────────────
+    "tristeza": {
+        "name":    "tristeza_azul_cielo",
+        "active":  r"\c&H00FF8C00&",   # azul cielo
+        "context": r"\c&H00CCCCCC&",   # gris claro
+        "tension": r"\c&H00FF0000&",   # azul profundo
+    },
+    "tristeza_2": {
+        "name":    "tristeza_azul_marino",
+        "active":  r"\c&H00FF4400&",   # azul marino
+        "context": r"\c&H00BBBBBB&",   # gris
+        "tension": r"\c&H00FF0000&",   # azul profundo
+    },
+    "tristeza_3": {
+        "name":    "tristeza_lila",
+        "active":  r"\c&H00EE88CC&",   # lila suave
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H00CC0088&",   # violeta
+    },
+    "tristeza_4": {
+        "name":    "tristeza_plata",
+        "active":  r"\c&H00EEEEEE&",   # plata
+        "context": r"\c&H00999999&",   # gris oscuro
+        "tension": r"\c&H00FF8C00&",   # azul cielo
+    },
+    "tristeza_5": {
+        "name":    "tristeza_turquesa",
+        "active":  r"\c&H00D4A000&",   # turquesa
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H00FF0000&",   # azul profundo
+    },
+
+    # ── VENGANZA / CONFRONTACIÓN ── 5 variantes ──────────────────────────────
+    "venganza": {
+        "name":    "venganza_naranja_fuego",
+        "active":  r"\c&H000066FF&",   # naranja fuego
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "venganza_2": {
+        "name":    "venganza_rojo_naranja",
+        "active":  r"\c&H000033FF&",   # rojo-naranja
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H000000FF&",   # rojo puro
+    },
+    "venganza_3": {
+        "name":    "venganza_dorado_triunfo",
+        "active":  r"\c&H0000D7FF&",   # dorado
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000066FF&",   # naranja
+    },
+    "venganza_4": {
+        "name":    "venganza_verde_victoria",
+        "active":  r"\c&H0000FF66&",   # verde lima
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "venganza_5": {
+        "name":    "venganza_amarillo_fuego",
+        "active":  r"\c&H0000FFFF&",   # amarillo
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+
+    # ── MIEDO / TERROR / OSCURO ── 5 variantes ───────────────────────────────
+    "miedo": {
+        "name":    "miedo_violeta_electrico",
+        "active":  r"\c&H00CC0088&",   # violeta eléctrico
+        "context": r"\c&H00BBBBBB&",   # gris medio
+        "tension": r"\c&H00FF00FF&",   # magenta
+    },
+    "miedo_2": {
+        "name":    "miedo_magenta_oscuro",
+        "active":  r"\c&H00FF00FF&",   # magenta puro
+        "context": r"\c&H00AAAAAA&",   # gris
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "miedo_3": {
+        "name":    "miedo_morado_profundo",
+        "active":  r"\c&H00880080&",   # morado
+        "context": r"\c&H00CCCCCC&",   # gris claro
+        "tension": r"\c&H00FF00FF&",   # magenta
+    },
+    "miedo_4": {
+        "name":    "miedo_rojo_tenue",
+        "active":  r"\c&H003333CC&",   # rojo tenue / granada
+        "context": r"\c&H00999999&",   # gris oscuro
+        "tension": r"\c&H000000FF&",   # rojo puro
+    },
+    "miedo_5": {
+        "name":    "miedo_cyan_frio",
+        "active":  r"\c&H00FFEE00&",   # cyan frío
+        "context": r"\c&H00888888&",   # gris oscuro
+        "tension": r"\c&H00CC0088&",   # violeta
+    },
+
+    # ── HUMILLACIÓN / VERGÜENZA ── 5 variantes ───────────────────────────────
+    "humillacion": {
+        "name":    "humillacion_rosa_intenso",
+        "active":  r"\c&H00AA00FF&",   # rosa fuerte
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "humillacion_2": {
+        "name":    "humillacion_fucsia",
+        "active":  r"\c&H00CC00DD&",   # fucsia
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "humillacion_3": {
+        "name":    "humillacion_lila_plata",
+        "active":  r"\c&H00EE88AA&",   # lila rosado
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H00AA00FF&",   # rosa
+    },
+    "humillacion_4": {
+        "name":    "humillacion_naranja_vergüenza",
+        "active":  r"\c&H000088FF&",   # naranja suave
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "humillacion_5": {
+        "name":    "humillacion_blanco_frio",
+        "active":  r"\c&H00FFFFFF&",   # blanco puro
+        "context": r"\c&H00AAAAAA&",   # gris
+        "tension": r"\c&H00AA00FF&",   # rosa
+    },
+
+    # ── SECRETO / MISTERIO ── 5 variantes ────────────────────────────────────
+    "secreto": {
+        "name":    "secreto_cyan_frio",
+        "active":  r"\c&H00FFFF00&",   # cyan
+        "context": r"\c&H00999999&",   # gris oscuro
+        "tension": r"\c&H00880080&",   # morado
+    },
+    "secreto_2": {
+        "name":    "secreto_verde_matrix",
+        "active":  r"\c&H0000FF00&",   # verde neón
+        "context": r"\c&H00666666&",   # gris oscuro
+        "tension": r"\c&H0000CC00&",   # verde oscuro
+    },
+    "secreto_3": {
+        "name":    "secreto_plata_hielo",
+        "active":  r"\c&H00F0F0F0&",   # plata casi blanco
+        "context": r"\c&H00888888&",   # gris medio
+        "tension": r"\c&H00FFFF00&",   # cyan
+    },
+    "secreto_4": {
+        "name":    "secreto_turquesa_oscuro",
+        "active":  r"\c&H00AA8800&",   # turquesa oscuro
+        "context": r"\c&H00AAAAAA&",   # gris
+        "tension": r"\c&H00CC0088&",   # violeta
+    },
+    "secreto_5": {
+        "name":    "secreto_indigo",
+        "active":  r"\c&H00FF2200&",   # índigo
+        "context": r"\c&H00BBBBBB&",   # gris
+        "tension": r"\c&H00FF00FF&",   # magenta
+    },
+
+    # ── FAMILIA / DRAMA FAMILIAR ── 5 variantes ──────────────────────────────
+    "familia": {
+        "name":    "familia_dorado_calido",
+        "active":  r"\c&H0000D7FF&",   # dorado
+        "context": r"\c&H00DDDDFF&",   # crema
+        "tension": r"\c&H000040FF&",   # rojo-naranja
+    },
+    "familia_2": {
+        "name":    "familia_ambar",
+        "active":  r"\c&H0000AAFF&",   # ámbar
+        "context": r"\c&H00EEEEEE&",   # blanco cálido
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "familia_3": {
+        "name":    "familia_terracota",
+        "active":  r"\c&H003366CC&",   # terracota
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "familia_4": {
+        "name":    "familia_verde_oliva",
+        "active":  r"\c&H002288AA&",   # verde oliva
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H000040FF&",   # naranja-rojo
+    },
+    "familia_5": {
+        "name":    "familia_marron_calido",
+        "active":  r"\c&H004488CC&",   # marrón cálido
+        "context": r"\c&H00DDDDDD&",   # gris
+        "tension": r"\c&H000066FF&",   # naranja
+    },
+
+    # ── TRABAJO / JEFE / LABORAL ── 5 variantes ──────────────────────────────
+    "trabajo": {
+        "name":    "trabajo_verde_neon",
+        "active":  r"\c&H0000FF00&",   # verde neón
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "trabajo_2": {
+        "name":    "trabajo_azul_corporativo",
+        "active":  r"\c&H00FF6600&",   # azul corporativo
+        "context": r"\c&H00DDDDDD&",   # gris
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "trabajo_3": {
+        "name":    "trabajo_blanco_frio",
+        "active":  r"\c&H00FFFFFF&",   # blanco
+        "context": r"\c&H00999999&",   # gris oscuro
+        "tension": r"\c&H0000FF00&",   # verde
+    },
+    "trabajo_4": {
+        "name":    "trabajo_cyan_tech",
+        "active":  r"\c&H00FFDD00&",   # cyan tech
+        "context": r"\c&H00AAAAAA&",   # gris
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+    "trabajo_5": {
+        "name":    "trabajo_amarillo_alerta",
+        "active":  r"\c&H0000FFFF&",   # amarillo
+        "context": r"\c&H00CCCCCC&",   # gris
+        "tension": r"\c&H000066FF&",   # naranja
+    },
+
+    # ── NEUTRO / REFLEXIÓN ── 5 variantes ────────────────────────────────────
+    "neutro": {
+        "name":    "neutro_blanco_limpio",
+        "active":  r"\c&H00FFFFFF&",   # blanco puro
+        "context": r"\c&H00CCCCCC&",   # gris claro
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "neutro_2": {
+        "name":    "neutro_plata",
+        "active":  r"\c&H00EEEEEE&",   # plata
+        "context": r"\c&H00AAAAAA&",   # gris medio
+        "tension": r"\c&H0000FFFF&",   # amarillo
+    },
+    "neutro_3": {
+        "name":    "neutro_cyan_suave",
+        "active":  r"\c&H00EEBB00&",   # cyan suave
+        "context": r"\c&H00DDDDDD&",   # gris claro
+        "tension": r"\c&H000066FF&",   # naranja
+    },
+    "neutro_4": {
+        "name":    "neutro_verde_suave",
+        "active":  r"\c&H0088EE00&",   # verde suave
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H0000A5FF&",   # naranja
+    },
+    "neutro_5": {
+        "name":    "neutro_limon",
+        "active":  r"\c&H0000FFCC&",   # limón
+        "context": r"\c&H00FFFFFF&",   # blanco
+        "tension": r"\c&H000000FF&",   # rojo
+    },
+}
+
+# Lista plana para random.choice() cuando no hay texto disponible
+_SCHEMES_LIST: list[dict] = list(SUBTITLE_SCHEMES.values())
+
+# ─── Palabras clave por emoción (para detección automática) ──────────────────
+_EMOTION_KEYWORDS: dict[str, list[str]] = {
+    "traicion": [
+        "traición", "traicionó", "traicioné", "traicionada", "traicionado",
+        "traicion", "traiciono", "traicione",  # versiones sin acento (LLMs a veces omiten)
+        "infiel", "infidelidad", "engaño", "engañó", "engañaba", "engañé",
+        "engano", "engano", "mentira", "mintió", "mintio", "amante", "cuernos",
+        "celular", "mensajes", "fotos", "la otra", "el otro", "otra mujer", "otro hombre",
+        "se veían", "los vi juntos", "llevaban meses", "llevaban tiempo",
+    ],
+    "tristeza": [
+        "llorando", "lloré", "lloró", "lloraba", "lágrimas", "llanto",
+        "soledad", "solo", "sola", "perdí", "perdió", "abandono",
+        "abandonó", "abandoné", "se fue", "partió", "ya no estaba",
+        "vacío", "vacía", "dolor", "duele", "destrozada", "destrozado",
+        "me rompió", "extraño", "echo de menos", "ya no regresó",
+        "se acabó todo", "me quedé sola", "me quedé solo",
+    ],
+    "miedo": [
+        "miedo", "terror", "aterrada", "aterrado", "asustada", "asustado",
+        "escondía", "ocultaba", "amenazó", "amenaza", "peligro",
+        "horrible", "pesadilla", "tenía miedo", "no podía dormir",
+        "algo oscuro", "lo que guardaba", "nunca me dijo",
+        "sin que yo supiera", "a mis espaldas",
+    ],
+    "venganza": [
+        "venganza", "me vengué", "confronté", "lo expuse", "la expuse",
+        "revancha", "justicia", "lo conté todo", "se lo dije en su cara",
+        "no se lo esperaba", "les conté a todos", "lo publiqué",
+        "le dije la verdad", "se acabó", "lo pagó caro",
+        "le hice lo mismo", "se enteraron todos",
+    ],
+    "humillacion": [
+        "humillación", "humillada", "humillado", "vergüenza", "ridícula",
+        "ridículo", "burla", "se burlaron", "risa", "se rieron",
+        "delante de todos", "en público", "me avergonzó", "pasé vergüenza",
+        "quedé como", "me dejaron en ridículo", "todos lo vieron",
+        "frente a todos",
+    ],
+    "secreto": [
+        "secreto", "doble vida", "nadie sabía", "a mis espaldas",
+        "todo ese tiempo", "todo ese tiempo lo estuvo",
+        "nunca imaginé que", "identidad falsa", "nombre falso",
+        "mentía sobre quién era", "ocultó su verdadera", "vivía una mentira",
+        "llevaba años ocultando", "llevaba meses ocultando",
+    ],
+    "familia": [
+        "madre", "padre", "mamá", "papá", "hermano", "hermana",
+        "familia", "familiar", "tío", "tía", "abuela", "abuelo",
+        "suegra", "suegro", "cuñado", "cuñada", "padrastro", "madrastra",
+        "mis padres", "mi familia", "de mi propia sangre",
+        "los de mi casa",
+    ],
+    "trabajo": [
+        "jefe", "jefa", "trabajo", "empresa", "oficina", "compañero",
+        "compañera", "colega", "ascenso", "despido", "despedido",
+        "despedida", "me corrieron", "me robaron la idea",
+        "acoso laboral", "recursos humanos", "me reportaron",
+    ],
+}
+
+
+def _detect_emotion(text: str) -> str:
+    """
+    Detecta la emoción dominante de un script para seleccionar la paleta visual.
+
+    Puntúa cada categoría base contando coincidencias de palabras clave.
+    En caso de empate usa el orden de impacto visual.
+
+    Returns:
+        Categoría base de emoción (sin sufijo numérico).
+    """
+    text_lower = text.lower()
+    scores: dict[str, int] = {e: 0 for e in _EMOTION_KEYWORDS}
+
+    for emotion, keywords in _EMOTION_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                scores[emotion] += 1
+
+    # Orden de desempate por impacto visual (primero = prioridad mayor)
+    PRIORITY = ["traicion", "shock", "miedo", "venganza",
+                 "tristeza", "humillacion", "secreto", "familia", "trabajo"]
+
+    best_score = max(scores.values())
+    if best_score == 0:
+        return "shock"
+
+    for emotion in PRIORITY:
+        if scores.get(emotion, 0) == best_score:
+            logger.debug(f"Emoción detectada: '{emotion}' (scores={scores})")
+            return emotion
+
+    return "shock"
+
+
+def get_subtitle_scheme(text: str) -> dict:
+    """
+    Detecta la emoción dominante y elige aleatoriamente entre las 5 variantes
+    de esa emoción para dar variedad visual entre videos del mismo tipo.
+    """
+    emotion = _detect_emotion(text)
+    # Recoger todas las variantes de esa emoción (base + _2 … _5)
+    variants = [
+        s for key, s in SUBTITLE_SCHEMES.items()
+        if key == emotion or key.startswith(f"{emotion}_")
+    ]
+    scheme = random.choice(variants) if variants else SUBTITLE_SCHEMES.get(emotion, _SCHEMES_LIST[0])
+    logger.info(f"Paleta subtítulos: '{scheme['name']}' (emoción: '{emotion}', variante aleatoria de {len(variants)})")
+    return scheme
 
 
 # ─── Detección automática de género del narrador ──────────────────────────────
@@ -233,7 +677,7 @@ def format_ass_time(seconds: float) -> str:
     return f"{h:01d}:{m:02d}:{s:05.2f}"
 
 
-def _write_ass_file(words_data: list, output_path: Path, audio_duration: float = 0.0):
+def _write_ass_file(words_data: list, output_path: Path, audio_duration: float = 0.0, scheme: dict | None = None):
     """
     Genera ASS con efecto KARAOKE + POP (estilo CapCut viral 2025).
 
@@ -250,9 +694,13 @@ def _write_ass_file(words_data: list, output_path: Path, audio_duration: float =
     if not words_data:
         return
 
-    font_size     = getattr(config, "SUBTITLE_FONT_SIZE", 88)
-    margin_v      = getattr(config, "SUBTITLE_MARGIN_V", 280)
+    _scheme       = scheme or random.choice(_SCHEMES_LIST)
+    base_size     = getattr(config, "SUBTITLE_FONT_SIZE", 88)
+    font_size     = base_size + random.choice([-4, -2, 0, 0, 2, 4])
+    margin_v_base = getattr(config, "SUBTITLE_MARGIN_V", 800)
+    margin_v      = margin_v_base + random.choice([-150, -75, 0, 0, 75, 150])
     subtitle_font = getattr(config, "SUBTITLE_FONT", "Impact")
+    logger.debug(f"Subtítulos: esquema '{_scheme['name']}' | font_size={font_size} | margin_v={margin_v}")
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -279,10 +727,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         "destruyó", "destruí", "perdí", "perdió",
     }
 
-    # Colores ASS: &H00BBGGRR& (AA=00 = completamente opaco)
-    COL_YELLOW = r"\c&H0000FFFF&"  # amarillo — palabra activa
-    COL_RED    = r"\c&H000000FF&"  # rojo     — palabras de tensión dramática
-    COL_WHITE  = r"\c&H00FFFFFF&"  # blanco   — palabras de contexto en el mismo grupo
+    # Colores ASS: &H00BBGGRR& (AA=00 = completamente opaco) — elegidos del esquema del video
+    COL_YELLOW = _scheme["active"]   # palabra activa
+    COL_RED    = _scheme["tension"]  # palabras de tensión dramática
+    COL_WHITE  = _scheme["context"]  # palabras de contexto del mismo grupo
 
     # Bounce ligero cuando la palabra activa cambia (110% → 100% en 80ms)
     BOUNCE = r"\fscx110\fscy110\t(0,80,\fscx100\fscy100)"
@@ -497,7 +945,7 @@ def _add_dramatic_pauses(text: str) -> str:
     return text
 
 
-async def _edge_tts_generate(text: str, output_mp3: Path, voice: str) -> None:
+async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str = "+3%", pitch: str = "-4Hz") -> None:
     """
     Genera audio con edge-tts y construye el archivo ASS de subtítulos.
 
@@ -518,8 +966,8 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str) -> None:
     communicate = edge_tts.Communicate(
         prepared_text,
         voice,
-        rate="+3%",
-        pitch="-4Hz",
+        rate=rate,
+        pitch=pitch,
         boundary="WordBoundary",
     )
 
@@ -600,7 +1048,7 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str) -> None:
         audio_dur = 0.0
 
     ass_path = output_mp3.with_suffix(".ass")
-    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur)
+    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur, scheme=get_subtitle_scheme(text))
     if timed_words:
         logger.info(f"ASS generado: {len(timed_words)} palabras sincronizadas")
 
@@ -636,17 +1084,29 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     if configured_voice and configured_voice not in ordered:
         ordered = [configured_voice] + ordered
 
+    # Mezclar orden del pool para variar la voz entre videos
+    pool_end = len(EDGE_VOICES_FEMALE) if gender != "male" else len(EDGE_VOICES_MALE)
+    front = ordered[:pool_end]
+    random.shuffle(front)
+    ordered = front + ordered[pool_end:]
+
+    # Velocidad y tono ligeramente distintos cada video
+    rate_pct = random.choice([-2, 0, 3, 5, 8])
+    pitch_hz = random.choice([-6, -4, -2, 0, 2])
+    rate  = f"+{rate_pct}%" if rate_pct >= 0 else f"{rate_pct}%"
+    pitch = f"{pitch_hz}Hz" if pitch_hz < 0 else f"+{pitch_hz}Hz"
+
     gender_label = "MASCULINO" if gender == "male" else "FEMENINO"
     logger.info(
         f"Narrador detectado: {gender_label} → voz principal: '{ordered[0]}' "
-        f"(fallbacks: {ordered[1:3]})"
+        f"| rate={rate} pitch={pitch} (fallbacks: {ordered[1:3]})"
     )
 
     last_error = None
     for voice in ordered:
         try:
             logger.info(f"edge-tts: probando '{voice}'...")
-            asyncio.run(_edge_tts_generate(text, output_path, voice))
+            asyncio.run(_edge_tts_generate(text, output_path, voice, rate=rate, pitch=pitch))
             if output_path.exists() and output_path.stat().st_size > 0:
                 logger.info(f"edge-tts: audio OK con voz '{voice}'")
                 return str(output_path)
@@ -660,127 +1120,6 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
         f"Último error: {last_error}\n"
         "Verifica conexión a internet o instala: python -m pip install edge-tts"
     )
-
-
-# ─── Backend VoxCPM — clonación de voz propia ────────────────────────────────
-
-
-def _voxcpm_generate(text: str, output_path: Path, voice_sample: str) -> str:
-    """
-    Genera audio clonando una voz de referencia con VoxCPM2.
-
-    Estrategia de VRAM (RTX 500 Ada, 8GB):
-    - Carga VoxCPM (load_denoiser=False ahorra ~1GB), genera WAV, libera VRAM
-    - Luego stable-ts/faster-whisper corren sin competir por GPU
-    """
-    try:
-        import gc
-        import soundfile as sf
-        import torch
-        from voxcpm import VoxCPM
-    except ImportError as e:
-        raise RuntimeError(
-            f"VoxCPM no instalado: {e}\n"
-            "Ejecuta: pip install voxcpm soundfile"
-        )
-
-    sample_path = Path(voice_sample)
-    if not sample_path.exists():
-        raise FileNotFoundError(
-            f"Muestra de voz no encontrada: {voice_sample}\n"
-            "Configura VOXCPM_VOICE_SAMPLE_MALE en tu .env"
-        )
-
-    # Liberar VRAM de otros modelos cacheados antes de cargar VoxCPM
-    global _stable_ts_model, _faster_whisper_model
-    if _stable_ts_model is not None:
-        del _stable_ts_model
-        _stable_ts_model = None
-    if _faster_whisper_model is not None:
-        del _faster_whisper_model
-        _faster_whisper_model = None
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    logger.info("VoxCPM: cargando modelo openbmb/VoxCPM2 (primera vez descarga ~8GB)...")
-    try:
-        model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
-    except Exception as e:
-        raise RuntimeError(f"VoxCPM: falló al cargar modelo — {e}")
-
-    logger.info(f"VoxCPM: generando con muestra '{sample_path.name}'...")
-    try:
-        wav = model.generate(
-            text=text,
-            reference_wav_path=str(sample_path),
-        )
-        sample_rate = model.tts_model.sample_rate
-    except Exception as e:
-        raise RuntimeError(f"VoxCPM: error en síntesis — {e}")
-    finally:
-        # Liberar VRAM inmediatamente para que Whisper pueda usar GPU después
-        del model
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logger.debug("VoxCPM: VRAM liberada")
-
-    # Guardar WAV temporal → convertir a MP3
-    wav_path = output_path.with_suffix(".wav")
-    try:
-        sf.write(str(wav_path), wav, sample_rate)
-        logger.info(f"VoxCPM: WAV guardado ({wav_path.stat().st_size // 1024}KB)")
-
-        try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_wav(str(wav_path))
-            audio.export(str(output_path), format="mp3", bitrate="192k")
-        except Exception:
-            # Si falla la conversión, usar WAV directamente
-            wav_path.rename(output_path.with_suffix(".wav"))
-            return str(output_path.with_suffix(".wav"))
-    finally:
-        if wav_path.exists():
-            wav_path.unlink(missing_ok=True)
-
-    logger.info(f"VoxCPM: MP3 generado → {output_path.name}")
-    return str(output_path)
-
-
-def _voxcpm_generate_with_subtitles(text: str, output_path: Path, voice_sample: str) -> str:
-    """Genera audio con VoxCPM y luego el ASS de subtítulos sincronizados."""
-    result_path = Path(_voxcpm_generate(text, output_path, voice_sample))
-
-    # Timestamps — stable-ts o faster-whisper (VRAM ya libre tras VoxCPM)
-    timed_words = _get_stable_ts_word_timestamps(result_path)
-    if not timed_words:
-        timed_words = _get_whisper_word_timestamps(result_path)
-
-    if not timed_words:
-        # Fallback uniforme
-        try:
-            from pydub import AudioSegment
-            dur = len(AudioSegment.from_mp3(str(result_path))) / 1000.0
-        except Exception:
-            dur = 45.0
-        words = text.split()
-        w_dur = dur / max(1, len(words))
-        timed_words = [(w, 0.3 + i * w_dur, w_dur) for i, w in enumerate(words)]
-
-    timed_words = _fix_word_timings(timed_words)
-
-    try:
-        from pydub import AudioSegment
-        audio_dur = len(AudioSegment.from_mp3(str(result_path))) / 1000.0
-    except Exception:
-        audio_dur = 0.0
-
-    ass_path = result_path.with_suffix(".ass")
-    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur)
-    logger.info(f"VoxCPM: ASS generado ({len(timed_words)} palabras)")
-
-    return str(result_path)
 
 
 # ─── Backend pyttsx3 ──────────────────────────────────────────────────────────
@@ -931,27 +1270,22 @@ def list_voices() -> list[dict]:
 
 
 def generate_audio(
-    text: str, output_path: str | None = None, gender: str = "auto"
+    text: str, output_path: str | None = None, gender: str = "auto",
+    narrator_hint: str = "",
 ) -> str:
     """
     Convierte texto en español a audio MP3 con voz acorde al género del narrador.
 
-    Elige el backend según TTS_BACKEND en .env:
-      - "edge"    → edge-tts neural (recomendado, gratis, necesita internet)
-      - "pyttsx3" → Windows SAPI (offline, necesita voz española en Windows)
+    TTS_BACKEND en .env:
+      - "edge"     → Microsoft Edge TTS neural (gratis, necesita internet)
+      - "pyttsx3"  → Windows SAPI (offline)
 
     Args:
-        text:        Texto en español a narrar
-        output_path: Ruta de salida .mp3. Si es None, genera en output/
-        gender:      "female" | "male" | "auto" (auto detecta del texto)
-                     Viene del campo narrator_gender del script generado por Ollama.
-
-    Returns:
-        Path absoluto del archivo MP3 generado
-
-    Example:
-        >>> path = generate_audio("Me quedé sola...", "output/narration.mp3", gender="female")
-        >>> path = generate_audio("Me quedé solo...", "output/narration.mp3", gender="male")
+        text:          Texto en español a narrar
+        output_path:   Ruta de salida .mp3. Si es None, genera en output/
+        gender:        "female" | "male" | "auto"
+        narrator_hint: Descripción del narrador para elegir perfil de voz
+                       ej: "joven llorando", "niño feliz", "adulto triste"
     """
     if not text or not text.strip():
         raise ValueError("El texto TTS no puede estar vacío")
@@ -962,35 +1296,23 @@ def generate_audio(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    backend = getattr(config, "TTS_BACKEND", "pyttsx3").lower()
+    backend = getattr(config, "TTS_BACKEND", "edge").lower()
     word_count = len(text.split())
     logger.info(
         f"Generando audio TTS ({word_count} palabras) | backend='{backend}' | gender='{gender}'"
     )
 
     if backend == "edge":
-        male_sample  = getattr(config, "VOXCPM_VOICE_SAMPLE_MALE", "")
-        female_sample = getattr(config, "VOXCPM_VOICE_SAMPLE_FEMALE", "")
-        resolved_gender = gender if gender != "auto" else detect_narrator_gender(text)
-
-        if resolved_gender == "male" and male_sample:
-            logger.info(f"VoxCPM: voz masculina clonada desde '{Path(male_sample).name}'")
-            result = _voxcpm_generate_with_subtitles(text, output_path, male_sample)
-        elif resolved_gender == "female" and female_sample:
-            logger.info(f"VoxCPM: voz femenina clonada desde '{Path(female_sample).name}'")
-            result = _voxcpm_generate_with_subtitles(text, output_path, female_sample)
-        else:
-            result = _generate_with_edge_tts(text, output_path, gender=gender)
+        result = _generate_with_edge_tts(text, output_path, gender=gender)
     else:
         result = _generate_with_pyttsx3(text, output_path)
-        # Mock ASS para pyttsx3
         ass_path = output_path.with_suffix(".ass")
         if output_path.exists():
             dur = get_audio_duration(output_path)
             words = text.split()
             w_dur = dur / max(1, len(words))
             mock_words = _fix_word_timings([(w, i * w_dur, w_dur) for i, w in enumerate(words)])
-            _write_ass_file(mock_words, ass_path, audio_duration=dur)
+            _write_ass_file(mock_words, ass_path, audio_duration=dur, scheme=get_subtitle_scheme(text))
 
     # Log duración
     try:

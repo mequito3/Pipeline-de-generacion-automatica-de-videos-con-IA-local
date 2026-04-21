@@ -271,6 +271,7 @@ def run_factory(topic: str | None = None) -> bool | None:
                 script["script_text"],
                 output_path=str(run_dir / "narration.mp3"),
                 gender=narrator_gender,
+                narrator_hint=script.get("narrator_description", ""),
             )
 
         def _run_images():
@@ -409,7 +410,7 @@ def run_factory(topic: str | None = None) -> bool | None:
                 # Growth agent: pinear comentario + engagement (no crítico)
                 try:
                     logger.info("      Iniciando growth agent post-upload...")
-                    growth_agent.run_growth_session(do_own=True)
+                    growth_agent.run_growth_session(do_own=True, own_video_url=youtube_url)
                 except Exception as e_ga:
                     logger.warning(f"      Growth agent falló (no crítico): {e_ga}")
             else:
