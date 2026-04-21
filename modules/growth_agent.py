@@ -658,18 +658,43 @@ def _mark_commented(log: dict, video_id: str, title: str) -> None:
 # ─── Generadores 100% dinámicos vía Groq ─────────────────────────────────────
 
 async def _groq_call(prompt: str, max_tokens: int) -> str | None:
-    """Llama a Groq y retorna el texto generado. None si falla tras 3 intentos."""
-    api_key = getattr(config, "GROQ_API_KEY", "")
-    if not api_key:
-        return None
-    for attempt in range(3):
+    """Groq primero, OpenAI como fallback de emergencia. None si ambos fallan."""
+    # ── Groq (gratuito) ───────────────────────────────────────────────────────
+    groq_key = getattr(config, "GROQ_API_KEY", "")
+    if groq_key:
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.post(
+                        _GROQ_URL,
+                        headers={"Authorization": f"Bearer {groq_key}"},
+                        json={
+                            "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+                            "messages": [{"role": "user", "content": prompt}],
+                            "max_tokens": max_tokens,
+                            "temperature": 0.95,
+                        },
+                    )
+                    r.raise_for_status()
+                    text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                    if text:
+                        return text
+            except Exception as e:
+                logger.debug(f"Groq intento {attempt + 1}/3: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(3)
+        logger.warning("Growth: Groq falló 3 veces — intentando OpenAI")
+
+    # ── OpenAI (emergencia) ───────────────────────────────────────────────────
+    openai_key = getattr(config, "OPENAI_API_KEY", "")
+    if openai_key:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post(
-                    _GROQ_URL,
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
                     json={
-                        "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+                        "model": getattr(config, "OPENAI_MODEL", "gpt-4o-mini"),
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": max_tokens,
                         "temperature": 0.95,
@@ -678,11 +703,11 @@ async def _groq_call(prompt: str, max_tokens: int) -> str | None:
                 r.raise_for_status()
                 text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
                 if text:
+                    logger.info("Growth: usando OpenAI como fallback")
                     return text
         except Exception as e:
-            logger.debug(f"Groq intento {attempt + 1}/3: {e}")
-            if attempt < 2:
-                await asyncio.sleep(3)
+            logger.warning(f"Growth: OpenAI también falló: {e}")
+
     return None
 
 

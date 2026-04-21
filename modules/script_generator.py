@@ -475,6 +475,51 @@ def _call_groq(
     return content
 
 
+def _call_openai(
+    prompt_user: str,
+    attempt: int,
+    system_prompt: str,
+    max_tokens: int,
+) -> str:
+    """OpenAI como fallback de emergencia cuando Groq falla."""
+    api_key = getattr(config, "OPENAI_API_KEY", "")
+    model   = getattr(config, "OPENAI_MODEL", "gpt-4o-mini")
+
+    logger.info(f"Llamando a OpenAI [{model}] — intento {attempt}")
+    print(f"   Generando con OpenAI ({model})... ", end="", flush=True)
+
+    start_ts = time.time()
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": prompt_user},
+            ],
+            "temperature": 0.8,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=60,
+    )
+
+    elapsed = time.time() - start_ts
+
+    if resp.status_code == 429:
+        raise RuntimeError("OpenAI: cuota o límite de tasa alcanzado — usando Ollama local")
+
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    print(f" {len(content)} chars ({elapsed:.0f}s) — OpenAI")
+    logger.info(f"OpenAI respondió: {len(content)} chars en {elapsed:.0f}s")
+    return content
+
+
 def _call_ollama(
     prompt_user: str,
     attempt: int = 1,
@@ -505,9 +550,19 @@ def _call_ollama(
         except RuntimeError as e:
             logger.warning(str(e))
         except Exception as e:
-            logger.warning(f"Groq error inesperado: {e} — usando Ollama local")
+            logger.warning(f"Groq error inesperado: {e} — intentando OpenAI")
 
-    # ── Ollama local (fallback) ────────────────────────────────────────────────
+    # ── OpenAI (fallback de emergencia) ───────────────────────────────────────
+    openai_key = getattr(config, "OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            return _call_openai(prompt_user, attempt, sys_prompt, max_tokens)
+        except RuntimeError as e:
+            logger.warning(str(e))
+        except Exception as e:
+            logger.warning(f"OpenAI error inesperado: {e} — usando Ollama local")
+
+    # ── Ollama local (último recurso) ─────────────────────────────────────────
     model_name   = model or config.OLLAMA_MODEL
     sys_prompt   = system_prompt or SYSTEM_PROMPT
     # Timeout de pared: matar el stream si tarda más de este tiempo
