@@ -244,12 +244,12 @@ _XFADE_DUR = 0.4
 _VIDEO_THEMES = [
     {   # 1 — Rojo dramático (actual marca GATA CURIOSA)
         "name":    "rojo_drama",
-        "primary": (204,   0,   0),   # rojo canal
-        "accent":  (255, 210,  40),   # dorado
-        "q_color": (255, 220,   0),   # amarillo pregunta
-        "sep_color": (255, 210, 40),  # separador dorado
-        "bg_alpha": 191,              # overlay negro 75%
-        "wm_x": "w-tw-28", "wm_y": "28",       "wm_size": 36,
+        "primary": (204,   0,   0),
+        "accent":  (255, 210,  40),
+        "q_color": (255, 220,   0),
+        "sep_color": (255, 210, 40),
+        "bg_alpha": 191,
+        "wm_x": "w-tw-28", "wm_y": "38", "wm_size": 38,
     },
     {   # 2 — Azul misterio / suspense
         "name":    "azul_misterio",
@@ -258,7 +258,7 @@ _VIDEO_THEMES = [
         "q_color": (0,  230, 255),
         "sep_color": (0, 210, 255),
         "bg_alpha": 200,
-        "wm_x": "28",      "wm_y": "28",       "wm_size": 34,
+        "wm_x": "28",       "wm_y": "38", "wm_size": 38,
     },
     {   # 3 — Negro noir / tenso
         "name":    "negro_noir",
@@ -267,7 +267,7 @@ _VIDEO_THEMES = [
         "q_color": (255, 255, 255),
         "sep_color": (180, 180, 180),
         "bg_alpha": 215,
-        "wm_x": "w-tw-28", "wm_y": "h-th-28",  "wm_size": 38,
+        "wm_x": "w-tw-28", "wm_y": "38", "wm_size": 38,
     },
     {   # 4 — Morado telenovela
         "name":    "morado_drama",
@@ -276,7 +276,7 @@ _VIDEO_THEMES = [
         "q_color": (255,  90, 210),
         "sep_color": (255, 80, 200),
         "bg_alpha": 195,
-        "wm_x": "28",      "wm_y": "h-th-28",  "wm_size": 34,
+        "wm_x": "28",       "wm_y": "38", "wm_size": 38,
     },
     {   # 5 — Verde impacto / viral
         "name":    "verde_impacto",
@@ -285,7 +285,7 @@ _VIDEO_THEMES = [
         "q_color": (255, 235,   0),
         "sep_color": (255, 230, 0),
         "bg_alpha": 185,
-        "wm_x": "(w-tw)/2", "wm_y": "h-th-28", "wm_size": 36,
+        "wm_x": "(w-tw)/2", "wm_y": "38", "wm_size": 38,
     },
 ]
 
@@ -1274,7 +1274,7 @@ def assemble_video(
         wm_x      = theme["wm_x"]
         wm_y      = theme["wm_y"]
         wm_size   = theme["wm_size"]
-        wm_alpha  = 0.55
+        wm_alpha  = 0.75
         font_fp   = _find_font()
         if font_fp:
             safe_font = font_fp.replace("\\", "/")

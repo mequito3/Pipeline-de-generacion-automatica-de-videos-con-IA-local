@@ -388,7 +388,28 @@ def run_factory(topic: str | None = None) -> bool | None:
                 else:
                     logger.info(f"      Video publicado en YouTube (URL no capturada) | Tardó: {step_times['upload']:.0f}s")
 
-                # Notificar por WhatsApp con el enlace del video
+                # ── TikTok upload (mismo video, después de YouTube) ───────────
+                tiktok_url = ""
+                if config.TIKTOK_UPLOAD_ENABLED:
+                    try:
+                        from modules import tiktok_uploader
+                        t0_tt = time.time()
+                        logger.info("      Subiendo a TikTok...")
+                        tiktok_url = tiktok_uploader.upload_to_tiktok(
+                            video_path=video_path,
+                            title=script["title"],
+                            description=script.get("description", ""),
+                            tags=script.get("tags", []),
+                        ) or ""
+                        step_times["tiktok"] = time.time() - t0_tt
+                        if tiktok_url:
+                            logger.info(f"      TikTok publicado → {tiktok_url} | Tardó: {step_times['tiktok']:.0f}s")
+                        else:
+                            logger.warning("      TikTok: no se pudo publicar (no crítico)")
+                    except Exception as e_tt:
+                        logger.warning(f"      TikTok falló (no crítico): {e_tt}")
+
+                # Notificar por WhatsApp con los enlaces del video
                 if getattr(config, "WHATSAPP_APPROVAL_ENABLED", False) or getattr(config, "WHATSAPP_TO", ""):
                     try:
                         from modules import whatsapp_notifier
@@ -404,6 +425,7 @@ def run_factory(topic: str | None = None) -> bool | None:
                             tags=script.get("tags", []),
                             hook=script.get("hook", ""),
                             pregunta=script.get("pregunta", ""),
+                            tiktok_url=tiktok_url,
                         )
                     except Exception as e_wa:
                         logger.warning(f"      Notificacion WhatsApp fallo (no critico): {e_wa}")
@@ -432,6 +454,8 @@ def run_factory(topic: str | None = None) -> bool | None:
         logger.info(f"  Tamanio          : {video_size_mb:.1f} MB")
         if youtube_url:
             logger.info(f"  YouTube          : {youtube_url}")
+        if step_times.get("tiktok") and tiktok_url:
+            logger.info(f"  TikTok           : {tiktok_url}")
         logger.info("")
         logger.info(f"  Buscar historia  : {step_times.get('scraping', 0):.0f}s")
         logger.info(f"  Narrar (Ollama)  : {step_times.get('script', 0):.0f}s")
@@ -988,7 +1012,7 @@ Prerequisitos:
         test_whatsapp()
 
     elif args.now:
-        success = run_factory(topic=args.topic)
+        success = _safe_run_factory(topic=args.topic)
         sys.exit(0 if success else 1)
 
     elif getattr(args, "grow", False):

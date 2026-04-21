@@ -228,9 +228,10 @@ def send_upload_confirmation(
     tags: list | None = None,
     hook: str = "",
     pregunta: str = "",
+    tiktok_url: str = "",
 ) -> None:
     """
-    Envía un mensaje de WhatsApp completo tras publicar el video en YouTube.
+    Envía un mensaje de WhatsApp completo tras publicar el video en YouTube y TikTok.
     Incluye título, enlace, descripción, hashtags, gancho y pregunta final.
     """
     try:
@@ -278,9 +279,12 @@ def send_upload_confirmation(
         f"🎬 *TÍTULO:*",
         f"_{title}_",
         "",
-        f"🔗 *ENLACE:*",
+        f"🔗 *YOUTUBE:*",
         youtube_url if youtube_url else "_(URL no capturada — revisa YouTube Studio)_",
     ]
+
+    if tiktok_url:
+        lines += ["", f"🎵 *TIKTOK:*", tiktok_url]
 
     if stats_line:
         lines += ["", stats_line]

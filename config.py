@@ -186,6 +186,12 @@ SUBTITLE_STROKE_COLOR: str = "black"
 SUBTITLE_STROKE_WIDTH: int = 2
 SUBTITLE_FONT: str = "Impact"  # estándar de Shorts virales (más impactante que Arial)
 
+# ─── TikTok ──────────────────────────────────────────────────────────────────
+TIKTOK_UPLOAD_ENABLED: bool = (
+    os.getenv("TIKTOK_UPLOAD_ENABLED", "false").lower() == "true"
+)
+TIKTOK_USERNAME: str = os.getenv("TIKTOK_USERNAME", "")
+
 # ─── YouTube Data API v3 (opcional) ──────────────────────────────────────────
 # Para stats exactas en el Analista (likes, comentarios por video).
 # Clave gratuita: console.cloud.google.com → Enable YouTube Data API v3 → API Key

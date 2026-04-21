@@ -53,13 +53,26 @@ logger = logging.getLogger(__name__)
 
 # ─── Límites diarios (conservadores para no activar filtros de spam) ──────────
 
-DAILY_EXTERNAL_LIMIT = 10
-DAILY_OWN_LIMIT      = 5
+DAILY_EXTERNAL_LIMIT  = 5   # máx comentarios externos por día (distribuidos en sesiones)
+DAILY_OWN_LIMIT       = 2   # máx replies en canal propio por día
+SESSION_EXTERNAL_CAP  = 2   # máx por sesión — un humano no comenta en ráfaga
 GROWTH_LOG_FILE      = Path(__file__).parent.parent / "growth_log.json"
 
 # ─── Keywords para buscar videos del nicho ────────────────────────────────────
 
 MIN_VIDEO_VIEWS = 50_000   # filtrar videos con menos de 50K vistas
+
+# Términos que indican contenido off-topic (anime, gaming, reacciones a ficción, etc.)
+_TITLE_BLACKLIST = [
+    "spy x family", "familia forger", "anya", "loid", "yor",
+    "one piece", "naruto", "dragon ball", "my hero academia", "boku no hero",
+    "dabi", "gacha", "genshin", "minecraft", "roblox", "fortnite",
+    "anime", "manga", "temporada", "episodio", "capitulo", "capítulo",
+    "película completa", "movie", "trailer", "tráiler",
+    "unboxing", "gameplay", "gaming", "videojuego",
+    "reaccionando a", "reacción de", "react to", "reaction to",
+    "reacciono a", "veo por primera vez",
+]
 
 # Agrupadas por categoría para rotar entre categorías y no repetir nicho
 NICHE_SEARCHES = [
@@ -217,25 +230,43 @@ NICHE_SEARCHES = [
     "relato de vida impactante latino corto",
     "storytime real que te rompe el corazón español",
     "historias reales de pareja tóxica shorts",
-    # === INGLÉS + ESPAÑOL — AUDIENCIA BILINGÜE ===
-    "cheated with best friend true story español reacción",
-    "toxic relationship storytime español real",
-    "found out the truth story español latino",
-    "my partner had a secret life historia real español",
-    "she betrayed me worst way story reacción latina",
-    "caught him lying for years storytime español",
-    "left everything for him true story español",
-    "narcissist relationship story español real",
-    "family secret revealed true story español reacción",
-    "he had another family story reacción español",
+    # === NICHO ESPECÍFICO — TÉRMINOS QUE NO CONFUNDEN AL ALGORITMO ===
+    "infidelidad descubierta historia real narrada",
+    "traición de pareja historia verdadera corta",
+    "secreto familiar revelado historia real española",
+    "relación tóxica que viví historia real contada",
+    "mentira de pareja descubierta así relato",
+    "lo descubrí todo en un momento historia real",
+    "me engañó años historia contada por ella",
+    "doble vida descubierta relato real breve",
+    "confesión real infidelidad español narrado",
+    "drama familiar real contado en primera persona",
 ]
 
-# ─── Sistema de personas para comentarios (fallback sin Groq) ────────────────
-# 6 tipos de espectador distintos → comentarios que suenan a personas reales
+# ─── Generadores dinámicos de texto vía Groq ─────────────────────────────────
 
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Mantenemos esto solo como referencia de personalidades para el prompt — no se usa como fallback
 _COMMENT_PERSONAS = {
     "impactado": [
+        # — shock corto —
         "no no no esto no puede ser real te lo juro",
+        "dios mío qué fuerte",
+        "bro no",
+        "me dejó helada de verdad",
+        "no puedo creerlo",
+        "qué locura hermano",
+        "esto no debería existir pero existe",
+        "me quedé sin palabras literal",
+        "no manches",
+        "ay dios no",
+        "qué asco de persona",
+        "me abrió la boca",
+        "esto es demasiado",
+        "no puede ser",
+        "me traumó",
+        # — shock medio —
         "me cayó el veinte con lo de {kw} literalmente",
         "qué traición tan grande dios mío 😶",
         "esto está al nivel de película pero es REAL",
@@ -243,33 +274,215 @@ _COMMENT_PERSONAS = {
         "me dejó sin palabras de verdad",
         "eso es lo más fuerte q vi en mucho tiempo",
         "no puedo con esto q acabo de ver",
+        "lo de {kw} me partió el alma",
+        "qué clase de persona hace eso dios mío",
+        "esto me revolvió el estómago",
+        "me cae q no lo hubiera creído si no lo veo",
+        "maldita sea qué historia tan fuerte",
+        "no esperaba eso pa nada",
+        "me cayó como balde de agua fría",
+        "literalmente me pusieron los pelos de punta",
+        "esto me sacudió de verdad",
+        "vi el título y dije no puede ser y era peor",
+        "qué golpe tan bajo",
+        "eso duele leerlo imagínate vivirlo",
+        "se me fue el aliento con esa parte",
+        "no me entra en la cabeza cómo alguien puede hacer eso",
+        "qué historia tan heavy de verdad",
+        "me movió algo por dentro que no sé explicar",
+        "estaba tranquila y me mandaron esto",
+        "fui a ver un video y me arruinaron el día jaja pero en serio qué fuerte",
+        "hay personas q no merecen lo q tienen y esta es una",
+        "lo de {kw} no lo procesa ni el cerebro más frío",
+        "no sé cómo se sigue después de algo así",
+        "esto me quitó las ganas de confiar en alguien",
+        "acabé de ver esto y todavía estoy procesando",
+        "me cayó el piso con esa parte final",
+        "¿cómo se sobrevive a algo así? de verdad",
+        "me dejó la historia pegada en el cerebro",
+        "sentí que me lo estaba contando a mí directamente",
+        "qué traición tan calculada eso es lo q más duele",
+        "no hay palabras pa describir lo q acabo de ver",
+        "me puse en el lugar de esa persona y se me aguaron los ojos",
+        "hay historias q te recuerdan pa qué sirve el bloqueo",
+        "esto es de esas cosas q no te dejan dormir tranquilo",
+        "no entiendo cómo la gente puede ser tan cruel en serio",
+        "leí el título y pensé exageran, nope no exageran para nada",
+        "me acabo de enterar q el mundo puede ser muy muy feo",
+        # — shock largo —
+        "juro que en algún momento pensé que era ficción y no",
+        "hay historias que te recuerdan por qué hay que tener cuidado con quien confías",
+        "esto me lo mandaron y no sé si darle las gracias o el reclamo",
+        "me puse a ver esto pensando que era corto y me dejó así",
+        "vi el thumbnail y pensé 'otro drama exagerado' y no era para nada exagerado",
+        "no sé q es peor si lo que hizo o el tiempo q tardó en salir la verdad",
+        "me quedo con la parte de {kw} q eso sí no me lo esperaba",
+        "esto me lo recomendó alguien y ahora tengo muchas preguntas sobre mi vida",
+        "necesito una pausa después de esto en serio",
+        "me costó terminar de ver porque se me iba la sangre",
     ],
     "identificado": [
+        # — muy corto —
+        "ay esto me tocó",
+        "demasiado cercano esto",
+        "me vi reflejada",
+        "esto lo viví",
+        "ay hermana/o",
+        "me llegó profundo",
+        "demasiado real",
+        "esto lo conozco bien",
+        "exactamente lo mismo",
+        "me dolió porque lo entiendo",
+        # — medio —
         "me pasó algo calcado y todavía duele te lo juro",
         "eso mismo viví yo y nunca lo superé del todo",
         "demasiado real esto me tocó el corazón de verdad",
-        "hermano/a yo pasé por algo igual y te entiendo",
         "esto es más común de lo q la gente cree",
         "no sabía q alguien más había vivido algo así",
         "me recuerda tanto a lo q yo viví hace unos años",
+        "yo pasé por algo muy parecido y sé lo q se siente",
+        "esto lo viví y te juro q el dolor no se describe",
+        "hermano/a no estás solo/a con esto, yo también lo viví",
+        "me paralicé en esa parte porque me pasó igual",
+        "palabra por palabra me estaba describiendo mi historia",
+        "esto que muestran es más normal de lo q parece y eso da miedo",
+        "me tocó algo muy adentro q hacía tiempo no sentía",
+        "yo viví algo así y lo que más duele es lo q nadie ve por fuera",
+        "hay cosas q uno carga solo y ver esto hace sentir que no era el único",
+        "me fui a los comentarios a ver si alguien más lo había vivido",
+        "no sé si reír o llorar porque me identifico demasiado",
+        "tardé años en hablar de eso y verlo acá me sacudió",
+        "oye este video lo tendría q ver alguien q conozco",
+        "me recuerda una época q prefería no recordar pero es verdad q pasa",
+        "exactamente esto es lo q pasé hace 3 años y todavía lo proceso",
+        "no esperaba que un video me fuera a pegar tan fuerte hoy",
+        "me quedé pensando en alguien específico mientras veía esto",
+        "qué incómodo se siente reconocerse en una historia así",
+        "esto le debería llegar a más personas porque es más real de lo q parece",
+        "yo también guardé ese secreto durante años y entiendo perfectamente",
+        "hay algo en {kw} q me dolió de una forma muy específica",
+        "me pasó algo calcado pero nunca lo hubiera contado así de bien",
+        "uno pensaba q era el único y resulta q no",
+        "me vino un recuerdo muy específico con esta historia",
+        # — largo —
+        "pasé algo parecido y te juro q lo q más duele no es el hecho sino enterarte de cómo te veían mientras tanto",
+        "lo q más me llegó es esa sensación de sentirte tonto/a cuando descubres todo",
+        "viví algo muy similar y lo más raro es q uno termina sintiéndose culpable aunque no lo sea",
+        "esto lo conté en privado a muy pocas personas porque da vergüenza admitirlo pero sí, pasa",
+        "me alegra q alguien lo cuente porque mucha gente vive esto en silencio y se siente sola",
+        "lo q más me resonó es que uno sigue adelante y hace su vida pero eso no se olvida nunca del todo",
+        "hay momentos en esta historia q reconozco sin necesidad de que me los expliquen",
+        "yo no lo hubiera dicho con estas palabras pero es exactamente lo q sentí",
+        "me sorprende cuánta gente ha pasado por algo parecido y ninguno lo habla",
+        "lo de {kw} me hizo acordar de una situación q creía superada y evidentemente no",
     ],
     "escéptico": [
+        # — muy corto —
+        "no sé no sé",
+        "algo no cierra ahí",
+        "mmm no del todo",
+        "qué raro eso",
+        "hay algo raro",
+        "no me convence",
+        "algo falta",
+        "eso no suena bien",
+        # — medio —
         "algo no me cuadra pero bueno puede ser",
         "¿y por qué aguantó tanto? eso no me cierra",
         "hay cosas q no encajan del todo en la historia",
         "no sé si creerle del todo pero si es real qué fuerte",
         "me cuesta creer q nadie se diera cuenta antes",
         "¿en serio nadie le dijo nada? raro eso",
+        "no digo q mienta pero hay partes q no me cuadran",
+        "a ver... ¿nadie más vio señales antes? eso me parece difícil",
+        "la historia tiene lógica pero hay puntos q no terminan de cerrar",
+        "puede ser verdad pero falta contexto para juzgar bien",
+        "hay algo en el tono que me hace pensar que falta parte de la historia",
+        "no sé, me genera dudas la parte de {kw}",
+        "¿y por qué justo ahí? eso no lo entiendo bien",
+        "puede ser pero también pudo haberlo resuelto antes",
+        "me llama la atención que nadie más sepa nada de esto",
+        "algo en esta historia no encaja y no sé bien qué es",
+        "lo creo pero me parece q hay más detrás q no se dice",
+        "¿en serio así fue exactamente? parece mucho pero bueno",
+        "la gente no suele actuar así de limpio... hay algo más",
+        "no dudo q haya pasado algo pero no todo como se cuenta",
+        "¿nadie preguntó nada antes? eso me parece raro la verdad",
+        "entiendo la historia pero hay cosas q no suenan del todo honestas",
+        "mhm puede ser. igual hay detalles q me parecen convenientes",
+        "me quedo con la duda de qué contaría la otra parte",
+        "no es que no lo crea, es q hay piezas q no encajan perfectamente",
+        # — largo —
+        "a ver sin juzgar pero hay algo en cómo está contado q me genera preguntas",
+        "puede q todo sea verdad pero me parece q hay contexto q no se da y q cambia la lectura",
+        "lo que más me llama la atención es por qué esperar tanto para contarlo",
+        "no digo q sea mentira, digo q cuando hay una sola versión siempre falta algo",
+        "hay historias q te cuentan de una manera y cuando escuchas la otra parte resulta diferente",
+        "me quedé pensando en la parte de {kw} porque eso no cierra del todo con lo anterior",
+        "puede ser que todo pasara exactamente así pero hay algo q no termina de convencerme",
+        "sin ánim de ofender pero hay detalles que solo se recuerdan cuando convienen",
+        "no pongo en duda lo q vivió pero tampoco toda historia tiene un solo culpable claro",
+        "esto levanta preguntas que la historia no responde y eso me hace pensar",
     ],
     "curioso": [
+        # — muy corto —
+        "y después qué",
+        "parte 2 porfavor",
+        "¿cómo terminó?",
+        "necesito más",
+        "¿y luego?",
+        "espera y qué pasó",
+        "¿hablaron después?",
+        "¿cómo quedaron?",
+        # — medio —
         "necesito saber q pasó con {kw} después",
         "parte 2 ya esto no puede quedar así",
         "me quedé con ganas de saber el final de verdad",
         "¿volvieron a hablar o fue el final definitivo?",
         "¿y la otra persona qué dijo cuando se supo todo?",
         "quiero saber cómo terminó esto en serio",
+        "¿y después de eso qué pasó con {kw}?",
+        "¿hay continuación? necesito saber el final",
+        "me quedé colgado/a con esa última parte",
+        "¿y cómo está ahora esa persona?",
+        "espera ¿y eso cómo terminó?",
+        "¿alguien más preguntó algo o todos se hicieron los que no sabían?",
+        "¿y la familia qué dijo cuando se enteró?",
+        "¿volvieron a verse? porque eso me quedó pendiente",
+        "¿y {kw} nunca dio explicaciones o quedó todo en el aire?",
+        "qué pasó después no me queda claro",
+        "me dejaron con el cliffhanger más innecesario de mi vida",
+        "¿y cómo sigue viviendo con eso? de verdad necesito saber",
+        "no puedo quedarme sin saber el final de esto",
+        "¿hay segunda parte o la dejaron ahí?",
+        "¿alguien tiene más info sobre cómo terminó?",
+        "me quedé con la duda de {kw} alguien sabe?",
+        "¿eso fue lo último que se supo o hubo más cosas después?",
+        "oye ¿se reconciliaron o fue definitivo?",
+        "¿y los demás? ¿nadie dijo nada más después?",
+        # — largo —
+        "lo que más quiero saber es qué pasó con {kw} porque la historia queda incompleta sin eso",
+        "me gustaría saber cómo está esa persona hoy porque lo que vivió no es poca cosa",
+        "¿hay algún update? porque eso no puede quedar así y ya",
+        "la parte q más me dejó con duda es q pasó después de {kw} eso no quedó claro",
+        "me gustaría escuchar la historia completa porque siento q falta bastante",
+        "¿alguien que vio esto sabe si hay más contexto en algún lado?",
+        "necesito saber si al final hubo algún tipo de justicia o todo quedó igual",
+        "lo que más me genera curiosidad es si esa persona supo alguna vez lo que causó",
+        "¿y los que estaban alrededor? ¿cómo reaccionaron cuando salió todo a la luz?",
+        "quiero saber si con el tiempo las cosas se resolvieron o todavía están igual de rotas",
     ],
     "opinador": [
+        # — muy corto —
+        "eso no se perdona",
+        "error garrafal",
+        "se lo buscó",
+        "no hay excusa",
+        "clarísimo desde el principio",
+        "debió irse antes",
+        "no hay vuelta",
+        "eso tiene nombre",
+        # — medio —
         "desde el primer momento esa persona mostraba quien era",
         "no se perdona eso, punto",
         "el error fue perdonarla la primera vez honestamente",
@@ -277,46 +490,88 @@ _COMMENT_PERSONAS = {
         "yo hubiera tomado la misma decisión sin dudar",
         "lo que hizo no tiene justificación ninguna",
         "uno tiene q saber cuándo retirarse y punto",
+        "eso se llama falta de carácter y ya",
+        "la persona que hace eso no merece ni explicación",
+        "lo perdonaron una vez y ahí fue el error",
+        "hay señales desde el inicio pero uno no las ve hasta después",
+        "eso no fue un error fue una decisión",
+        "quien hace eso sabe exactamente lo que está haciendo",
+        "no hay forma de justificar eso ni intentándolo mucho",
+        "en mi opinión lo correcto era irse mucho antes",
+        "eso se llama egoísmo puro y duro",
+        "uno a veces se aferra a lo q quiere ver y no a lo q es",
+        "eso tiene consecuencias y está bien q las tenga",
+        "a veces el problema no es el otro sino que uno lo permite",
+        "si ya lo hizo una vez lo iba a volver a hacer, así funciona",
+        "hay gente q solo aprende cuando ya no te tiene",
+        "no es sadismo es justicia que se sepa la verdad",
+        "la gente así siempre encuentra a quien culpar menos a sí misma",
+        "desde q dijo lo de {kw} ya se sabía cómo iba a terminar esto",
+        "lo q hizo no tiene nombre bonito llámenlo por lo que es",
+        # — largo —
+        "mi opinión es q hubo muchas señales que se ignoraron y eso no es casualidad",
+        "creo que el problema de fondo es que se confundió amor con necesidad",
+        "esto es un ejemplo claro de que algunas personas solo cambian cuando les conviene",
+        "lo que más me molesta es que ese tipo de personas siempre encuentra cómo quedar bien con todos",
+        "no juzgo las decisiones pero hay una parte donde claramente se pudo actuar antes",
+        "hay gente que hace daño sin remordimiento y lo peor es que les funciona durante mucho tiempo",
+        "eso que hizo no fue un error de juicio fue una elección consciente y punto",
+        "lo más triste es q probablemente esa persona ni siquiera entiende el daño q causó",
+        "cuando alguien muestra su verdadero carácter hay q creerle aunque duela",
+        "mi consejo siempre es el mismo: la primera vez que alguien te falla así es la última",
     ],
     "solidario": [
+        # — muy corto —
+        "fuerza 🙏",
+        "qué difícil",
+        "mucho ánimo",
+        "ay qué dolor",
+        "lo siento mucho",
+        "cuánto dolor",
+        "uno no merece eso",
+        "ojalá esté bien",
+        "ánimo de verdad",
+        "te mando buena energía",
+        # — medio —
         "fuerza para quien vivió algo así de verdad 🙏",
         "hay cosas de las q uno no se recupera fácil",
         "lo importante es q ya salió de ahí",
         "cuánto dolor dios mío q difícil todo eso",
         "uno nunca está listo pa recibir algo así",
         "ojalá esté bien quien vivió esto de verdad",
+        "nadie debería pasar por algo así",
+        "ojalá hoy esté en un lugar mejor q antes",
+        "esa persona es más fuerte de lo que cree",
+        "es de admirar q puedan contarlo, no es fácil",
+        "eso deja marca, ojalá encuentre paz con el tiempo",
+        "te mando toda la fuerza desde acá de verdad",
+        "no me imagino cómo se habrá sentido en ese momento",
+        "lo que más me mueve es el nivel de traición que vivió",
+        "que alguien lo cuente ya es un paso enorme",
+        "hay cosas q uno procesa de a poco y está bien así",
+        "ojalá quien lo vivió tenga personas cerca que lo apoyen",
+        "no es fácil salir de algo así pero se puede",
+        "qué difícil tomar esa decisión en ese momento",
+        "a veces uno carga solo lo q debería cargar acompañado",
+        "uno no merece ese tipo de cosas viniendo de quien confía",
+        "el dolor de esa traición no se explica, se siente",
+        "que pueda contarlo ya muestra q va sanando aunque duela",
+        "la vida después de algo así no es la misma pero sigue",
+        "ojalá hoy ese dolor sea un poco más chico q ayer",
+        # — largo —
+        "me duele que haya gente que pase por esto sola sin poder contarlo",
+        "hay una valentía enorme en poder hablar de algo así aunque haya pasado tiempo",
+        "ojalá quien vivió esto sepa que hay gente que lo escucha y lo entiende desde acá",
+        "lo que más me llega es pensar en cómo se habrá sentido en ese momento sin nadie que supiera",
+        "hay heridas que no se ven pero que cargan más peso que las que sí se ven",
+        "eso que vivió no era normal aunque en su momento lo pareciera, ojalá lo sepa hoy",
+        "la gente que pasa por cosas así merece mucho más reconocimiento del que recibe",
+        "me alegra q cuenten estas historias porque mucha gente se siente sola con lo mismo",
+        "hay procesos que llevan tiempo y está bien, lo importante es seguir",
+        "uno aprende a vivir con esas cicatrices aunque nunca desaparezcan del todo",
     ],
 }
 
-# Fallback plano — por si falla todo lo anterior
-_COMMENT_TEMPLATES = [t for ts in _COMMENT_PERSONAS.values() for t in ts]
-
-# Templates para comentario pineado en tus propios videos
-_PIN_TEMPLATES = [
-    "¿tú qué hubieras hecho en su lugar? cuéntame abajo 👇",
-    "¿team confrontar o team irse en silencio? comenta",
-    "¿crees q tomó la decisión correcta? quiero leer tu opinión",
-    "¿a alguien más le pasó algo así? cuéntame tu historia 👇",
-    "¿perdonar o alejarse para siempre? vota en los comentarios",
-    "¿qué hubieras hecho diferente desde el inicio? 👇",
-    "si llegaste hasta acá eres de los míos 🙌 cuéntame qué piensas",
-    "comenta lo que sentiste y sígueme pa más historias así",
-    "¿perdonarías o te irías sin mirar atrás? 👇 y sígueme si quieres más",
-    "dime qué piensas y dale like si te llegó la historia 🙏",
-]
-
-# Fallback para respuestas propias (solo si Groq falla)
-_REPLY_TEMPLATES = [
-    "gracias por compartir eso, de verdad 🙏",
-    "entiendo lo q dices, estas historias tocan fibras muy profundas",
-    "exacto, por eso quise compartirla. mucha gente pasa por esto sin decirlo",
-    "qué buen punto, yo también lo pensé cuando la narré",
-    "gracias por comentar, me alegra q la historia haya llegado",
-    "así es... y lo más duro es q le pasa a más gente de lo q creemos",
-    "me alegra q lo hayas sentido así, esa es la idea 🙌",
-    "qué fuerte lo q compartís, ojalá estés bien",
-    "gracias por eso 🙏 sígueme pa más historias reales",
-]
 
 
 # ─── Evaluate seguro con reintentos ──────────────────────────────────────────
@@ -400,115 +655,118 @@ def _mark_commented(log: dict, video_id: str, title: str) -> None:
     }
 
 
-# ─── Generador de comentarios con Groq ────────────────────────────────────────
+# ─── Generadores 100% dinámicos vía Groq ─────────────────────────────────────
 
-async def _generate_comment(video_title: str) -> str:
-    """Genera comentario orgánico contextual al título usando Groq."""
+async def _groq_call(prompt: str, max_tokens: int) -> str | None:
+    """Llama a Groq y retorna el texto generado. None si falla tras 3 intentos."""
     api_key = getattr(config, "GROQ_API_KEY", "")
     if not api_key:
-        return _fallback_comment(video_title)
+        return None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(
+                    _GROQ_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": max_tokens,
+                        "temperature": 0.95,
+                    },
+                )
+                r.raise_for_status()
+                text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                if text:
+                    return text
+        except Exception as e:
+            logger.debug(f"Groq intento {attempt + 1}/3: {e}")
+            if attempt < 2:
+                await asyncio.sleep(3)
+    return None
 
-    # Persona aleatoria → cada comentario suena a una persona distinta
+
+async def _generate_comment(video_title: str) -> str | None:
+    """Genera comentario 100% dinámico contextual al video. None si Groq no responde."""
     persona, descripcion, longitud = random.choice([
-        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",            "4-8 palabras, muy corto"),
-        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",            "10-16 palabras"),
-        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",             "8-15 palabras"),
-        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",             "12-18 palabras"),
-        ("ESCÉPTICO",    "duda de algo en la historia o hace notar algo raro",       "8-14 palabras"),
-        ("CURIOSO",      "pregunta qué pasó después o pide parte 2",                "5-12 palabras"),
-        ("OPINADOR",     "da su opinión directa sin filtro sobre la situación",      "10-18 palabras"),
-        ("SOLIDARIO",    "expresa empatía o apoyo emocional hacia el narrador",      "6-12 palabras"),
+        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",           "4-7 palabras, muy corto"),
+        ("IMPACTADO",    "reacciona con shock genuino, no puede creerlo",           "10-16 palabras"),
+        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",            "8-15 palabras"),
+        ("IDENTIFICADO", "cuenta brevísimamente que vivió algo similar",            "12-18 palabras"),
+        ("ESCÉPTICO",    "duda de algo concreto en la historia",                    "8-14 palabras"),
+        ("CURIOSO",      "pregunta qué pasó después o pide parte 2",               "5-12 palabras"),
+        ("OPINADOR",     "da su opinión directa sin filtro sobre la situación",     "10-18 palabras"),
+        ("SOLIDARIO",    "expresa empatía o apoyo emocional hacia el narrador",     "6-12 palabras"),
     ])
-    include_cta = random.random() < 0.20
-    cta_line = (
-        "Puede terminar con 'te sigo' o 'sígueme' si suena natural (no forzado)."
-        if include_cta else
-        "NO incluyas auto-promoción."
-    )
     prompt = (
-        f'Eres un espectador real de YouTube latinoamericano escribiendo desde el celular.\n'
-        f'Video que acabas de ver: "{video_title}"\n'
-        f'TU PERSONALIDAD HOY: {persona} — {descripcion}.\n'
-        f'LONGITUD EXACTA: {longitud}.\n'
-        "ESTILO: habla de barrio, como WhatsApp. "
-        "Usa 'q'/'pa'/'xq'/'bro'/'hermano' según suene natural. "
-        "Omite punto final. Sin mayúscula al inicio si da más natural. "
-        "Algún error de tipeo menor es ok (no exageres).\n"
-        f"{cta_line}\n"
-        "PROHIBIDO: más de 1 emoji. PROHIBIDO: mencionar el canal.\n"
-        "Responde SOLO con el comentario, sin comillas ni explicación."
+        f'Eres un espectador real latinoamericano escribiendo desde el celular.\n'
+        f'Acabas de ver este video de YouTube: "{video_title}"\n'
+        f'Personalidad hoy: {persona} — {descripcion}.\n'
+        f'Longitud exacta: {longitud}.\n'
+        "Escribe UN comentario en español latino, estilo WhatsApp casual. "
+        "Usa 'q'/'pa'/'xq'/'bro'/'hermano'/'o sea' según suene natural. "
+        "Sin mayúscula al inicio si da más natural. Sin punto final. "
+        "1 error de tipeo mínimo está ok pero no exageres.\n"
+        "PROHIBIDO ABSOLUTO: 'sígueme', 'te sigo', 'suscríbete', mencionar canales, "
+        "cualquier auto-promoción. Los humanos reales NUNCA hacen eso en videos ajenos.\n"
+        "PROHIBIDO: más de 1 emoji. Sin comillas. Sin explicaciones.\n"
+        "Responde SOLO con el comentario."
     )
-
-    try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            r = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 50,
-                    "temperature": 0.95,
-                },
-            )
-            r.raise_for_status()
-            comment = (
-                r.json()["choices"][0]["message"]["content"]
-                .strip().strip('"').strip("'")
-            )
-            if len(comment) > 180:
-                comment = comment[:180].rsplit(".", 1)[0] + "."
-            return comment
-    except Exception as e:
-        logger.debug(f"Groq comentario falló: {e}")
-        return _fallback_comment(video_title)
+    result = await _groq_call(prompt, max_tokens=55)
+    if result and len(result) > 180:
+        result = result[:180].rsplit(" ", 1)[0]
+    return result
 
 
-async def _generate_reply(comment_text: str) -> str:
-    """Genera respuesta contextual al comentario de un espectador."""
-    api_key = getattr(config, "GROQ_API_KEY", "")
-    if not api_key or not comment_text.strip():
-        return random.choice(_REPLY_TEMPLATES)
-
-    include_cta = random.random() < 0.30
-    cta_line = (
-        "Puedes terminar con algo como 'sígueme pa más historias así' o 'gracias por seguirme 🙏' (natural)."
+async def _generate_reply(comment_text: str, video_title: str = "") -> str | None:
+    """Genera respuesta dinámica al comentario de un espectador. None si Groq no responde."""
+    if not comment_text.strip():
+        return None
+    include_cta = random.random() < 0.25
+    cta_hint = (
+        "Si suena natural puedes cerrar con algo como 'gracias por estar acá' o similar (nunca 'sígueme')."
         if include_cta else ""
     )
     prompt = (
         "Eres el creador de un canal de YouTube de confesiones y dramas reales en español latino.\n"
-        f'Un espectador comentó en tu video: "{comment_text}"\n'
-        "Escribe UNA respuesta corta, cálida y auténtica (máx 20 palabras).\n"
-        "REGLAS: responde DIRECTAMENTE a lo que dijo — no ignores su mensaje. "
-        "Estilo casual de barrio, como WhatsApp, sin punto final. "
-        "Puedes usar 'q', 'xq', 'pa', etc. Sin mayúsculas si suena más natural. "
-        f"{cta_line}\n"
-        "PROHIBIDO: repetir su comentario textual. PROHIBIDO: más de 1 emoji.\n"
-        "Responde SOLO con el texto de la respuesta, sin comillas."
+        + (f'Tu video se llama: "{video_title}"\n' if video_title else "")
+        + f'Un espectador comentó: "{comment_text}"\n'
+        "Escribe UNA respuesta corta, auténtica y cálida (máx 18 palabras).\n"
+        "REGLAS: responde DIRECTAMENTE a lo que dijo. Estilo casual de barrio, sin punto final. "
+        "Usa 'q', 'xq', 'pa' si suena natural. "
+        f"{cta_hint}\n"
+        "PROHIBIDO: repetir su comentario. PROHIBIDO: 'sígueme' o auto-promoción directa. "
+        "PROHIBIDO: más de 1 emoji.\n"
+        "Responde SOLO con el texto, sin comillas."
     )
-    try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            r = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 60,
-                    "temperature": 0.95,
-                },
-            )
-            r.raise_for_status()
-            reply = (
-                r.json()["choices"][0]["message"]["content"]
-                .strip().strip('"').strip("'")
-            )
-            if len(reply) > 200:
-                reply = reply[:200].rsplit(" ", 1)[0]
-            return reply
-    except Exception as e:
-        logger.debug(f"Groq reply falló: {e}")
-        return random.choice(_REPLY_TEMPLATES)
+    result = await _groq_call(prompt, max_tokens=65)
+    if result and len(result) > 200:
+        result = result[:200].rsplit(" ", 1)[0]
+    return result
+
+
+async def _generate_pin(video_title: str, pregunta: str = "") -> str | None:
+    """Genera el comentario pineado dinámico basado en el video real. None si Groq falla."""
+    formato = random.choice([
+        "pregunta que genere debate (¿team X o team Y?)",
+        "pregunta abierta sobre qué haría el espectador en esa situación",
+        "pregunta sobre si alguien vivió algo similar",
+        "reflexión sobre el tema del video convertida en pregunta",
+        "CTA invitando a compartir su opinión sobre la historia",
+    ])
+    prompt = (
+        "Eres el creador de un canal de YouTube de confesiones y dramas reales en español latino.\n"
+        f'Acabas de publicar un video titulado: "{video_title}"\n'
+        + (f'La pregunta final del video es: "{pregunta}"\n' if pregunta else "")
+        + f"Escribe UN comentario para pinear (máx 15 palabras). Formato: {formato}.\n"
+        "Objetivo: que la gente comente, debata o cuente su experiencia.\n"
+        "Estilo: creador real hablando con su comunidad, casual, sin formalidades. "
+        "Puede incluir 1 emoji (👇 o 🙌 o 🙏) si mejora el texto.\n"
+        "PROHIBIDO: más de 1 emoji. Sin hashtags. Sin 'sígueme'.\n"
+        "Responde SOLO con el texto del comentario."
+    )
+    result = await _groq_call(prompt, max_tokens=50)
+    return result
 
 
 def _parse_yt_duration(text: str) -> int:
@@ -522,16 +780,6 @@ def _parse_yt_duration(text: str) -> int:
     except (ValueError, IndexError):
         pass
     return 0
-
-
-def _fallback_comment(video_title: str) -> str:
-    persona = random.choice(list(_COMMENT_PERSONAS.keys()))
-    template = random.choice(_COMMENT_PERSONAS[persona])
-    words = [w for w in video_title.split() if len(w) > 4 and not w.startswith("#")]
-    kw = random.choice(words).lower() if words else "esa parte"
-    comment = template.replace("{kw}", kw)
-    endings = ["", "...", " en serio", " de verdad", " pa siempre", " q fuerte"]
-    return comment + random.choice(endings)
 
 
 # ─── Helpers de filtrado ──────────────────────────────────────────────────────
@@ -627,7 +875,11 @@ async def _search_niche_videos(browser, keyword: str, log: dict) -> list[dict]:
                 continue
             views = _parse_views(v.get("views", ""))
             if views > 0 and views < MIN_VIDEO_VIEWS:
-                continue  # ignorar videos con pocas vistas
+                continue
+            title_lower = title.lower()
+            if any(bad in title_lower for bad in _TITLE_BLACKLIST):
+                logger.debug(f"  Filtrado off-topic: {title[:60]}")
+                continue
             filtered.append(v)
 
         logger.info(
@@ -644,17 +896,25 @@ async def _search_niche_videos(browser, keyword: str, log: dict) -> list[dict]:
 # ─── Comentar en video ajeno ──────────────────────────────────────────────────
 
 async def _comment_on_video(browser, video: dict) -> bool:
-    """Navega al video, lo 've' un rato, y deja un comentario humano."""
+    """
+    Simula el comportamiento completo de un humano viendo y comentando un video.
+    Cada visita es diferente: varía cuánto ve, si lee comentarios ajenos,
+    si da like, si scrollea la descripción, y cómo llega al campo de comentario.
+    """
     try:
         logger.info(f"  [{video['title'][:55]}]")
         page = await browser.get(video["url"])
-        await _delay(4.0, 8.0)
+        await _delay(3.0, 7.0)
 
-        # Ver el video — tiempo proporcional a la duración real
-        await _scroll(page, random.randint(100, 250))
+        # ── 1. Orientación inicial (como cuando acabas de llegar al video) ───────
+        # A veces el humano scrollea un poco arriba/abajo antes de enfocarse
+        if random.random() < 0.5:
+            await _scroll(page, random.randint(60, 180))
+            await _delay(1.0, 2.5)
+            await _scroll(page, random.randint(-60, -20))
         await _random_mouse_wander(page)
 
-        # Leer duración del video del player
+        # ── 2. Ver el video (tiempo proporcional a la duración real) ─────────────
         dur_text = await _eval_safe(page, """(function() {
             var t = document.querySelector('.ytp-time-duration');
             return t ? (t.innerText || '') : '';
@@ -662,25 +922,67 @@ async def _comment_on_video(browser, video: dict) -> bool:
         duration_s = _parse_yt_duration(dur_text)
 
         if duration_s > 0:
-            if duration_s <= 63:          # Short (hasta ~1min)
-                ratio = random.triangular(0.40, 0.80, 0.60)
-            elif duration_s <= 300:       # Video corto (1-5 min)
-                ratio = random.triangular(0.20, 0.45, 0.30)
-            else:                         # Video largo (>5 min)
-                ratio = random.triangular(0.08, 0.25, 0.15)
-            watch_secs = max(8.0, min(duration_s * ratio, 270.0))
+            if duration_s <= 63:
+                ratio = random.triangular(0.45, 0.90, 0.65)   # Shorts: casi completo
+            elif duration_s <= 300:
+                ratio = random.triangular(0.20, 0.50, 0.32)
+            else:
+                ratio = random.triangular(0.08, 0.22, 0.13)
+            watch_secs = max(10.0, min(duration_s * ratio, 240.0))
         else:
-            watch_secs = random.triangular(14.0, 35.0, 22.0)
+            watch_secs = random.triangular(12.0, 38.0, 22.0)
 
         logger.debug(f"  Viendo {watch_secs:.0f}s (duración: {dur_text or '?'})")
-        await asyncio.sleep(watch_secs)
 
-        # Scroll hacia los comentarios
-        await _scroll(page, random.randint(300, 500))
-        await _delay(2.0, 4.0)
+        # Durante la visualización: movimientos ocasionales como humano real
+        elapsed = 0.0
+        while elapsed < watch_secs:
+            chunk = random.triangular(4.0, 14.0, 8.0)
+            await asyncio.sleep(min(chunk, watch_secs - elapsed))
+            elapsed += chunk
+            if elapsed < watch_secs and random.random() < 0.3:
+                await _random_mouse_wander(page)
+
+        # ── 3. A veces lee la descripción antes de bajar a comentarios ───────────
+        if random.random() < 0.35:
+            await _scroll(page, random.randint(150, 280))
+            await _delay(3.0, 7.0)   # "lee" la descripción
+            await _random_mouse_wander(page)
+
+        # ── 4. A veces da like al video (si le gustó lo suficiente) ─────────────
+        if random.random() < 0.40:
+            try:
+                like_btn = await page.select(
+                    "ytd-toggle-button-renderer:first-of-type button, "
+                    "button[aria-label*='like' i], button[aria-label*='Me gusta']",
+                    timeout=4
+                )
+                if like_btn:
+                    await _delay(0.8, 2.0)
+                    await _human_click(page, like_btn)
+                    await _delay(0.5, 1.5)
+                    logger.debug("  👍 Like dado antes de comentar")
+            except Exception:
+                pass
+
+        # ── 5. Scroll hacia la sección de comentarios ────────────────────────────
+        await _scroll(page, random.randint(350, 600))
+        await _delay(2.5, 5.0)
         await _random_mouse_wander(page)
 
-        # Caja de comentario
+        # ── 6. LEER comentarios ajenos antes de escribir (humano real hace esto) ──
+        n_reads = random.randint(2, 5)
+        for _ in range(n_reads):
+            await _scroll(page, random.randint(80, 200))
+            await _delay(random.triangular(2.0, 8.0, 4.0), random.triangular(4.0, 12.0, 7.0))
+        await _random_mouse_wander(page)
+
+        # A veces scrollea de vuelta un poco (como cuando buscas el cuadro de comentario)
+        if random.random() < 0.4:
+            await _scroll(page, random.randint(-150, -60))
+            await _delay(1.0, 2.5)
+
+        # ── 7. Encontrar y hacer clic en la caja de comentario ───────────────────
         comment_box = None
         for sel in [
             "#placeholder-area",
@@ -699,9 +1001,9 @@ async def _comment_on_video(browser, video: dict) -> bool:
             return False
 
         await _human_click(page, comment_box)
-        await _delay(1.5, 3.0)
+        await _delay(1.2, 2.8)
 
-        # Caja activa (contenteditable)
+        # ── 8. Generar y escribir el comentario ───────────────────────────────────
         active_box = None
         for sel in ["#contenteditable-root", "[contenteditable='true']"]:
             try:
@@ -712,14 +1014,21 @@ async def _comment_on_video(browser, video: dict) -> bool:
                 pass
 
         comment = await _generate_comment(video["title"])
+        if not comment:
+            logger.warning("  Groq no generó comentario — omitiendo este video")
+            return False
         logger.info(f"  Comentario: {comment[:70]}")
 
+        # A veces pausa antes de empezar a escribir (como pensando qué poner)
+        await _delay(random.triangular(1.5, 6.0, 3.0), random.triangular(3.0, 9.0, 5.0))
         await _human_type(active_box or comment_box, comment, clear_first=False)
-        await _delay(1.5, 3.5)
+
+        # Pausa post-escritura (releer antes de enviar)
+        await _delay(1.5, 4.0)
         await _random_mouse_wander(page)
         await _think()
 
-        # Submit
+        # ── 9. Enviar ─────────────────────────────────────────────────────────────
         submitted = False
         for sel in [
             "#submit-button button",
@@ -731,7 +1040,7 @@ async def _comment_on_video(browser, video: dict) -> bool:
                 btn = await page.select(sel, timeout=5)
                 if btn:
                     await _human_click(page, btn)
-                    await _delay(3.0, 6.0)
+                    await _delay(2.5, 5.5)
                     submitted = True
                     break
             except Exception:
@@ -740,6 +1049,12 @@ async def _comment_on_video(browser, video: dict) -> bool:
         if not submitted:
             logger.warning("  Botón submit no encontrado")
             return False
+
+        # ── 10. Comportamiento post-comentario (humano sigue unos segundos) ───────
+        await _delay(3.0, 8.0)
+        if random.random() < 0.5:
+            await _scroll(page, random.randint(100, 300))
+            await _delay(2.0, 5.0)
 
         log = _load_log()
         _mark_commented(log, video["id"], video["title"])
@@ -932,7 +1247,12 @@ async def _leave_pin_comment(page) -> bool:
             except Exception:
                 pass
 
-        pin_text = random.choice(_PIN_TEMPLATES)
+        page_title = await page.evaluate("document.title || ''")
+        clean_title = re.sub(r"\s*[-–|].*$", "", page_title).strip()
+        pin_text = await _generate_pin(clean_title)
+        if not pin_text:
+            logger.warning("  _leave_pin_comment: Groq no generó texto — omitiendo pin")
+            return False
         await _human_type(active_box or comment_box, pin_text, clear_first=False)
         await _delay(1.5, 3.0)
 
@@ -1005,7 +1325,12 @@ async def _reply_to_top_comments(page, log: dict) -> int:
                 logger.debug(f"  Comentario a responder: {comment_text[:60]}")
 
                 # Generar reply contextual con Groq
-                reply_text = await _generate_reply(comment_text)
+                page_title = await page.evaluate("document.title || ''")
+                clean_title = re.sub(r"\s*[-–|].*$", "", page_title).strip()
+                reply_text = await _generate_reply(comment_text, video_title=clean_title)
+                if not reply_text:
+                    logger.debug("  Groq no generó reply — omitiendo este comentario")
+                    continue
 
                 await _human_click(page, btn)
                 await _delay(1.5, 3.0)
@@ -1198,19 +1523,20 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
             if len(fresh) < 3:
                 active_used = {}  # si se agotaron, resetear todas
                 fresh = list(NICHE_SEARCHES)
-            keywords = random.sample(fresh, k=min(3, len(fresh)))
+            keywords = random.sample(fresh, k=min(2, len(fresh)))
             log["used_keywords"] = active_used
             _save_log(log)
 
-            # Batches de 2-3 comentarios con micro-break entre bloques
-            BATCH_SIZE = random.randint(2, 3)
             session_done = 0
-            batch_done = 0
 
             for keyword in keywords:
                 log = _load_log()
                 ext_count, _ = _daily_counts(log)
                 if ext_count >= DAILY_EXTERNAL_LIMIT:
+                    logger.info("Límite diario de comentarios externos alcanzado")
+                    break
+                if session_done >= SESSION_EXTERNAL_CAP:
+                    logger.info(f"  Cap de sesión alcanzado ({SESSION_EXTERNAL_CAP}) — continuará en la próxima sesión")
                     break
 
                 logger.info(f"Búsqueda: '{keyword}'")
@@ -1223,26 +1549,21 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
                 for video in videos:
                     log = _load_log()
                     ext_count, _ = _daily_counts(log)
-                    if ext_count >= DAILY_EXTERNAL_LIMIT:
+                    if ext_count >= DAILY_EXTERNAL_LIMIT or session_done >= SESSION_EXTERNAL_CAP:
                         break
 
                     ok = await _comment_on_video(browser, video)
                     if ok:
                         session_done += 1
-                        batch_done += 1
                         results["external"] += 1
+                        # Después de comentar: browsing orgánico antes del siguiente
+                        if session_done < SESSION_EXTERNAL_CAP:
+                            await _browse_casually(browser)
                     else:
                         results["skipped"] += 1
 
-                    # Pausa natural entre comentarios individuales
-                    await _delay(20.0, 45.0)
-
-                    # Al completar un batch: micro-break de navegación orgánica
-                    if batch_done >= BATCH_SIZE:
-                        logger.info(f"  Micro-break después de {batch_done} comentarios...")
-                        await _browse_casually(browser)
-                        batch_done = 0
-                        BATCH_SIZE = random.randint(2, 3)  # variar el próximo batch
+                    # Pausa variable entre intentos (comentado o no)
+                    await _delay(15.0, 40.0)
 
         # ── Engagement en canal propio ─────────────────────────────────────────
         if do_own:

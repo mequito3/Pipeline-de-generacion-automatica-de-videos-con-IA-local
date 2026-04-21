@@ -925,24 +925,72 @@ def _cuda_available() -> bool:
 
 def _add_dramatic_pauses(text: str) -> str:
     """
-    Refuerza pausas naturales en el texto para que edge-tts las interprete mejor.
+    Preprocesa el texto para maximizar la expresividad de edge-tts sin SSML.
 
-    edge-tts ya pausa en puntuación, pero los scripts de Ollama a veces
-    no tienen suficientes puntos. Este paso asegura pausas dramáticas en
-    los lugares correctos sin usar SSML (que edge-tts escapa como texto literal).
+    edge-tts responde a señales de puntuación:
+      '...' → pausa larga (~500ms)   — suspenso antes de revelar algo
+      ','   → pausa corta (~150ms)   — respiración natural
+      '.'   → pausa media (~300ms)   — cierre de idea
+      '!'   → energía alta           — impacto emocional
+      '?'   → entonación ascendente  — pregunta retórica
+      CAPS  → acento/énfasis         — palabra clave subrayada
     """
     import re
 
-    # Normalizar espacios múltiples
+    # ── Normalizar ────────────────────────────────────────────────────────────
     text = re.sub(r'  +', ' ', text.strip())
+    text = re.sub(r'\.{4,}', '...', text)     # elipsis: máximo 3 puntos
+    text = re.sub(r'\.{2}(?!\.)', '...', text) # ".." → "..." (edge-tts ignora 2 puntos)
 
-    # Asegurar que las elipsis tengan exactamente 3 puntos (edge-tts pausa en ellas)
-    text = re.sub(r'\.{4,}', '...', text)
+    # ── CAPITALIZAR palabras de alto impacto emocional ────────────────────────
+    # edge-tts acentúa las palabras en mayúsculas → énfasis natural
+    CAPS_WORDS = {
+        r'\bnunca\b':    'NUNCA',
+        r'\bjamás\b':    'JAMÁS',
+        r'\bnada\b':     'NADA',
+        r'\bmentira\b':  'MENTIRA',
+        r'\bmentiras\b': 'MENTIRAS',
+        r'\btraición\b': 'TRAICIÓN',
+        r'\bsiempre\b':  'SIEMPRE',
+        r'\bdos años\b': 'DOS AÑOS',
+        r'\btres años\b': 'TRES AÑOS',
+    }
+    for pattern, replacement in CAPS_WORDS.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-    # Si una frase termina sin puntuación antes de mayúscula, añadir punto
+    # ── Pausa larga "..." antes de conectores de revelación ───────────────────
+    # Solo si no hay ya puntuación justo antes
+    REVELATION_CONNECTORS = [
+        r'pero entonces', r'pero resulta que',
+        r'de repente', r'fue entonces cuando', r'fue cuando',
+        r'lo que no sabía', r'hasta que',
+        r'en ese momento', r'y entonces',
+    ]
+    for phrase in REVELATION_CONNECTORS:
+        text = re.sub(
+            rf'(?<![.!?\.]{1})\s+({phrase})\b',
+            r'... \1',
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    # ── Coma después de muletillas emocionales ────────────────────────────────
+    INTERJECTIONS = [
+        r'\bo sea\b(?!,)', r'\bliteral\b(?!,)', r'\bla neta\b(?!,)',
+        r'\bte juro\b(?!,)', r'\bde verdad\b(?!,)',
+    ]
+    for phrase in INTERJECTIONS:
+        text = re.sub(phrase, lambda m: m.group(0) + ',', text, flags=re.IGNORECASE)
+
+    # ── Punto antes de mayúscula si no hay puntuación ─────────────────────────
     text = re.sub(r'([a-záéíóúüñ])\s+([A-ZÁÉÍÓÚÜÑ])', r'\1. \2', text)
 
-    return text
+    # ── Limpiar duplicados ─────────────────────────────────────────────────────
+    text = re.sub(r'\.{4,}', '...', text)
+    text = re.sub(r'(\.\.\.\s*){2,}', '... ', text)
+    text = re.sub(r'  +', ' ', text)
+
+    return text.strip()
 
 
 async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str = "+3%", pitch: str = "-4Hz") -> None:
@@ -1090,9 +1138,10 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     random.shuffle(front)
     ordered = front + ordered[pool_end:]
 
-    # Velocidad y tono ligeramente distintos cada video
-    rate_pct = random.choice([-2, 0, 3, 5, 8])
-    pitch_hz = random.choice([-6, -4, -2, 0, 2])
+    # Rate más lento = narración más dramática y expresiva
+    # Pitch más bajo = voz más grave/intensa (ideal para confesiones)
+    rate_pct = random.choice([-10, -8, -5, -3, 0])
+    pitch_hz = random.choice([-12, -10, -8, -6, -4])
     rate  = f"+{rate_pct}%" if rate_pct >= 0 else f"{rate_pct}%"
     pitch = f"{pitch_hz}Hz" if pitch_hz < 0 else f"+{pitch_hz}Hz"
 

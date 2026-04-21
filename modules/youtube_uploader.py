@@ -475,16 +475,24 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
         return
 
     logger.info(f"Subiendo thumbnail: {thumb.name}")
-    await _scroll(page, 250)
-    await _delay(0.8, 1.8)
 
     try:
+        # Cerrar cualquier dropdown/autocomplete abierto (ej: hashtags) antes de
+        # interactuar con el thumbnail — el dropdown hace que YouTube muestre el
+        # mensaje "solo en la app" en lugar del botón de subida
+        await page.evaluate("document.activeElement && document.activeElement.blur()")
+        await page.keyboard.send("Escape")
+        await _delay(0.8, 1.5)
+
+        await _scroll(page, 300)
+        await _delay(1.0, 2.0)
+
         ts = time.strftime("%Y%m%d_%H%M%S")
         logs_dir = Path(__file__).parent.parent / "logs"
         logs_dir.mkdir(exist_ok=True)
         await page.save_screenshot(str(logs_dir / f"thumbnail_diag_{ts}.png"))
 
-        thumb_btn_clicked = False
+        # Intentar hacer clic en el botón "Subir miniatura" si existe
         for selector in [
             "ytcp-thumbnails-compact-editor-tabs ytcp-button",
             "[aria-label*='miniatura' i]",
@@ -496,12 +504,12 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
                 btn = await page.select(selector, timeout=3)
                 if btn:
                     await _human_click(page, btn)
-                    thumb_btn_clicked = True
                     await _delay(1.0, 2.0)
                     break
             except Exception:
                 pass
 
+        # Buscar el input file del thumbnail
         thumb_input = None
         for selector in [
             "input[type='file'][accept*='image']",
@@ -524,13 +532,11 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
             except Exception:
                 pass
 
+        # Verificar si YouTube muestra el mensaje "solo en la app" (canal no verificado)
         try:
-            mobile_msg = await page.find("miniatura en la aplicaci", timeout=3)
+            mobile_msg = await page.find("miniatura en la aplicaci", timeout=2)
             if mobile_msg:
-                logger.warning(
-                    "YouTube requiere verificación del canal para subir thumbnails en desktop.\n"
-                    "  Ve a studio.youtube.com → Configuración → Canal → Verificar canal."
-                )
+                logger.warning("Thumbnail: canal no verificado para miniaturas en desktop — ve a Studio → Configuración → Canal → Verificar")
                 return
         except Exception:
             pass
@@ -542,7 +548,7 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
         else:
             logger.warning("Input de thumbnail no encontrado")
 
-        await _scroll(page, -250)
+        await _scroll(page, -300)
         await asyncio.sleep(random.uniform(0.6, 1.2))
 
     except Exception as e:
