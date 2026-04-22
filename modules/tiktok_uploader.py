@@ -21,20 +21,21 @@ logger = logging.getLogger(__name__)
 TIKTOK_UPLOAD_URL = "https://www.tiktok.com/upload"
 TIKTOK_CHROME_PROFILE = str(Path(config.BASE_DIR) / "chrome_profile_tiktok")
 
-
-async def _delay(min_s: float, max_s: float) -> None:
-    await asyncio.sleep(random.uniform(min_s, max_s))
-
-
-async def _human_type(element, text: str) -> None:
-    for char in text:
-        await element.send_keys(char)
-        await asyncio.sleep(random.uniform(0.04, 0.12))
+# Reutilizar helpers anti-detección del uploader de YouTube
+from modules.youtube_uploader import (
+    _delay,
+    _human_type,
+    _inject_stealth,
+    _scroll,
+    _random_mouse_wander,
+    _organic_pause,
+)
 
 
 async def _upload_async(
     video_path: Path,
     caption: str,
+    thumbnail_path: str = "",
 ) -> tuple[bool, str]:
     import nodriver as uc
 
@@ -48,6 +49,7 @@ async def _upload_async(
             "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
             "--window-size=1920,1080",
+            "--window-position=-2000,0",   # off-screen — invisible para el usuario
             "--no-sandbox",
             "--disable-dev-shm-usage",
         ],
@@ -55,9 +57,16 @@ async def _upload_async(
     )
 
     try:
-        # Warm-up breve antes de ir a la página de subida
+        # Inyectar stealth ANTES de cargar cualquier página
+        _blank = await browser.get("about:blank")
+        await _inject_stealth(_blank)
+
+        # Warm-up orgánico: visitar home de TikTok antes de ir a upload
         page = await browser.get("https://www.tiktok.com")
-        await _delay(3, 5)
+        await _delay(3, 6)
+        await _scroll(page, random.randint(100, 300))
+        await _random_mouse_wander(page)
+        await _delay(2, 4)
 
         page = await browser.get(TIKTOK_UPLOAD_URL)
         await _delay(5, 9)
@@ -167,11 +176,57 @@ async def _upload_async(
             })()""")
             await _delay(0.2, 0.4)
             caption_trimmed = caption[:2190]
-            await _human_type(caption_input, caption_trimmed)
+            await _human_type(caption_input, caption_trimmed, clear_first=False)
             logger.info(f"TikTok: caption escrito ({len(caption_trimmed)} chars)")
             await _delay(2.0, 3.0)
         else:
             logger.warning("TikTok: no se encontró el campo de caption")
+
+        # ── Portada personalizada (thumbnail) ────────────────────────────────
+        if thumbnail_path and Path(thumbnail_path).exists():
+            try:
+                logger.info("TikTok: intentando subir portada personalizada...")
+                await _delay(1.0, 2.0)
+
+                # Algunos botones de "Editar portada" / "Edit cover"
+                for sel in [
+                    "[data-e2e='cover-upload-btn']",
+                    "[data-testid='cover-upload-btn']",
+                    "button.upload-cover-btn",
+                ]:
+                    try:
+                        btn = await page.select(sel, timeout=4)
+                        if btn:
+                            await btn.click()
+                            await _delay(1.0, 2.0)
+                            break
+                    except Exception:
+                        pass
+
+                # Buscar input de imagen (puede ser shadow DOM o directo)
+                cover_id = await page.evaluate("""(function() {
+                    var inputs = document.querySelectorAll('input[type="file"]');
+                    for (var i = 0; i < inputs.length; i++) {
+                        var acc = (inputs[i].accept || '').toLowerCase();
+                        if (acc.includes('image') || acc.includes('jpeg') || acc.includes('png')) {
+                            var uid = '_cover_' + Date.now();
+                            inputs[i].setAttribute('id', uid);
+                            return uid;
+                        }
+                    }
+                    return null;
+                })()""")
+
+                if cover_id:
+                    cover_input = await page.select(f"#{cover_id}", timeout=3)
+                    if cover_input:
+                        await cover_input.send_file(str(Path(thumbnail_path).absolute()))
+                        await _delay(2.0, 3.5)
+                        logger.info("TikTok: portada personalizada subida")
+                else:
+                    logger.debug("TikTok: input de portada no encontrado (no crítico)")
+            except Exception as _ec:
+                logger.debug(f"TikTok portada (no crítico): {_ec}")
 
         # ── Botón Publicar — click via JavaScript por texto exacto ───────────
         await _delay(1.5, 2.5)
@@ -237,15 +292,17 @@ def upload_to_tiktok(
     title: str,
     description: str,
     tags: list[str],
+    thumbnail_path: str = "",
 ) -> str | None:
     """
     Sube un video a TikTok Studio.
 
     Args:
-        video_path:  Ruta al archivo MP4
-        title:       Título del video
-        description: Descripción breve
-        tags:        Lista de hashtags
+        video_path:     Ruta al archivo MP4
+        title:          Título del video
+        description:    Descripción breve
+        tags:           Lista de hashtags
+        thumbnail_path: Path a thumbnail.jpg para la portada (opcional)
 
     Returns:
         URL del perfil de TikTok si tuvo éxito, None si falló.
@@ -266,7 +323,7 @@ def upload_to_tiktok(
             loop = asyncio.ProactorEventLoop()
             asyncio.set_event_loop(loop)
             try:
-                ok, url = loop.run_until_complete(_upload_async(vp, caption))
+                ok, url = loop.run_until_complete(_upload_async(vp, caption, thumbnail_path))
             finally:
                 try:
                     loop.run_until_complete(asyncio.sleep(0))
@@ -275,7 +332,7 @@ def upload_to_tiktok(
                 loop.close()
                 asyncio.set_event_loop(None)
         else:
-            ok, url = asyncio.run(_upload_async(vp, caption))
+            ok, url = asyncio.run(_upload_async(vp, caption, thumbnail_path))
 
         if ok:
             logger.info(f"TikTok: video publicado → {url}")

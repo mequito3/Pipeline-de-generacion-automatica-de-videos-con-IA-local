@@ -44,8 +44,10 @@ from modules.youtube_uploader import (
     _human_click,
     _human_type,
     _inject_stealth,
+    _organic_pause,
     _random_mouse_wander,
     _scroll,
+    _simulate_reading,
     _think,
 )
 
@@ -53,14 +55,14 @@ logger = logging.getLogger(__name__)
 
 # ─── Límites diarios (conservadores para no activar filtros de spam) ──────────
 
-DAILY_EXTERNAL_LIMIT  = 5   # máx comentarios externos por día (distribuidos en sesiones)
-DAILY_OWN_LIMIT       = 2   # máx replies en canal propio por día
-SESSION_EXTERNAL_CAP  = 2   # máx por sesión — un humano no comenta en ráfaga
+DAILY_EXTERNAL_LIMIT  = getattr(config, "GROWTH_DAILY_EXTERNAL_LIMIT", 5)
+DAILY_OWN_LIMIT       = getattr(config, "GROWTH_DAILY_OWN_LIMIT", 2)
+SESSION_EXTERNAL_CAP  = getattr(config, "GROWTH_SESSION_EXTERNAL_CAP", 2)
 GROWTH_LOG_FILE      = Path(__file__).parent.parent / "growth_log.json"
 
 # ─── Keywords para buscar videos del nicho ────────────────────────────────────
 
-MIN_VIDEO_VIEWS = 50_000   # filtrar videos con menos de 50K vistas
+MIN_VIDEO_VIEWS = getattr(config, "GROWTH_MIN_VIDEO_VIEWS", 50_000)
 
 # Términos que indican contenido off-topic (anime, gaming, reacciones a ficción, etc.)
 _TITLE_BLACKLIST = [
@@ -242,6 +244,44 @@ NICHE_SEARCHES = [
     "confesión real infidelidad español narrado",
     "drama familiar real contado en primera persona",
 ]
+
+# ─── Mapa de topics de memoria → keywords de búsqueda ────────────────────────
+# Permite que analytics_agent guíe qué categorías prioriza el growth_agent
+
+_TOPIC_SEARCH_KEYWORDS: dict[str, list[str]] = {
+    "traicion":   ["engañó", "traicion", "infiel", "cuernos", "amante", "ponía los cuernos"],
+    "secreto":    ["secreto", "verdad", "descubrí", "oculto", "ocultaba"],
+    "familia":    ["suegra", "hermano", "padre", "madre", "familia", "adoptado", "herencia"],
+    "amigos":     ["amigo", "amiga", "amistad", "mejor amiga"],
+    "narci":      ["narcis", "manipul", "tóxic", "abuso", "control", "gaslight"],
+    "doble_vida": ["doble vida", "doble", "segunda familia", "quien decía"],
+}
+
+
+def _memory_boosted_searches() -> list[str]:
+    """
+    Devuelve NICHE_SEARCHES con los topics ganadores de analytics al frente.
+    Si la memoria es vieja o vacía, devuelve la lista sin cambios.
+    """
+    try:
+        from modules import agent_memory as _am
+        top_topics = _am.get_topic_bias()
+        if not top_topics:
+            return list(NICHE_SEARCHES)
+        priority, rest = [], []
+        for s in NICHE_SEARCHES:
+            sl = s.lower()
+            boosted = any(
+                kw in sl
+                for topic in top_topics[:2]
+                for kw in _TOPIC_SEARCH_KEYWORDS.get(topic, [])
+            )
+            (priority if boosted else rest).append(s)
+        logger.debug(f"growth: {len(priority)} búsquedas priorizadas por memoria ({top_topics[:2]})")
+        return priority + rest
+    except Exception:
+        return list(NICHE_SEARCHES)
+
 
 # ─── Generadores dinámicos de texto vía Groq ─────────────────────────────────
 
@@ -931,6 +971,14 @@ async def _comment_on_video(browser, video: dict) -> bool:
         page = await browser.get(video["url"])
         await _delay(3.0, 7.0)
 
+        # ── 0. Salida temprana "no me interesó" (15% de videos) ──────────────────
+        # Los humanos a veces abren un video y se van a los 3-8 segundos
+        if random.random() < 0.15:
+            bail_s = random.uniform(3.0, 9.0)
+            await asyncio.sleep(bail_s)
+            logger.debug(f"  👋 Video no interesó ({bail_s:.0f}s) — saliendo")
+            return False
+
         # ── 1. Orientación inicial (como cuando acabas de llegar al video) ───────
         # A veces el humano scrollea un poco arriba/abajo antes de enfocarse
         if random.random() < 0.5:
@@ -1240,8 +1288,109 @@ async def _engage_own_channel(browser, log: dict, own_video_url: str = "") -> in
     return own_done
 
 
+async def _pin_latest_comment(page) -> bool:
+    """
+    Pinea el comentario más reciente del canal (el que acabamos de publicar).
+
+    Flujo: hover en el primer comentario → clic en menú 3 puntos →
+           clic en "Fijar en la parte superior" → confirmar dialog.
+    """
+    try:
+        await _delay(3.0, 5.0)
+        await _scroll(page, 300)
+        await _delay(2.0, 3.0)
+
+        # Buscar el botón de acciones del primer comentario (menú 3 puntos)
+        action_btn = None
+
+        # Intentar via JavaScript traversal (más fiable que selectores CSS)
+        btn_id = await page.evaluate("""(function() {
+            var threads = document.querySelectorAll('ytd-comment-thread-renderer');
+            if (!threads.length) return null;
+            // Buscar en el primer hilo el botón de acciones
+            var candidates = threads[0].querySelectorAll('button#button, button[aria-label]');
+            for (var i = 0; i < candidates.length; i++) {
+                var lbl = (candidates[i].getAttribute('aria-label') || '').toLowerCase();
+                if (lbl.includes('opciones') || lbl.includes('options') || lbl.includes('more')) {
+                    var uid = '_pin_btn_' + Date.now();
+                    candidates[i].setAttribute('id', uid);
+                    return uid;
+                }
+            }
+            return null;
+        })()""")
+
+        if btn_id:
+            try:
+                action_btn = await page.select(f"#{btn_id}", timeout=4)
+            except Exception:
+                pass
+
+        if not action_btn:
+            logger.debug("  Pin: botón de acciones del comentario no encontrado")
+            return False
+
+        await _human_click(page, action_btn)
+        await _delay(1.0, 2.0)
+
+        # Click "Fijar en la parte superior" / "Pin to top" en el menú desplegable
+        pin_clicked = await page.evaluate("""(function() {
+            var items = document.querySelectorAll(
+                'ytd-menu-service-item-renderer, tp-yt-paper-item, [role="menuitem"]'
+            );
+            for (var item of items) {
+                var txt = (item.innerText || item.textContent || '').trim().toLowerCase();
+                if (txt.includes('fijar') || txt.includes('pin')) {
+                    item.click();
+                    return txt;
+                }
+            }
+            return null;
+        })()""")
+
+        if not pin_clicked:
+            logger.debug("  Pin: opción 'Fijar' no encontrada en el menú")
+            await page.keyboard.send("Escape")
+            return False
+
+        await _delay(1.0, 2.0)
+
+        # Confirmar el dialog "¿Fijar este comentario?"
+        confirmed = await page.evaluate("""(function() {
+            var selectors = [
+                'yt-confirm-dialog-renderer button',
+                'paper-button',
+                'button[class*="confirm"]',
+                'button[class*="action"]',
+                '[role="button"]',
+            ];
+            for (var s of selectors) {
+                var btns = document.querySelectorAll(s);
+                for (var btn of btns) {
+                    var txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    if (txt.includes('fijar') || txt.includes('pin') || txt === 'ok' || txt === 'aceptar' || txt === 'confirmar') {
+                        btn.click();
+                        return txt;
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if confirmed:
+            logger.info("  ✓ Comentario fijado en la parte superior del video")
+            return True
+
+        logger.debug("  Pin: dialog de confirmación no encontrado — comentario publicado sin fijar")
+        return False
+
+    except Exception as e:
+        logger.debug(f"  Error al fijar comentario: {e}")
+        return False
+
+
 async def _leave_pin_comment(page) -> bool:
-    """Publica el comentario-pregunta en el video actual. Retorna True si lo publicó."""
+    """Publica el comentario-pregunta en el video actual y lo fija. Retorna True si lo publicó."""
     try:
         comment_box = None
         for sel in [
@@ -1276,11 +1425,13 @@ async def _leave_pin_comment(page) -> bool:
         clean_title = re.sub(r"\s*[-–|].*$", "", page_title).strip()
         pin_text = await _generate_pin(clean_title)
         if not pin_text:
-            logger.warning("  _leave_pin_comment: Groq no generó texto — omitiendo pin")
+            logger.warning("  _leave_pin_comment: Groq no generó texto — omitiendo")
             return False
+
         await _human_type(active_box or comment_box, pin_text, clear_first=False)
         await _delay(1.5, 3.0)
 
+        submitted = False
         for sel in [
             "#submit-button button",
             "button[aria-label='Comentar']",
@@ -1291,16 +1442,25 @@ async def _leave_pin_comment(page) -> bool:
                 if btn:
                     await _human_click(page, btn)
                     await _delay(3.0, 5.0)
-                    logger.info(f"  ✓ Comentario pineado: {pin_text}")
-                    return True
+                    logger.info(f"  ✓ Comentario publicado: {pin_text[:60]}")
+                    submitted = True
+                    break
             except Exception:
                 pass
 
-        logger.warning("  _leave_pin_comment: botón submit no encontrado")
-        return False
+        if not submitted:
+            logger.warning("  _leave_pin_comment: botón submit no encontrado")
+            return False
+
+        # Ahora fijar el comentario recién publicado
+        pinned = await _pin_latest_comment(page)
+        if not pinned:
+            logger.info("  ℹ️ Comentario publicado pero no fijado (requiere ser owner del canal)")
+
+        return True
 
     except Exception as e:
-        logger.debug(f"  Error pineando comentario: {e}")
+        logger.debug(f"  Error en comentario/pin: {e}")
     return False
 
 
@@ -1474,14 +1634,384 @@ async def _dismiss_consent(page) -> None:
         pass
 
 
+# ─── ❤️  Heartear comentarios en video propio ─────────────────────────────────
+
+async def _heart_own_comments(page, max_hearts: int = 20) -> int:
+    """
+    Pone 'corazón de creador' en comentarios que aún no lo tienen.
+    YouTube muestra videos con más engagement del creador a más gente.
+    Solo visible al dueño del canal — señal auténtica de participación.
+    """
+    hearted = 0
+    try:
+        # Scroll para cargar comentarios
+        for _ in range(random.randint(2, 4)):
+            await _scroll(page, random.randint(300, 600))
+            await _delay(1.5, 3.0)
+
+        # Hover sobre cada comentario para que aparezca el botón corazón
+        threads = await page.select_all("ytd-comment-thread-renderer", timeout=8)
+        if not threads:
+            logger.debug("  Heart: sin comentarios visibles")
+            return 0
+
+        random.shuffle(threads)
+        for thread in threads[:max_hearts]:
+            try:
+                # Hover sobre el comentario para revelar botones de acción
+                await _human_click(page, thread)
+                await _delay(0.3, 0.7)
+
+                # Buscar botón corazón no activo
+                btn = await page.evaluate("""(function(el) {
+                    var btns = el.querySelectorAll('button[aria-label]');
+                    for (var b of btns) {
+                        var lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+                        if ((lbl.includes('heart') || lbl.includes('coraz')) && !b.classList.contains('yt-icon-button--selected') && !b.getAttribute('aria-pressed') === 'true') {
+                            b.click();
+                            return b.getAttribute('aria-label');
+                        }
+                    }
+                    return null;
+                })""", thread)
+
+                if btn:
+                    hearted += 1
+                    logger.debug(f"  ❤️  Heart dado: '{btn}'")
+                    await _delay(0.8, 2.0)
+
+                if hearted >= max_hearts:
+                    break
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.debug(f"  _heart_own_comments: {e}")
+    logger.info(f"  Corazones dados: {hearted}")
+    return hearted
+
+
+# ─── 📊  Community posts — encuestas y preguntas a suscriptores ───────────────
+
+_COMMUNITY_POST_TEMPLATES = [
+    # Encuesta de opinión sobre la historia
+    lambda topics: f"🔴 ¿Cuál de estas situaciones te parece MÁS injusta?\n\nDéjame saber abajo 👇 y cuéntame si a ti te pasó algo parecido.",
+    # Pregunta de engagement directa
+    lambda topics: f"Una pregunta que no me deja dormir...\n\n¿Alguna vez descubriste algo que hubieras preferido NO saber? 😶\n\nComenta con un SÍ o NO y cuéntame brevemente qué pasó 👇",
+    # Teaser del próximo video
+    lambda topics: f"🎙️ Mañana publico algo que me costó mucho contar...\n\nEs una de las historias MÁS impactantes que he narrado. ¿Están listos? 👁️\n\nActiven 🔔 para no perdérsela",
+    # Pregunta sobre lealtad/traición
+    lambda topics: f"💔 Pregunta del día:\n\n¿Perdonarías a tu mejor amiga si descubres que lleva meses saliendo con tu ex a tus espaldas?\n\nComenta SÍ / NO / DEPENDE y cuéntame por qué 👇",
+    # Reflexión personal
+    lambda topics: f"Algo que aprendí después de narrar cientos de historias reales...\n\n🔴 Las personas que más te lastiman suelen ser las que más confiaste.\n\n¿Están de acuerdo? ¿O no siempre es así? Cuéntenme 👇",
+    # Estadística + pregunta
+    lambda topics: f"📊 El 78% de las personas dicen que guardan al menos UN secreto que nunca han contado a nadie.\n\nYo sí lo creo después de todo lo que recibo.\n\n¿Tú tienes uno guardado? Solo comenta con un 🤐 si es así 👇",
+    # Pregunta sobre el canal
+    lambda topics: f"¿Qué tipo de historia quieren que narre MAÑANA? 🎙️\n\n👇 Voten en los comentarios:\nA) Traición de pareja\nB) Secreto familiar oscuro\nC) Amigo/a que te sorprendió\nD) Relación tóxica que no veías venir",
+]
+
+
+async def _generate_community_post_text(log: dict) -> str:
+    """Elige una plantilla de community post con variedad — nunca repite la misma dos veces seguidas."""
+    last_idx = log.get("last_community_template", -1)
+    available = [i for i in range(len(_COMMUNITY_POST_TEMPLATES)) if i != last_idx]
+    idx = random.choice(available)
+    log["last_community_template"] = idx
+    recent_topics = log.get("top_topics", ["traición", "secreto"])
+    return _COMMUNITY_POST_TEMPLATES[idx](recent_topics)
+
+
+async def _post_to_community(browser, log: dict) -> bool:
+    """
+    Publica un post en la pestaña Comunidad de YouTube Studio.
+    Solo lo hace si han pasado ≥ 40h desde el último post (máx ~1 cada 2 días).
+    """
+    last_post_ts = log.get("last_community_post_ts", 0)
+    hours_since = (time.time() - last_post_ts) / 3600
+    if hours_since < 40:
+        logger.info(f"  Community post: esperando {40 - hours_since:.0f}h más")
+        return False
+
+    try:
+        post_text = await _generate_community_post_text(log)
+        logger.info(f"  Community post: navegando a Studio...")
+
+        page = await browser.get("https://studio.youtube.com")
+        await _delay(4.0, 7.0)
+        await _dismiss_consent(page)
+        await _delay(2.0, 4.0)
+
+        # Ir a pestaña Comunidad
+        page = await browser.get("https://studio.youtube.com/channel/mine/community")
+        await _delay(5.0, 9.0)
+
+        # Click en el área de texto del post
+        textarea = None
+        for sel in [
+            "div[aria-label='Comparte algo con tus seguidores']",
+            "div[aria-label='Share something with your subscribers']",
+            "ytcp-social-post-text-input",
+            "div[contenteditable='true']",
+        ]:
+            try:
+                textarea = await page.select(sel, timeout=6)
+                if textarea:
+                    break
+            except Exception:
+                continue
+
+        if not textarea:
+            logger.warning("  Community post: no se encontró el área de texto")
+            return False
+
+        await _human_click(page, textarea)
+        await _delay(0.8, 1.5)
+
+        # Escribir el post carácter a carácter
+        await _human_type(textarea, post_text)
+        await _delay(1.5, 3.0)
+
+        # Click en "Publicar"
+        published = False
+        for btn_text in ["Publicar", "Post", "Compartir", "Share"]:
+            try:
+                btn = await page.find(btn_text, timeout=5)
+                if btn:
+                    await _human_click(page, btn)
+                    await _delay(2.0, 4.0)
+                    published = True
+                    break
+            except Exception:
+                continue
+
+        if published:
+            log["last_community_post_ts"] = time.time()
+            _save_log(log)
+            logger.info(f"  ✅ Community post publicado ({len(post_text)} chars)")
+            return True
+        else:
+            logger.warning("  Community post: no se encontró botón Publicar")
+            return False
+
+    except Exception as e:
+        logger.warning(f"  Community post error: {e}")
+        return False
+
+
+# ─── 👀  Ver brevemente el video propio (watch time) ─────────────────────────
+
+async def _watch_own_video(browser, video_url: str) -> None:
+    """
+    Abre el propio video y lo mira 25-55 segundos antes de cualquier otra acción.
+    Contribuye al watch time y señala al algoritmo que el creador lo ve.
+    """
+    try:
+        if not video_url:
+            return
+        import re as _re
+        m = _re.search(r"[?&]v=([a-zA-Z0-9_-]{11})|/shorts/([a-zA-Z0-9_-]{11})", video_url)
+        if not m:
+            return
+        vid_id = m.group(1) or m.group(2)
+        watch_url = f"https://www.youtube.com/watch?v={vid_id}"
+
+        logger.info(f"  👀 Viendo propio video {vid_id} (warm-up de watch time)...")
+        page = await browser.get(watch_url)
+        await _delay(3.0, 5.0)
+        await _dismiss_consent(page)
+
+        # Simular comportamiento de viewer real: scroll, mover mouse, esperar
+        watch_secs = random.triangular(25.0, 55.0, 38.0)
+        elapsed = 0.0
+        while elapsed < watch_secs:
+            chunk = random.uniform(8.0, 18.0)
+            await asyncio.sleep(chunk)
+            elapsed += chunk
+            await _random_mouse_wander(page)
+            if random.random() < 0.3:
+                await _scroll(page, random.randint(80, 200))
+
+        logger.info(f"  Watch time acumulado: {elapsed:.0f}s en video propio")
+    except Exception as e:
+        logger.debug(f"  _watch_own_video: {e}")
+
+
+# ─── 🎯  Optimizar títulos de videos con pocas vistas ────────────────────────
+
+async def _generate_new_title(old_title: str) -> str | None:
+    """Genera un título más clickbait para un video con bajo rendimiento."""
+    prompt = (
+        f"Un video de YouTube Shorts de confesiones en español tiene el título:\n"
+        f'"{old_title}"\n\n'
+        f"Genera UN SOLO título alternativo más clickbait y viral (máx 90 chars). "
+        f"Usa emojis (😱🔥💔), mayúsculas dramáticas, y empieza con verbo de acción. "
+        f"SOLO el título, sin comillas ni explicación."
+    )
+    result = await _groq_call(prompt, max_tokens=60)
+    if result:
+        title = result.strip().strip('"').strip("'")[:90]
+        return title if len(title) > 10 else None
+    return None
+
+
+async def _optimize_stale_titles(browser, log: dict) -> int:
+    """
+    Detecta videos con < 350 vistas después de 48h y les cambia el título.
+    Máx 2 optimizaciones por día para no levantar sospechas.
+    """
+    optimized = 0
+    max_per_day = 2
+    already_today = log.get("title_opts_today", {}).get(_today(), 0)
+    if already_today >= max_per_day:
+        return 0
+
+    analytics_file = Path(__file__).parent.parent / "analytics_log.json"
+    if not analytics_file.exists():
+        return 0
+
+    try:
+        data = json.loads(analytics_file.read_text(encoding="utf-8"))
+        if not data:
+            return 0
+        latest = data[-1]
+        now = datetime.now()
+
+        stale = []
+        for v in latest.get("videos", []):
+            pub_str = v.get("published_at", "")
+            if not pub_str:
+                continue
+            try:
+                pub_dt = datetime.strptime(pub_str, "%Y-%m-%d")
+                age_h = (now - pub_dt).total_seconds() / 3600
+                if 48 <= age_h <= 120 and v.get("views", 0) < 350:
+                    stale.append(v)
+            except Exception:
+                continue
+
+        if not stale:
+            logger.info("  Optimización títulos: ningún video estancado encontrado")
+            return 0
+
+        random.shuffle(stale)
+        for video in stale[:max_per_day - already_today]:
+            vid_id = video.get("video_id", "")
+            old_title = video.get("title", "")
+            if not vid_id or not old_title:
+                continue
+
+            new_title = await _generate_new_title(old_title)
+            if not new_title or new_title == old_title:
+                continue
+
+            logger.info(f"  🎯 Optimizando título: '{old_title}' → '{new_title}'")
+
+            try:
+                edit_url = f"https://studio.youtube.com/video/{vid_id}/edit"
+                page = await browser.get(edit_url)
+                await _delay(5.0, 9.0)
+
+                # Encontrar y editar el campo título
+                title_field = None
+                for sel in [
+                    "#title-textarea textarea",
+                    "ytcp-social-suggestion-input textarea",
+                    "textarea[aria-label*='tículo']",
+                    "textarea[aria-label*='itle']",
+                ]:
+                    try:
+                        title_field = await page.select(sel, timeout=8)
+                        if title_field:
+                            break
+                    except Exception:
+                        continue
+
+                if not title_field:
+                    logger.warning(f"  Campo título no encontrado para {vid_id}")
+                    continue
+
+                await _human_click(page, title_field)
+                await _delay(0.5, 1.0)
+                # Seleccionar todo y reemplazar
+                await page.evaluate("""(function(el) {
+                    el.focus();
+                    el.select();
+                    document.execCommand('selectAll', false, null);
+                })""", title_field)
+                await _delay(0.3, 0.6)
+                await _human_type(title_field, new_title)
+                await _delay(1.5, 3.0)
+
+                # Guardar
+                saved = False
+                for btn_text in ["Guardar", "Save"]:
+                    try:
+                        btn = await page.find(btn_text, timeout=5)
+                        if btn:
+                            await _human_click(page, btn)
+                            await _delay(2.0, 4.0)
+                            saved = True
+                            break
+                    except Exception:
+                        continue
+
+                if saved:
+                    optimized += 1
+                    log.setdefault("title_opts_today", {})[_today()] = already_today + optimized
+                    _save_log(log)
+                    logger.info(f"  ✅ Título actualizado: '{new_title}'")
+                    await _delay(8.0, 15.0)
+
+            except Exception as e:
+                logger.warning(f"  Error optimizando {vid_id}: {e}")
+                continue
+
+    except Exception as e:
+        logger.warning(f"  _optimize_stale_titles: {e}")
+
+    return optimized
+
+
+def _is_active_hour() -> bool:
+    """Solo actúa entre GROWTH_ACTIVE_HOUR_START y GROWTH_ACTIVE_HOUR_END (defecto 8-23h).
+    Actividad fuera de horas humanas es la señal de bot más obvia."""
+    h = datetime.now().hour
+    start = getattr(config, "GROWTH_ACTIVE_HOUR_START", 8)
+    end   = getattr(config, "GROWTH_ACTIVE_HOUR_END",   23)
+    return start <= h < end
+
+
+def _pick_session_mode() -> str:
+    """Varía aleatoriamente el tipo de sesión para romper el patrón mecánico.
+    Mismo usuario real: a veces solo navega, a veces solo responde, a veces comenta."""
+    return random.choices(
+        ["engage",  "engage",  "engage",  "browse_only", "reply_focus"],
+        weights=[40,          30,          20,          7,             3],
+        k=1
+    )[0]
+
+
 async def _growth_session_async(do_own: bool = True, own_video_url: str = "") -> dict:
     log = _load_log()
     ext_count, own_count = _daily_counts(log)
-    results = {"external": 0, "own": 0, "skipped": 0}
+    results = {"external": 0, "own": 0, "skipped": 0, "hearts": 0, "community": 0, "title_opts": 0}
+
+    if not _is_active_hour():
+        h = datetime.now().hour
+        logger.info(f"Growth agent: hora {h:02d}h fuera de ventana activa — omitiendo sesión")
+        return results
 
     if ext_count >= DAILY_EXTERNAL_LIMIT and own_count >= DAILY_OWN_LIMIT:
         logger.info("Límite diario de crecimiento alcanzado")
         return results
+
+    session_mode = _pick_session_mode()
+    if session_mode != "engage":
+        logger.info(f"Growth agent: modo de sesión '{session_mode}' (variación aleatoria)")
+        # browse_only: solo calienta y navega, cero comentarios externos
+        # reply_focus: solo responde canal propio, sin comentar ajenos
+        if session_mode == "browse_only":
+            ext_count = DAILY_EXTERNAL_LIMIT  # fuerza skip del paso 5
 
     profile_dir = Path(config.CHROME_PROFILE_DIR)
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -1512,8 +2042,8 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
             user_data_dir=str(profile_dir),
             browser_executable_path=chrome_bin or None,
             browser_args=[
-                "--start-maximized",
                 "--window-size=1920,1080",
+                "--window-position=-2000,0",   # off-screen — no visible para el usuario
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
@@ -1533,27 +2063,63 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
         await _scroll(page, random.randint(150, 350))
         await _random_mouse_wander(page)
         await _delay(2.0, 4.5)
+        # Pausa orgánica de "acomodarse" — un humano no empieza a actuar inmediatamente
+        await _organic_pause(page, 4.0, 18.0)
 
-        # ── Comentar en videos del nicho ──────────────────────────────────────
+        # ── PASO 1: Ver brevemente el propio video (warm-up watch time) ──────────
+        if own_video_url:
+            await _watch_own_video(browser, own_video_url)
+            await _delay(3.0, 6.0)
+
+        # ── PASO 2: Community post (cada ~48h) ────────────────────────────────
+        if do_own:
+            log = _load_log()
+            community_ok = await _post_to_community(browser, log)
+            if community_ok:
+                results["community"] += 1
+            await _delay(4.0, 8.0)
+
+        # ── PASO 3: Heartear comentarios en video propio ──────────────────────
+        if do_own and own_video_url:
+            try:
+                import re as _re
+                m = _re.search(r"[?&]v=([a-zA-Z0-9_-]{11})|/shorts/([a-zA-Z0-9_-]{11})", own_video_url)
+                if m:
+                    vid_id = m.group(1) or m.group(2)
+                    heart_page = await browser.get(f"https://www.youtube.com/watch?v={vid_id}")
+                    await _delay(4.0, 7.0)
+                    await _scroll(heart_page, random.randint(200, 500))
+                    await _delay(2.0, 4.0)
+                    hearts = await _heart_own_comments(heart_page, max_hearts=20)
+                    results["hearts"] += hearts
+                    await _delay(3.0, 6.0)
+            except Exception as e:
+                logger.debug(f"  Heart step error: {e}")
+
+        # ── PASO 4: Optimizar títulos de videos estancados ────────────────────
+        if do_own:
+            log = _load_log()
+            opts = await _optimize_stale_titles(browser, log)
+            results["title_opts"] += opts
+            if opts:
+                await _delay(5.0, 10.0)
+
+        # ── PASO 5: Comentar en videos del nicho ──────────────────────────────
         if ext_count < DAILY_EXTERNAL_LIMIT:
-            # Rotar keywords con ventana de 48h: cada keyword puede volver a usarse
-            # pasadas 48h → nunca se queda sin keywords frescas aunque el pool sea pequeño
             log = _load_log()
             from datetime import timedelta
             cutoff = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d")
             used_kws = log.get("used_keywords", {})
-            # Solo mantener keywords usadas en últimas 48h (bloqueadas)
             active_used = {k: d for k, d in used_kws.items() if d >= cutoff}
-            fresh = [k for k in NICHE_SEARCHES if k not in active_used]
+            fresh = [k for k in _memory_boosted_searches() if k not in active_used]
             if len(fresh) < 3:
-                active_used = {}  # si se agotaron, resetear todas
-                fresh = list(NICHE_SEARCHES)
+                active_used = {}
+                fresh = _memory_boosted_searches()
             keywords = random.sample(fresh, k=min(2, len(fresh)))
             log["used_keywords"] = active_used
             _save_log(log)
 
             session_done = 0
-
             for keyword in keywords:
                 log = _load_log()
                 ext_count, _ = _daily_counts(log)
@@ -1561,13 +2127,11 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
                     logger.info("Límite diario de comentarios externos alcanzado")
                     break
                 if session_done >= SESSION_EXTERNAL_CAP:
-                    logger.info(f"  Cap de sesión alcanzado ({SESSION_EXTERNAL_CAP}) — continuará en la próxima sesión")
+                    logger.info(f"  Cap de sesión ({SESSION_EXTERNAL_CAP}) — continuará en próxima sesión")
                     break
 
                 logger.info(f"Búsqueda: '{keyword}'")
                 videos = await _search_niche_videos(browser, keyword, log)
-
-                # Registrar keyword como usada
                 log.setdefault("used_keywords", {})[keyword] = _today()
                 _save_log(log)
 
@@ -1581,16 +2145,17 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
                     if ok:
                         session_done += 1
                         results["external"] += 1
-                        # Después de comentar: browsing orgánico antes del siguiente
                         if session_done < SESSION_EXTERNAL_CAP:
                             await _browse_casually(browser)
                     else:
                         results["skipped"] += 1
 
-                    # Pausa variable entre intentos (comentado o no)
+                    # Pausa orgánica variable entre videos — rompe el ritmo mecánico
                     await _delay(15.0, 40.0)
+                    if random.random() < 0.35:
+                        await asyncio.sleep(random.triangular(8.0, 28.0, 14.0))
 
-        # ── Engagement en canal propio ─────────────────────────────────────────
+        # ── PASO 6: Engagement canal propio (pin + responder) ─────────────────
         if do_own:
             log = _load_log()
             _, own_count = _daily_counts(log)
@@ -1609,8 +2174,15 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
 
     logger.info(
         f"Sesión terminada — externos: {results['external']} | "
-        f"propios: {results['own']} | omitidos: {results['skipped']}"
+        f"propios: {results['own']} | ❤️ hearts: {results['hearts']} | "
+        f"📊 community: {results['community']} | 🎯 títulos: {results['title_opts']} | "
+        f"omitidos: {results['skipped']}"
     )
+    try:
+        from modules import agent_memory as _am
+        _am.update_from_growth(results, "youtube")
+    except Exception:
+        pass
     return results
 
 

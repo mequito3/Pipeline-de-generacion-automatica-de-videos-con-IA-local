@@ -489,81 +489,137 @@ def get_subtitle_scheme(text: str) -> dict:
 
 # Adjetivos/participios en primera persona que revelan el género del narrador
 _FEMALE_MARKERS = {
-    "traicionada",
-    "engañada",
-    "abandonada",
-    "enamorada",
-    "confundida",
-    "devastada",
-    "herida",
-    "humillada",
-    "desesperada",
-    "decepcionada",
-    "avergonzada",
-    "embarazada",
-    "casada",
-    "divorciada",
-    "asustada",
-    "sorprendida",
-    "equivocada",
-    "cansada",
-    "perdida",
-    "destrozada",
-    "rota",
-    "atrapada",
-    "ilusionada",
-    "enamoradísima",
-    "celosa",
-    "sola",  # "me quedé sola" — alta señal femenina en narrativa
+    # ── Participios de estado emocional ──────────────────────────────────────
+    "traicionada", "engañada", "abandonada", "enamorada", "confundida",
+    "devastada", "herida", "humillada", "desesperada", "decepcionada",
+    "avergonzada", "embarazada", "casada", "divorciada", "asustada",
+    "sorprendida", "equivocada", "cansada", "perdida", "destrozada",
+    "rota", "atrapada", "ilusionada", "celosa", "lastimada",
+    "usada", "manipulada", "controlada", "ignorada", "rechazada",
+    "querida", "amada", "valorada", "preocupada", "angustiada",
+    "desilusionada", "resignada", "enamoradísima", "obsesionada",
+    "enamorada", "seducida", "acosada", "maltratada", "abusada",
+    "dominada", "sometida", "silenciada", "invisibilizada", "ninguneada",
+    "olvidada", "menospreciada", "subestimada", "minimizada", "culpada",
+    "juzgada", "señalada", "criticada", "burlada", "ridiculizada",
+    "insultada", "amenazada", "golpeada", "agredida", "violentada",
+    "presionada", "forzada", "obligada", "chantajeada", "extorsionada",
+    "herida", "lastimada", "dañada", "marcada", "afectada",
+    "impactada", "afectada", "conmocionada", "perturbada", "traumatizada",
+    "bloqueada", "paralizada", "desbordada", "agotada", "quemada",
+    "destruida", "aniquilada", "aplastada", "hundida", "derrumbada",
+    # ── Adjetivos de estado/situación ─────────────────────────────────────────
+    "sola", "triste", "feliz", "furiosa", "enojada", "molesta",
+    "harta", "desesperada", "nerviosa", "ansiosa", "deprimida",
+    "vulnerable", "frágil", "fuerte", "valiente", "cobarde",
+    "ingenua", "tonta", "inteligente", "lista", "astuta",
+    "inocente", "culpable", "responsable", "irresponsable",
+    "libre", "presa", "encadenada", "liberada", "independiente",
+    "dependiente", "insegura", "segura", "confiada", "desconfiada",
+    "celosa", "envidiosa", "orgullosa", "avergonzada", "humilde",
+    "arrogante", "soberbia", "miedosa", "valiente", "resignada",
+    # ── Sustantivos relacionales (solo femenino) ───────────────────────────────
+    "novia", "esposa", "mamá", "madre", "hija", "mujer", "chica",
+    "amiga", "abuela", "cuñada", "suegra", "nuera", "hermana",
+    "tía", "sobrina", "prima", "madrina", "tutora", "jefa",
+    "compañera", "colega", "vecina", "conocida", "enemiga",
+    "rival", "amante", "querida", "concubina", "nana", "niñera",
+    # ── Primera persona femenina ───────────────────────────────────────────────
+    "embarazada", "viuda", "soltera", "separada", "divorciada",
+    "prometida", "comprometida", "recién", "recasada",
+    # ── Verbos reflexivos que revelan género ──────────────────────────────────
+    "quedé", "estaba", "estuve", "sentí", "me sentía",
 }
 
 _MALE_MARKERS = {
-    "traicionado",
-    "engañado",
-    "abandonado",
-    "enamorado",
-    "confundido",
-    "devastado",
-    "herido",
-    "humillado",
-    "desesperado",
-    "decepcionado",
-    "avergonzado",
-    "casado",
-    "divorciado",
-    "asustado",
-    "sorprendido",
-    "equivocado",
-    "cansado",
-    "perdido",
-    "destrozado",
-    "roto",
-    "atrapado",
-    "ilusionado",
-    "celoso",
-    "solo",  # "me quedé solo" — alta señal masculina
+    # ── Participios de estado emocional ──────────────────────────────────────
+    "traicionado", "engañado", "abandonado", "enamorado", "confundido",
+    "devastado", "herido", "humillado", "desesperado", "decepcionado",
+    "avergonzado", "casado", "divorciado", "asustado", "sorprendido",
+    "equivocado", "cansado", "perdido", "destrozado", "roto",
+    "atrapado", "ilusionado", "celoso", "lastimado",
+    "usado", "manipulado", "controlado", "ignorado", "rechazado",
+    "querido", "amado", "valorado", "preocupado", "angustiado",
+    "desilusionado", "resignado", "obsesionado",
+    "seducido", "acosado", "maltratado", "abusado",
+    "dominado", "sometido", "silenciado", "ninguneado",
+    "olvidado", "menospreciado", "subestimado", "minimizado", "culpado",
+    "juzgado", "señalado", "criticado", "burlado", "ridiculizado",
+    "insultado", "amenazado", "golpeado", "agredido",
+    "presionado", "forzado", "obligado", "chantajeado", "extorsionado",
+    "dañado", "marcado", "afectado",
+    "impactado", "conmocionado", "perturbado", "traumatizado",
+    "bloqueado", "paralizado", "desbordado", "agotado", "quemado",
+    "destruido", "aniquilado", "aplastado", "hundido", "derrumbado",
+    # ── Adjetivos de estado/situación ─────────────────────────────────────────
+    "solo", "triste", "feliz", "furioso", "enojado", "molesto",
+    "harto", "desesperado", "nervioso", "ansioso", "deprimido",
+    "vulnerable", "frágil", "fuerte", "valiente", "cobarde",
+    "ingenuo", "tonto", "inteligente", "listo", "astuto",
+    "inocente", "culpable", "responsable", "irresponsable",
+    "libre", "preso", "encadenado", "liberado", "independiente",
+    "dependiente", "inseguro", "seguro", "confiado", "desconfiado",
+    "celoso", "envidioso", "orgulloso", "avergonzado", "humilde",
+    "arrogante", "soberbio", "miedoso", "valiente", "resignado",
+    # ── Sustantivos relacionales (solo masculino) ──────────────────────────────
+    "novio", "esposo", "papá", "padre", "hijo", "hombre", "chico",
+    "amigo", "abuelo", "cuñado", "suegro", "yerno", "hermano",
+    "tío", "sobrino", "primo", "padrino", "tutor", "jefe",
+    "compañero", "colega", "vecino", "conocido", "enemigo",
+    "rival", "amante", "concubino", "marido",
+    # ── Primera persona masculina ──────────────────────────────────────────────
+    "viudo", "soltero", "separado", "divorciado",
+    "prometido", "comprometido", "recasado",
 }
 
 
 def detect_narrator_gender(text: str) -> str:
     """
-    Detecta el género del narrador analizando adjetivos en primera persona.
+    Detecta el género del narrador en español.
 
-    En español los adjetivos y participios concuerdan en género con el sujeto.
-    'Me sentí traicionadA' → narrador femenino.
-    'Me sentí traicionadO' → narrador masculino.
+    Estrategia de tres capas (de más a menos específica):
+
+    1. Frases explícitas en primera persona: "soy una mujer", "mi esposo", etc.
+       → Señal fuerte, peso doble.
+    2. Adjetivos/participios concordados: "traicionada" vs "traicionado".
+       → Cuenta frecuencia con regex (no set) para no perder "sola," "sola." etc.
+    3. Desempate: femenino por defecto (la mayoría del contenido del canal
+       es narrado por mujeres, alineado con la audiencia de GATA CURIOSA).
 
     Returns:
-        "female" | "male"  (default "female" si no hay señal clara)
+        "female" | "male"
     """
-    words = set(text.lower().split())
-    female_score = len(words & _FEMALE_MARKERS)
-    male_score = len(words & _MALE_MARKERS)
+    import re
+
+    text_lower = text.lower()
+    # Tokenizar con regex: captura palabras sin puntuación pegada
+    tokens = re.findall(r"[a-záéíóúüñ]+", text_lower)
+
+    # ── Capa 1: frases explícitas (peso x2) ──────────────────────────────────
+    _FEMALE_PHRASES = [
+        "soy una mujer", "como mujer", "siendo mujer", "mi esposo", "mi marido",
+        "mi novio", "quedé embarazada", "me quedé sola", "soy madre",
+        "mi ex esposo", "mi ex novio", "mi ex marido",
+    ]
+    _MALE_PHRASES = [
+        "soy un hombre", "como hombre", "siendo hombre", "mi esposa", "mi novia",
+        "me quedé solo", "soy padre", "mi ex esposa", "mi ex novia",
+        "mi ex mujer",
+    ]
+    female_score = sum(2 for p in _FEMALE_PHRASES if p in text_lower)
+    male_score   = sum(2 for p in _MALE_PHRASES   if p in text_lower)
+
+    # ── Capa 2: adjetivos/participios — frecuencia, no solo presencia ─────────
+    for t in tokens:
+        if t in _FEMALE_MARKERS:
+            female_score += 1
+        if t in _MALE_MARKERS:
+            male_score += 1
 
     gender = "male" if male_score > female_score else "female"
     logger.info(
-        f"Género narrador detectado: {gender} "
-        f"(señales fem={female_score}, masc={male_score})"
+        f"Género narrador: {gender.upper()} "
+        f"(fem={female_score}, masc={male_score})"
     )
     return gender
 
@@ -670,6 +726,25 @@ def _fix_word_timings(words_data: list, min_dur: float = 0.15) -> list:
     return fixed
 
 
+def _filter_transcript_artifacts(words: list) -> list:
+    """
+    Elimina artefactos de transcripción al inicio del audio.
+
+    Whisper/stable-ts a veces transcribe el silencio o ruido inicial como
+    palabras cortas ("hm", "uh", "m") o letras sueltas. Esto causa que aparezca
+    una sola palabra en los subtítulos antes de que el narrador empiece a hablar.
+    """
+    _NOISE_WORDS = {"hmm", "mm", "hm", "uh", "ah", "eh", "oh", "um", "mhm", "m", "h"}
+    filtered = []
+    for word, start, dur in words:
+        clean = word.strip().lower().strip(".,!?;:-\"'")
+        if start < 0.35 and (len(clean) <= 1 or clean in _NOISE_WORDS):
+            logger.debug(f"Artefacto filtrado: '{word}' @ {start:.2f}s")
+            continue
+        filtered.append((word, start, dur))
+    return filtered or words  # devolver original si filtrar dejó lista vacía
+
+
 def format_ass_time(seconds: float) -> str:
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
@@ -697,8 +772,8 @@ def _write_ass_file(words_data: list, output_path: Path, audio_duration: float =
     _scheme       = scheme or random.choice(_SCHEMES_LIST)
     base_size     = getattr(config, "SUBTITLE_FONT_SIZE", 88)
     font_size     = base_size + random.choice([-4, -2, 0, 0, 2, 4])
-    margin_v_base = getattr(config, "SUBTITLE_MARGIN_V", 800)
-    margin_v      = margin_v_base + random.choice([-150, -75, 0, 0, 75, 150])
+    margin_v_base = getattr(config, "SUBTITLE_MARGIN_V", 1000)
+    margin_v      = margin_v_base + random.choice([-50, 0, 0, 0, 50, 100])
     subtitle_font = getattr(config, "SUBTITLE_FONT", "Impact")
     logger.debug(f"Subtítulos: esquema '{_scheme['name']}' | font_size={font_size} | margin_v={margin_v}")
 
@@ -807,8 +882,10 @@ def _get_stable_ts_word_timestamps(audio_path: Path, language: str = "es") -> li
         import stable_whisper
 
         if _stable_ts_model is None:
-            logger.info("stable-ts: cargando modelo base (primera vez)...")
-            _stable_ts_model = stable_whisper.load_model("base")
+            # Forzar CPU para no competir por VRAM con VoiceBox u otros modelos activos
+            whisper_device = getattr(config, "WHISPER_DEVICE", "cpu")
+            logger.info(f"stable-ts: cargando modelo base en {whisper_device} (primera vez)...")
+            _stable_ts_model = stable_whisper.load_model("base", device=whisper_device)
 
         logger.info("stable-ts: transcribiendo para timestamps exactos...")
         result = _stable_ts_model.transcribe(
@@ -865,7 +942,9 @@ def _get_whisper_word_timestamps(audio_path: Path, language: str = "es") -> list
 
         if _faster_whisper_model is None:
             model_size = "base"  # 142MB — mejor para español que 'tiny'
-            device = "cuda" if _cuda_available() else "cpu"
+            # Forzar CPU por defecto: VoiceBox ya usa VRAM y cargar aquí en CUDA agota la memoria.
+            # Para usar GPU explícitamente: WHISPER_DEVICE=cuda en .env
+            device = getattr(config, "WHISPER_DEVICE", "cpu")
             compute_type = "float16" if device == "cuda" else "int8"
             logger.info(
                 f"faster-whisper: cargando modelo '{model_size}' en {device} (primera vez)..."
@@ -1039,6 +1118,26 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str 
     with open(output_mp3, "wb") as f:
         f.write(audio_data)
 
+    # Fade-in suave para evitar inicio abrupto (edge-tts no aplica ningún procesado de audio)
+    import subprocess as _sp
+    _fade_tmp = output_mp3.with_suffix(".fadein.mp3")
+    try:
+        _fr = _sp.run(
+            ["ffmpeg", "-y", "-i", str(output_mp3),
+             "-af", "afade=t=in:ss=0:d=0.12",
+             "-c:a", "libmp3lame", "-qscale:a", "2",
+             str(_fade_tmp)],
+            capture_output=True, timeout=30,
+        )
+        if _fr.returncode == 0 and _fade_tmp.exists() and _fade_tmp.stat().st_size > 0:
+            output_mp3.unlink(missing_ok=True)
+            _fade_tmp.rename(output_mp3)
+    except Exception as _fe:
+        logger.debug(f"edge-tts fade-in omitido: {_fe}")
+    finally:
+        if _fade_tmp.exists():
+            _fade_tmp.unlink(missing_ok=True)
+
     # ── Timestamps exactos con stable-ts (fuente primaria — forced alignment) ──
     timed_words = _get_stable_ts_word_timestamps(output_mp3)
 
@@ -1085,6 +1184,9 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str 
             "Usando distribución uniforme (instala faster-whisper para sync exacto)"
         )
 
+    # Filtrar artefactos de transcripción al inicio (ruidos transcritos como palabras sueltas)
+    timed_words = _filter_transcript_artifacts(timed_words)
+
     # ── Post-procesar: eliminar solapamientos y garantizar duración mínima ─────
     timed_words = _fix_word_timings(timed_words)
 
@@ -1099,6 +1201,221 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str 
     _write_ass_file(timed_words, ass_path, audio_duration=audio_dur, scheme=get_subtitle_scheme(text))
     if timed_words:
         logger.info(f"ASS generado: {len(timed_words)} palabras sincronizadas")
+
+
+# ─── Preprocesador para VoiceBox ─────────────────────────────────────────────
+
+def _prepare_text_for_voicebox(text: str) -> str:
+    """
+    Limpia y optimiza el texto antes de enviarlo a VoiceBox.
+
+    VoiceBox (XTTS) es sensible a:
+    - Símbolos raros / emojis → generan artefactos o silencios
+    - Números en dígitos → los lee como "uno dos tres" en vez de "doce"
+    - Puntuación excesiva → pausas demasiado largas
+    - Texto muy junto sin comas → narración sin respiración
+
+    A diferencia de edge-tts, VoiceBox NO necesita CAPS para énfasis
+    (el modelo clona la prosodia natural).
+    """
+    import re
+
+    # ── 1. Eliminar emojis y símbolos no verbalizables ────────────────────────
+    text = re.sub(r"[^\w\s.,!?;:\-'\"áéíóúüñÁÉÍÓÚÜÑ]", " ", text)
+
+    # ── 2. Normalizar números frecuentes a palabras ───────────────────────────
+    _NUM_MAP = {
+        r"\b1\b": "uno",   r"\b2\b": "dos",    r"\b3\b": "tres",
+        r"\b4\b": "cuatro", r"\b5\b": "cinco",  r"\b6\b": "seis",
+        r"\b7\b": "siete", r"\b8\b": "ocho",   r"\b9\b": "nueve",
+        r"\b10\b": "diez", r"\b11\b": "once",  r"\b12\b": "doce",
+        r"\b13\b": "trece", r"\b14\b": "catorce", r"\b15\b": "quince",
+        r"\b20\b": "veinte", r"\b30\b": "treinta", r"\b40\b": "cuarenta",
+        r"\b50\b": "cincuenta", r"\b100\b": "cien",
+    }
+    for pattern, word in _NUM_MAP.items():
+        text = re.sub(pattern, word, text)
+
+    # ── 3. Pausas largas antes de conectores de revelación ────────────────────
+    _REVEAL = [
+        r"pero entonces", r"de repente", r"fue entonces cuando",
+        r"hasta que", r"en ese momento", r"y entonces",
+        r"lo que no sabía", r"fue cuando",
+    ]
+    for phrase in _REVEAL:
+        text = re.sub(
+            rf"(?<![.!?,])\s+({phrase})\b",
+            r", \1",
+            text, flags=re.IGNORECASE,
+        )
+
+    # ── 4. Coma tras interjecciones emocionales (respiración natural) ─────────
+    for phrase in [r"o sea", r"la neta", r"te juro", r"de verdad", r"literal"]:
+        text = re.sub(
+            rf"\b({phrase})\b(?!\s*,)", r"\1,", text, flags=re.IGNORECASE
+        )
+
+    # ── 5. Normalizar puntuación ──────────────────────────────────────────────
+    text = re.sub(r"\.{4,}", "...", text)       # más de 3 puntos → 3
+    text = re.sub(r"!{2,}", "!", text)           # múltiples ! → uno
+    text = re.sub(r"\?{2,}", "?", text)          # múltiples ? → uno
+    text = re.sub(r"\s{2,}", " ", text)          # espacios dobles
+
+    return text.strip()
+
+
+# ─── Backend VoiceBox (voz clonada local) ────────────────────────────────────
+
+_VOICEBOX_URL            = "http://127.0.0.1:17493"
+_VOICEBOX_PROFILE_MALE   = "082af0fc-ac34-4510-af56-9fd7f6266c32"  # hombre americo
+_VOICEBOX_PROFILE_FEMALE = "a4b1d4a5-2074-451b-9c71-9d95100a3c94"  # voz mujer deanira
+
+# Filtros de limpieza por género (el hombre tiene más ruido de ventilador):
+#   volume=N       — boost de ganancia antes de procesar (mujer necesita más que hombre)
+#   highpass=f=80  — elimina zumbido bajo el fondo (<80Hz)
+#   afftdn         — reducción de ruido FFT adaptativa
+#     nf = noise floor en dB (más negativo = más agresivo)
+#     nr = noise reduction 0-97 (97=máximo)
+#   loudnorm I=-10 — target loudness para Shorts/TikTok (YouTube normaliza a -14 LUFS,
+#                    así que -10 suena presente y con punch sin clipear)
+# Si suena "metálico" o "robótico" después del filtro → subir nf (ej: nf=-20)
+# Si la voz sigue suave → subir VOICE_VOLUME_FEMALE / VOICE_VOLUME_MALE en .env
+_VOICEBOX_DENOISE_FEMALE = (
+    "afade=t=in:ss=0:d=0.12,"        # fade-in suave — evita inicio abrupto
+    "volume={vol_f},"
+    "highpass=f=80,"
+    "afftdn=nf=-25:nr=70,"
+    "loudnorm=I=-10:TP=-1.5:LRA=11"
+)
+_VOICEBOX_DENOISE_MALE = (
+    "afade=t=in:ss=0:d=0.12,"        # fade-in suave — el hombre sonaba muy de golpe
+    "volume={vol_m},"
+    "highpass=f=80,"
+    "afftdn=nf=-30:nr=80,"           # nr=80 (antes 85) — menos agresivo, preserva más la voz
+    "loudnorm=I=-10:TP=-1.5:LRA=11" # -10 LUFS (igual que femenina — se oía más bajo antes)
+)
+
+
+def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") -> str:
+    """
+    Genera audio con la voz clonada via VoiceBox (http://127.0.0.1:17493).
+    Flujo: POST /generate → poll /history/{id} → GET /audio/{id} → WAV → MP3 → ASS
+    """
+    import requests as _req
+    import subprocess
+    import time as _time
+
+    if gender == "auto":
+        gender = detect_narrator_gender(text)
+
+    profile_id   = _VOICEBOX_PROFILE_MALE if gender == "male" else _VOICEBOX_PROFILE_FEMALE
+    gender_label = "MASCULINO" if gender == "male" else "FEMENINO"
+    logger.info(f"VoiceBox: narrador {gender_label} | perfil {profile_id[:8]}...")
+
+    # Preprocesar texto: limpia emojis, normaliza números, agrega pausas naturales
+    clean_text = _prepare_text_for_voicebox(text)
+    logger.debug(f"VoiceBox texto preprocesado: {len(clean_text)} chars")
+
+    # 1. Lanzar generación asíncrona
+    try:
+        r = _req.post(
+            f"{_VOICEBOX_URL}/generate",
+            json={"profile_id": profile_id, "text": clean_text, "language": "es"},
+            timeout=30,
+        )
+        r.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"VoiceBox no disponible: {e}. ¿Está corriendo en {_VOICEBOX_URL}?")
+
+    gen_id = r.json()["id"]
+    logger.info(f"VoiceBox: generando (id={gen_id[:8]}…)")
+
+    # 2. Polling hasta completar — timeout 2 horas, reintentos ante reconexiones
+    deadline      = _time.time() + 7200
+    poll_errors   = 0
+    poll_count    = 0
+    last_status   = ""
+    start_time    = _time.time()
+    while _time.time() < deadline:
+        _time.sleep(5)
+        poll_count += 1
+        elapsed = int(_time.time() - start_time)
+        try:
+            poll = _req.get(f"{_VOICEBOX_URL}/history/{gen_id}", timeout=20)
+            poll_errors = 0
+            if poll.status_code != 200:
+                logger.warning(f"VoiceBox poll HTTP {poll.status_code} (t={elapsed}s) — reintentando...")
+                continue
+            d = poll.json()
+            status = d.get("status", "")
+            if status != last_status:
+                logger.info(f"VoiceBox estado: '{status}' (t={elapsed}s)")
+                last_status = status
+            elif poll_count % 12 == 0:
+                logger.info(f"VoiceBox generando... estado='{status}' t={elapsed}s — en cola, espera normal")
+            if status == "completed":
+                break
+            if status == "error":
+                raise RuntimeError(f"VoiceBox error en generación: {d.get('error', '?')}")
+        except RuntimeError:
+            raise
+        except Exception as _pe:
+            poll_errors += 1
+            logger.warning(f"VoiceBox poll error #{poll_errors} (t={elapsed}s): {_pe}")
+            if poll_errors >= 6:
+                raise RuntimeError(
+                    "VoiceBox dejó de responder. Reinicia VoiceBox y vuelve a intentar."
+                )
+            continue
+    else:
+        raise TimeoutError("VoiceBox: timeout de 30 min — el modelo tardó demasiado")
+
+    # 3. Descargar WAV
+    audio_r = _req.get(f"{_VOICEBOX_URL}/audio/{gen_id}", timeout=60)
+    audio_r.raise_for_status()
+    wav_path = output_path.with_suffix(".wav")
+    wav_path.write_bytes(audio_r.content)
+    logger.info(f"VoiceBox: WAV descargado ({len(audio_r.content) // 1024} KB)")
+
+    # 4. Limpieza de ruido de fondo (ventilador/hiss del micrófono) + WAV → MP3
+    vol_f = float(getattr(config, "VOICE_VOLUME_FEMALE", 2.0))
+    vol_m = float(getattr(config, "VOICE_VOLUME_MALE",   1.4))
+    _filter_female = _VOICEBOX_DENOISE_FEMALE.format(vol_f=vol_f)
+    _filter_male   = _VOICEBOX_DENOISE_MALE.format(vol_m=vol_m)
+    denoise_filter = _filter_male if gender == "male" else _filter_female
+    ffmpeg_r = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(wav_path),
+            "-af", denoise_filter,
+            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            str(output_path),
+        ],
+        capture_output=True, timeout=120,
+    )
+    wav_path.unlink(missing_ok=True)
+    if ffmpeg_r.returncode != 0 or not output_path.exists():
+        raise RuntimeError(f"ffmpeg limpieza+MP3 falló: {ffmpeg_r.stderr.decode()[:300]}")
+
+    # 5. Subtítulos ASS — misma cascada que edge-tts
+    timed_words = _get_stable_ts_word_timestamps(output_path)
+    if not timed_words:
+        timed_words = _get_whisper_word_timestamps(output_path)
+    if not timed_words:
+        total_dur = get_audio_duration(output_path)
+        words     = text.split()
+        if words:
+            w_dur = max(0.3, (total_dur - 0.5) / len(words))
+            timed_words = [(w, 0.3 + i * w_dur, w_dur) for i, w in enumerate(words)]
+        logger.warning("VoiceBox: usando distribución uniforme para subtítulos")
+
+    timed_words = _filter_transcript_artifacts(timed_words)
+    timed_words = _fix_word_timings(timed_words)
+    audio_dur   = get_audio_duration(output_path)
+    ass_path    = output_path.with_suffix(".ass")
+    _write_ass_file(timed_words, ass_path, audio_duration=audio_dur, scheme=get_subtitle_scheme(text))
+    logger.info(f"VoiceBox: ASS generado ({len(timed_words)} palabras sincronizadas)")
+
+    return str(output_path)
 
 
 def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") -> str:
@@ -1345,13 +1662,15 @@ def generate_audio(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    backend = getattr(config, "TTS_BACKEND", "edge").lower()
+    backend = getattr(config, "TTS_BACKEND", "voicebox").lower()
     word_count = len(text.split())
     logger.info(
         f"Generando audio TTS ({word_count} palabras) | backend='{backend}' | gender='{gender}'"
     )
 
-    if backend == "edge":
+    if backend == "voicebox":
+        result = _generate_with_voicebox(text, output_path, gender=gender)
+    elif backend == "edge":
         result = _generate_with_edge_tts(text, output_path, gender=gender)
     else:
         result = _generate_with_pyttsx3(text, output_path)

@@ -35,6 +35,8 @@ OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # lee del .env
 # Regístrate gratis en https://www.pexels.com/api/ (200 req/hora, 20k/mes)
 PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
 USE_PEXELS: bool = True  # Siempre Pexels — Stable Diffusion eliminado
+PEXELS_POOL_SIZE: int = int(os.getenv("PEXELS_POOL_SIZE", "15"))  # clips por keyword
+PEXELS_HISTORY_LIMIT: int = int(os.getenv("PEXELS_HISTORY_LIMIT", "100"))  # clips recientes a evitar
 
 # ─── Video ────────────────────────────────────────────────────────────────────
 VIDEO_WIDTH: int = 1080
@@ -53,22 +55,37 @@ TTS_BACKEND: str = os.getenv("TTS_BACKEND", "edge")
 TTS_EDGE_VOICE: str = os.getenv("TTS_EDGE_VOICE", "es-MX-DaliaNeural")
 TTS_VOICE_RATE: int = int(os.getenv("TTS_VOICE_RATE", "175"))
 TTS_VOLUME: float = 1.0
+# WHISPER_DEVICE: dispositivo para stable-ts / faster-whisper (subtítulos).
+# "cpu" por defecto — evita conflicto de VRAM cuando VoiceBox ya carga su modelo en GPU.
+# Cambia a "cuda" solo si tienes VRAM de sobra (>= 8 GB libres con VoiceBox activo).
+WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")
+# Boost de volumen para la voz clonada (VoiceBox) antes del filtro de limpieza.
+# La voz femenina clonada suena más suave de base → necesita más ganancia.
+VOICE_VOLUME_FEMALE: float = float(os.getenv("VOICE_VOLUME_FEMALE", "2.0"))
+VOICE_VOLUME_MALE:   float = float(os.getenv("VOICE_VOLUME_MALE",   "1.4"))
 
-# ─── WhatsApp / Aprobación manual ────────────────────────────────────────────
-# Si es true, el pipeline pausa y espera tu SI/NO en WhatsApp antes de publicar
-WHATSAPP_APPROVAL_ENABLED: bool = (
-    os.getenv("WHATSAPP_APPROVAL_ENABLED", "false").lower() == "true"
+# ─── Telegram / Aprobación manual ────────────────────────────────────────────
+# Si es true, el pipeline pausa y espera tu ✅/❌ en Telegram antes de publicar
+TELEGRAM_APPROVAL_ENABLED: bool = (
+    os.getenv("TELEGRAM_APPROVAL_ENABLED", "false").lower() == "true"
 )
-TWILIO_ACCOUNT_SID: str  = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN: str   = os.getenv("TWILIO_AUTH_TOKEN", "")
-# Número de Twilio con prefijo whatsapp (sandbox: +14155238886)
-TWILIO_WHATSAPP_FROM: str = os.getenv("TWILIO_WHATSAPP_FROM", "")
-# Tu número personal con código de país (ej. +521234567890)
-WHATSAPP_TO: str = os.getenv("WHATSAPP_TO", "")
+TELEGRAM_BOT_TOKEN: str  = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID: str    = os.getenv("TELEGRAM_CHAT_ID", "")
 # Segundos máximos esperando respuesta (default: 2 horas)
-WHATSAPP_APPROVAL_TIMEOUT: int = int(os.getenv("WHATSAPP_APPROVAL_TIMEOUT", "7200"))
-# Veces máximas que se regenera un video nuevo cuando WhatsApp responde "no"
+TELEGRAM_APPROVAL_TIMEOUT: int = int(os.getenv("TELEGRAM_APPROVAL_TIMEOUT", "7200"))
+# Veces máximas que se regenera un video nuevo cuando se rechaza
 MAX_WA_RETRIES: int = int(os.getenv("MAX_WA_RETRIES", "3"))
+
+# ─── Canal de Confesiones (Telegram) ─────────────────────────────────────────
+# ID del canal donde el bot publica confesiones (ej: @micanal o -100123456789)
+# El bot debe ser admin del canal con permisos de publicación.
+TELEGRAM_CHANNEL_ID: str    = os.getenv("TELEGRAM_CHANNEL_ID", "")
+# Link público del canal (para incluir en CTAs de YouTube/TikTok)
+TELEGRAM_CHANNEL_LINK: str  = os.getenv("TELEGRAM_CHANNEL_LINK", "")
+# Precio en Stars para desbloquear contenido premium (mínimo 1, recomendado 50-100)
+TELEGRAM_CHANNEL_STARS: int = int(os.getenv("TELEGRAM_CHANNEL_STARS", "50"))
+# Cuántas confesiones publicar en el canal por día
+TELEGRAM_CHANNEL_DAILY: int = int(os.getenv("TELEGRAM_CHANNEL_DAILY", "4"))
 
 # ─── YouTube (Selenium) ───────────────────────────────────────────────────────
 YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
@@ -170,21 +187,51 @@ CTA_FOLLOW: list[str] = [
     "Dale like y sígueme — lo que viene te va a dejar sin palabras",
 ]
 
-# ─── Hashtags permanentes del nicho (se añaden a todos los videos) ───────────
-# Tienen volumen constante en búsqueda de Shorts en español latino
-BASE_HASHTAGS: list[str] = [
+# ─── Pool amplio de hashtags del nicho ───────────────────────────────────────
+# Cada video elige 10-14 al azar — nunca el mismo bloque dos veces
+HASHTAG_POOL: list[str] = [
     "#confesiones", "#historiareal", "#dramareal", "#infidelidad",
     "#traicion", "#relatosdeamor", "#storytime", "#HistoriasReales",
-    "#cortometraje", "#dramático",
+    "#cortometraje", "#dramático", "#secretosfamiliares", "#dramacompleto",
+    "#relacionestoxicas", "#engano", "#secreto", "#vidaReal",
+    "#dramafamiliar", "#confesionreal", "#testimonio", "#experienciareal",
+    "#relatodrama", "#momentodrama", "#laVerdad", "#revelacion",
+    "#chisme", "#historiasdrama", "#amorytraicion", "#mentiras",
+    "#shorts", "#viral", "#fyp", "#parati", "#tendencia",
+    "#shortsespanol", "#videoviral", "#relatosverdaderos", "#nolopodiacreeer",
+    "#latinoamerica", "#mexico", "#colombia", "#argentina", "#espanol",
 ]
+# Para compatibilidad: BASE_HASHTAGS apunta al pool completo
+BASE_HASHTAGS: list[str] = HASHTAG_POOL
 
 # ─── Pie de afiliado en descripción (dejar vacío para desactivar) ─────────────
 AFFILIATE_FOOTER: str = os.getenv("AFFILIATE_FOOTER", "")
 
+# ─── Script Scorer ────────────────────────────────────────────────────────────
+# Score mínimo para publicar (1-10). Si el guion queda por debajo se regenera.
+SCRIPT_MIN_SCORE: int = int(os.getenv("SCRIPT_MIN_SCORE", "7"))
+
+# ─── Growth Agent ─────────────────────────────────────────────────────────────
+# Límites diarios de comentarios (conservadores = bajo riesgo de ban)
+# Para canal nuevo (<1K subs) puedes subir a 10/5/4 sin riesgo real.
+GROWTH_DAILY_EXTERNAL_LIMIT: int  = int(os.getenv("GROWTH_DAILY_EXTERNAL_LIMIT", "5"))
+GROWTH_DAILY_OWN_LIMIT: int       = int(os.getenv("GROWTH_DAILY_OWN_LIMIT", "2"))
+GROWTH_SESSION_EXTERNAL_CAP: int  = int(os.getenv("GROWTH_SESSION_EXTERNAL_CAP", "2"))
+GROWTH_MIN_VIDEO_VIEWS: int       = int(os.getenv("GROWTH_MIN_VIDEO_VIEWS", "50000"))
+GROWTH_ACTIVE_HOUR_START: int     = int(os.getenv("GROWTH_ACTIVE_HOUR_START", "8"))
+GROWTH_ACTIVE_HOUR_END: int       = int(os.getenv("GROWTH_ACTIVE_HOUR_END",   "23"))
+
+# ─── Analytics Agent ──────────────────────────────────────────────────────────
+ANALYTICS_MAX_SNAPSHOTS: int     = int(os.getenv("ANALYTICS_MAX_SNAPSHOTS", "60"))
+ANALYTICS_TOP_VIDEOS_DETAIL: int = int(os.getenv("ANALYTICS_TOP_VIDEOS_DETAIL", "3"))
+
+# ─── Paths adicionales ────────────────────────────────────────────────────────
+# Posts usados por el canal de Telegram — separado de YouTube para no desperdiciar historias
+USED_POSTS_CHANNEL_FILE: Path = BASE_DIR / "used_posts_channel.json"
+
 # ─── Subtítulos ───────────────────────────────────────────────────────────────
-SUBTITLE_FONT_SIZE: int = 88
-SUBTITLE_POSITION_Y: float = 0.75  # 75% desde arriba (tercio inferior)
-SUBTITLE_MARGIN_V: int = 800  # px desde abajo — pone el sub a ~58% desde arriba (justo bajo el centro)
+SUBTITLE_FONT_SIZE: int = int(os.getenv("SUBTITLE_FONT_SIZE", "88"))
+SUBTITLE_MARGIN_V: int = int(os.getenv("SUBTITLE_MARGIN_V", "1000"))  # px desde abajo (1000 → ~48% desde arriba en 1920px)
 SUBTITLE_FONT_COLOR: str = "white"
 SUBTITLE_STROKE_COLOR: str = "black"
 SUBTITLE_STROKE_WIDTH: int = 2

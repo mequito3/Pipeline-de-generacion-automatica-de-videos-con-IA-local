@@ -153,6 +153,90 @@ _STEALTH_JS = r"""
 })();
 """
 
+# ─── Fingerprint dinámico por sesión ─────────────────────────────────────────
+# Pantalla, hardware, AudioContext, WebRTC, batería — varía en cada sesión
+# para que el canal no tenga el mismo "perfil de bot" siempre.
+
+_DYNAMIC_STEALTH_TEMPLATE = r"""(function() {
+  try { Object.defineProperty(navigator, 'hardwareConcurrency', {get: function() { return __HW__; }}); } catch(e) {}
+  try { Object.defineProperty(navigator, 'deviceMemory',        {get: function() { return __MEM__; }}); } catch(e) {}
+  try { Object.defineProperty(navigator, 'platform',            {get: function() { return '__PLAT__'; }}); } catch(e) {}
+  try { Object.defineProperty(navigator, 'vendor',              {get: function() { return 'Google Inc.'; }}); } catch(e) {}
+  try {
+    var _s = {width: __SW__, height: __SH__, availWidth: __SAW__, availHeight: __SAH__, colorDepth: 24, pixelDepth: 24};
+    for (var _k in _s) {
+      (function(key, val) {
+        try { Object.defineProperty(screen, key, {get: function() { return val; }}); } catch(_) {}
+      })(_k, _s[_k]);
+    }
+  } catch(e) {}
+  try {
+    var _aN = __AUDIO__;
+    var _oGCD = AudioBuffer.prototype.getChannelData;
+    AudioBuffer.prototype.getChannelData = function(ch) {
+      var d = _oGCD.call(this, ch);
+      for (var i = 0; i < Math.min(10, d.length); i++) d[i] += (Math.random() - 0.5) * _aN;
+      return d;
+    };
+  } catch(e) {}
+  try {
+    var _oRTC = window.RTCPeerConnection;
+    if (_oRTC) {
+      var _sRTC = function(c, x) { if (c && c.iceServers) c.iceServers = []; return new _oRTC(c, x); };
+      _sRTC.prototype = _oRTC.prototype;
+      Object.defineProperty(window, 'RTCPeerConnection', {value: _sRTC});
+    }
+  } catch(e) {}
+  try {
+    var _ci = {effectiveType: '4g', downlink: __DL__, rtt: __RTT__, saveData: false};
+    if (!navigator.connection) Object.defineProperty(navigator, 'connection', {get: function() { return _ci; }});
+  } catch(e) {}
+  try {
+    if (!navigator.getBattery) {
+      navigator.getBattery = function() {
+        return Promise.resolve({
+          charging: true, chargingTime: 0, dischargingTime: Infinity,
+          level: __BATT__, addEventListener: function() {}
+        });
+      };
+    }
+  } catch(e) {}
+  try {
+    delete window.domAutomation; delete window.domAutomationController;
+    delete window._Selenium_IDE_Recorder; delete window.__webdriverFunc;
+    delete window.__lastWatirAlert; delete window.__lastWatirConfirm;
+  } catch(e) {}
+})();"""
+
+_COMMON_SCREEN_PROFILES = [
+    (1920, 1080, 1920, 1040),
+    (1366,  768, 1366,  728),
+    (1440,  900, 1440,  860),
+    (1536,  864, 1536,  824),
+    (1280,  800, 1280,  760),
+    (2560, 1440, 2560, 1400),
+]
+
+
+def _dynamic_stealth_js() -> str:
+    """Genera JS de fingerprint aleatorio — distinto en cada sesión del navegador."""
+    sw, sh, saw, sah = random.choice(_COMMON_SCREEN_PROFILES)
+    return (
+        _DYNAMIC_STEALTH_TEMPLATE
+        .replace("__HW__",    str(random.choice([4, 6, 8, 8, 8, 10, 12])))
+        .replace("__MEM__",   str(random.choice([4, 4, 8, 8, 16])))
+        .replace("__PLAT__",  random.choice(["Win32", "Win32", "Win32", "MacIntel"]))
+        .replace("__SW__",    str(sw))
+        .replace("__SH__",    str(sh))
+        .replace("__SAW__",   str(saw))
+        .replace("__SAH__",   str(sah))
+        .replace("__AUDIO__", str(round(random.uniform(0.000018, 0.000085), 7)))
+        .replace("__DL__",    str(round(random.uniform(8.2, 48.5), 1)))
+        .replace("__RTT__",   str(random.randint(18, 85)))
+        .replace("__BATT__",  str(round(random.uniform(0.55, 1.0), 2)))
+    )
+
+
 # ─── Delays y timing ──────────────────────────────────────────────────────────
 
 _THINK_PAUSES = [1.1, 1.4, 1.8, 2.2, 2.6, 3.0, 1.6, 2.9]
@@ -284,6 +368,44 @@ async def _random_mouse_wander(page) -> None:
         pass
 
 
+async def _organic_pause(page=None, min_s: float = 3.0, max_s: float = 12.0) -> None:
+    """
+    Pausa larga de 'distracción': el usuario se distrajo con otra cosa.
+    A veces mueve apenas el mouse (como alguien que tiene la mano sobre él),
+    a veces no hace nada — ambas son conductas humanas normales.
+    page puede ser None (en ese caso sólo hace sleep).
+    """
+    pause_total = random.triangular(min_s, max_s, min_s + (max_s - min_s) * 0.35)
+    if page is not None and random.random() < 0.45:
+        moves = random.randint(1, 3)
+        per_move = pause_total / (moves + 1)
+        for _ in range(moves):
+            nx = max(80.0, min(1840.0, _cursor["x"] + random.uniform(-140, 140)))
+            ny = max(60.0, min(1000.0, _cursor["y"] + random.uniform(-100, 100)))
+            await _bezier_move(page, _cursor["x"], _cursor["y"], nx, ny)
+            await asyncio.sleep(per_move)
+    else:
+        await asyncio.sleep(pause_total)
+
+
+async def _simulate_reading(page, duration_s: float = 7.0) -> None:
+    """
+    Simula leer la página: scroll lento e irregular, pausas de reflexión variables,
+    movimiento de cursor como si señalaras texto con el dedo.
+    """
+    import time as _time
+    end_at = _time.time() + duration_s
+    while _time.time() < end_at:
+        remaining = end_at - _time.time()
+        if remaining <= 0.5:
+            break
+        await _scroll(page, random.randint(50, 220))
+        pause = min(random.triangular(0.7, 4.0, 1.6), remaining)
+        if random.random() < 0.22:
+            await _random_mouse_wander(page)
+        await asyncio.sleep(pause)
+
+
 # ─── Tipeo humano ─────────────────────────────────────────────────────────────
 
 # Teclas vecinas en teclado QWERTY — para simular errores de tipeo realistas
@@ -410,20 +532,20 @@ async def _human_type(element, text: str, clear_first: bool = True) -> None:
 
 async def _inject_stealth(page) -> None:
     """
-    Inyecta el JS de stealth ANTES de que cargue cualquier contenido de página.
-    Usa Page.addScriptToEvaluateOnNewDocument — se ejecuta en cada nueva página,
-    antes de que cualquier script del sitio pueda detectar las propiedades de bot.
+    Inyecta stealth JS ANTES de que cargue cualquier página.
+    Combina el JS base (siempre igual) + fingerprint dinámico (aleatorio por sesión)
+    para que cada ejecución tenga hardware, pantalla y audio distintos.
     """
+    combined = _STEALTH_JS + "\n" + _dynamic_stealth_js()
     try:
         import nodriver.cdp.page as cdp_page
         await page.send(
-            cdp_page.add_script_to_evaluate_on_new_document(source=_STEALTH_JS)
+            cdp_page.add_script_to_evaluate_on_new_document(source=combined)
         )
-        logger.info("Stealth JS inyectado via CDP (pre-page-load)")
+        logger.info("Stealth JS inyectado via CDP (fingerprint randomizado por sesión)")
     except Exception as e:
-        # Fallback: ejecutar después de cargar (menos efectivo pero algo)
         try:
-            await page.evaluate(_STEALTH_JS)
+            await page.evaluate(combined)
             logger.debug(f"Stealth JS via evaluate (fallback): {e}")
         except Exception as e2:
             logger.debug(f"Stealth injection fallback falló: {e2}")
@@ -477,9 +599,6 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
     logger.info(f"Subiendo thumbnail: {thumb.name}")
 
     try:
-        # Cerrar cualquier dropdown/autocomplete abierto (ej: hashtags) antes de
-        # interactuar con el thumbnail — el dropdown hace que YouTube muestre el
-        # mensaje "solo en la app" en lugar del botón de subida
         await page.evaluate("document.activeElement && document.activeElement.blur()")
         await page.keyboard.send("Escape")
         await _delay(0.8, 1.5)
@@ -492,7 +611,18 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
         logs_dir.mkdir(exist_ok=True)
         await page.save_screenshot(str(logs_dir / f"thumbnail_diag_{ts}.png"))
 
-        # Intentar hacer clic en el botón "Subir miniatura" si existe
+        # Canal no verificado → no hay subida de thumbnail en desktop
+        try:
+            mobile_msg = await page.find("miniatura en la aplicaci", timeout=2)
+            if mobile_msg:
+                logger.warning(
+                    "Thumbnail: canal no verificado — ve a Studio → Configuración → Canal → Verificar"
+                )
+                return
+        except Exception:
+            pass
+
+        # Intentar clic en el botón "Subir miniatura" (puede revelar el input)
         for selector in [
             "ytcp-thumbnails-compact-editor-tabs ytcp-button",
             "[aria-label*='miniatura' i]",
@@ -509,7 +639,7 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
             except Exception:
                 pass
 
-        # Buscar el input file del thumbnail
+        # Intentar selectores CSS directos
         thumb_input = None
         for selector in [
             "input[type='file'][accept*='image']",
@@ -520,33 +650,62 @@ async def _upload_thumbnail(page, thumbnail_path: str) -> None:
                 el = await page.select(selector, timeout=5)
                 if el:
                     thumb_input = el
+                    logger.info(f"Thumbnail input encontrado: {selector}")
                     break
             except Exception:
                 pass
 
+        # Traversar shadow DOM via JavaScript (YouTube Studio usa web components)
+        if thumb_input is None:
+            try:
+                unique_id = await page.evaluate("""(function() {
+                    function findImageInput(root) {
+                        var inputs = root.querySelectorAll('input[type="file"]');
+                        for (var i = 0; i < inputs.length; i++) {
+                            var acc = (inputs[i].accept || '').toLowerCase();
+                            if (acc.includes('image') || acc.includes('jpeg') || acc.includes('png')) {
+                                var uid = '_thumb_' + Date.now() + '_' + i;
+                                inputs[i].setAttribute('id', uid);
+                                inputs[i].style.cssText = 'display:block!important;opacity:0.01!important;position:fixed;top:0;left:0;width:1px;height:1px;z-index:99999';
+                                return uid;
+                            }
+                        }
+                        var all = root.querySelectorAll('*');
+                        for (var j = 0; j < all.length; j++) {
+                            if (all[j].shadowRoot) {
+                                var r = findImageInput(all[j].shadowRoot);
+                                if (r) return r;
+                            }
+                        }
+                        return null;
+                    }
+                    return findImageInput(document);
+                })()""")
+                if unique_id:
+                    thumb_input = await page.select(f"#{unique_id}", timeout=3)
+                    logger.info("Thumbnail input encontrado via shadow DOM")
+            except Exception as _je:
+                logger.debug(f"Shadow DOM traversal: {_je}")
+
+        # Último recurso: segundo file input del DOM (el primero es el video)
         if thumb_input is None:
             try:
                 all_inputs = await page.select_all("input[type='file']")
-                if len(all_inputs) > 1:
-                    thumb_input = all_inputs[-1]
+                if len(all_inputs) >= 2:
+                    thumb_input = all_inputs[1]  # índice 1 = thumbnail (no el video)
+                    logger.info("Thumbnail: usando segundo input file del DOM")
             except Exception:
                 pass
-
-        # Verificar si YouTube muestra el mensaje "solo en la app" (canal no verificado)
-        try:
-            mobile_msg = await page.find("miniatura en la aplicaci", timeout=2)
-            if mobile_msg:
-                logger.warning("Thumbnail: canal no verificado para miniaturas en desktop — ve a Studio → Configuración → Canal → Verificar")
-                return
-        except Exception:
-            pass
 
         if thumb_input:
             await thumb_input.send_file(str(thumb.absolute()))
             await _delay(2.5, 4.5)
-            logger.info("Thumbnail subido")
+            logger.info("Thumbnail subido correctamente")
         else:
-            logger.warning("Input de thumbnail no encontrado")
+            logger.warning(
+                "Thumbnail input no encontrado — verifica que el canal esté verificado "
+                "en YouTube Studio → Configuración → Canal → Elegibilidad de funciones"
+            )
 
         await _scroll(page, -300)
         await asyncio.sleep(random.uniform(0.6, 1.2))
@@ -685,7 +844,7 @@ async def _upload_async(
             browser_executable_path=chrome_bin or None,
             browser_args=[
                 "--start-maximized",
-                "--window-size=1920,1080",
+                f"--window-size={config.VIDEO_WIDTH},{config.VIDEO_HEIGHT}",
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",

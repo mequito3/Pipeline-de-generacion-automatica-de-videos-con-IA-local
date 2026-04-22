@@ -51,8 +51,19 @@ import config
 from modules import script_generator, tts_engine, video_assembler, youtube_uploader, scraper, pexels_fetcher
 from modules import growth_agent
 from modules import analytics_agent, ceo_report
+from modules import playlist_manager, end_screen_manager
+from modules.trending_monitor import get_trending_topic
+from modules.tiktok_growth_agent import run_tiktok_growth
+from modules import telegram_commander
+from modules.script_scorer import score_script, MIN_SCORE
+from modules import viral_monitor
+from modules import weekly_report
+from modules.company import CEOOrchestrator
 
 logger = logging.getLogger("main")
+
+# ─── Instancia global del CEO (se crea una vez al arrancar) ──────────────────
+ceo = CEOOrchestrator()
 
 # ─── Configurar logging ───────────────────────────────────────────────────────
 
@@ -233,10 +244,24 @@ def run_factory(topic: str | None = None) -> bool | None:
                 logger.info(f"      Fuente          : {story['fuente']} ({story['upvotes']} upvotes)")
                 logger.info(f"      Longitud        : {len(story['historia'])} caracteres")
             else:
-                logger.warning("      No se encontro historia en Reddit — usando tema rotatorio")
-                topic = get_next_topic()
-                logger.info(f"      Categoria de respaldo: {topic}")
+                logger.warning("      No se encontro historia en Reddit — buscando tema trending...")
+                try:
+                    topic = get_trending_topic()
+                    logger.info(f"      Tema trending seleccionado: {topic}")
+                except Exception:
+                    topic = get_next_topic()
+                    logger.info(f"      Categoria de respaldo: {topic}")
         step_times["scraping"] = time.time() - t0
+
+        # Notificar inicio del pipeline al CEO
+        _notify_topic  = story["titulo"] if story else (topic or "—")
+        _notify_source = story["fuente"] if story else "Tópico rotatorio"
+        _src_label = f"Reddit · {_notify_source}" if story else "Trending/Rotatorio"
+        telegram_commander.notify(
+            f"🔍 <b>Agente de Investigación</b>\n"
+            f"<i>{_notify_topic[:80]}</i>\n"
+            f"Fuente: {_src_label}"
+        )
 
         # ── PASO 2: Narrar/generar historia con Ollama ─────────────────────────
         t0 = time.time()
@@ -255,6 +280,27 @@ def run_factory(topic: str | None = None) -> bool | None:
         logger.info(f"      Pregunta final    : {script.get('pregunta', '—')}")
         logger.info(f"      Palabras narradas : {len(script['script_text'].split())} palabras")
         logger.info(f"      Escenas generadas : {len(script['scenes'])} | Tardo: {step_times['script']:.0f}s")
+
+        # ── Score de calidad: si < MIN_SCORE regenera (hasta 2 reintentos) ────
+        _score, _feedback = score_script(script)
+        logger.info(f"      Score de calidad  : {_score}/10 — {_feedback}")
+        _regen_attempts = 0
+        while _score < MIN_SCORE and _regen_attempts < 2:
+            _regen_attempts += 1
+            logger.warning(f"      Score bajo ({_score}/10) — regenerando guion (intento {_regen_attempts})...")
+            telegram_commander.notify(f"⚠️ Score {_score}/10 — regenerando guion... ({_feedback})")
+            if story:
+                script = script_generator.generate_script_from_story(story)
+            else:
+                script = script_generator.generate_script(topic)
+            _score, _feedback = score_script(script)
+            logger.info(f"      Nuevo score       : {_score}/10 — {_feedback}")
+        _g_label = "Mujer" if _g == "female" else ("Hombre" if _g == "male" else "Auto")
+        telegram_commander.notify(
+            f"✍️ <b>Agente de Guión</b>\n"
+            f"<i>{script['title'][:60]}</i>\n"
+            f"{_g_emoji} {_g_label} · ⭐{_score}/10 · {len(script['script_text'].split())} palabras"
+        )
 
         # ── PASOS 3+4: Voz narrativa (TTS) + Imágenes en PARALELO ────────────────
         narrator_gender = script.get("narrator_gender", "auto")
@@ -292,6 +338,10 @@ def run_factory(topic: str | None = None) -> bool | None:
         audio_duration = tts_engine.get_audio_duration(Path(audio_path))
         logger.info(f"      TTS + Imágenes listos en {parallel_time:.0f}s (en paralelo)")
         logger.info(f"      Audio: {audio_duration:.1f}s | Imagenes: {len(image_paths)}")
+        telegram_commander.notify(
+            f"🎙 <b>Agente de Producción</b>\n"
+            f"Audio {audio_duration:.0f}s · {len(image_paths)} clips listos"
+        )
 
         # ── PASO 5: Ensamblar video final ──────────────────────────────────────
         t0 = time.time()
@@ -306,6 +356,10 @@ def run_factory(topic: str | None = None) -> bool | None:
         video_size_mb = Path(video_path).stat().st_size / (1024 * 1024)
         logger.info(f"      Video guardado    : {video_path}")
         logger.info(f"      Tamaño            : {video_size_mb:.1f} MB | Tardó: {step_times['video']:.0f}s")
+        telegram_commander.notify(
+            f"🎬 <b>Agente de Producción</b>\n"
+            f"Video listo — {video_size_mb:.1f}MB · {step_times['video']:.0f}s ensamblado"
+        )
 
         # Generar thumbnail personalizado
         try:
@@ -316,14 +370,15 @@ def run_factory(topic: str | None = None) -> bool | None:
             )
             logger.info(f"      Thumbnail         : {thumbnail_path}")
         except Exception as e_thumb:
-            logger.warning(f"      Thumbnail no generado: {e_thumb}")
+            import traceback
+            logger.warning(f"      Thumbnail no generado: {e_thumb}\n{traceback.format_exc()}")
 
-        # ── PASO 6: Aprobación vía WhatsApp (opcional) ────────────────────────
-        if config.WHATSAPP_APPROVAL_ENABLED:
-            from modules import whatsapp_notifier
+        # ── PASO 6: Aprobación vía Telegram (opcional) ───────────────────────
+        if config.TELEGRAM_APPROVAL_ENABLED:
+            from modules import telegram_notifier
             thumbnail_p = Path(run_dir / "thumbnail.jpg")
-            logger.info("[6/7] Enviando video a WhatsApp para aprobacion...")
-            approved = whatsapp_notifier.send_approval_request(
+            logger.info("[6/7] Enviando video a Telegram para aprobacion...")
+            approved = telegram_notifier.send_approval_request(
                 video_path=Path(video_path),
                 thumbnail_path=thumbnail_p if thumbnail_p.exists() else None,
                 title=script["title"],
@@ -333,41 +388,69 @@ def run_factory(topic: str | None = None) -> bool | None:
                 narrator_gender=script.get("narrator_gender", "auto"),
             )
             if not approved:
-                logger.info("      Video RECHAZADO vía WhatsApp — se generará un nuevo video")
+                logger.info("      Video RECHAZADO vía Telegram — generando uno nuevo...")
                 _cleanup_temp_files(run_dir, keep_final=False)
-                return None  # None = rechazado, distinto de False = error real
-            logger.info("      Video APROBADO via WhatsApp — continuando...")
+                return None  # None = rechazado → _safe_run_factory reintenta con video nuevo
+            logger.info("      Video APROBADO via Telegram — continuando...")
             youtube_step_label = "[7/7]"
         else:
             youtube_step_label = "[6/6]"
 
         # ── PASO 7 (o 6): Subir a YouTube ─────────────────────────────────────
         youtube_url = ""
+        tiktok_url  = ""
         if not config.YOUTUBE_UPLOAD_ENABLED:
             logger.info(f"{youtube_step_label} Subida a YouTube: DESACTIVADA en .env")
             success = True
         else:
             t0 = time.time()
             logger.info(f"{youtube_step_label} Subiendo a YouTube...")
+            telegram_commander.notify("📤 <b>Agente de Publicación</b>\nSubiendo a YouTube...")
             thumbnail_p = run_dir / "thumbnail.jpg"
-            # Fusionar hashtags del script con los hashtags base del nicho
-            base_tags = getattr(config, "BASE_HASHTAGS", [])
-            all_tags = list(dict.fromkeys(script.get("tags", []) + base_tags))
+            # Hashtags: script tags + muestra aleatoria del pool (10-14 tags, nunca el mismo bloque)
+            pool = getattr(config, "HASHTAG_POOL", getattr(config, "BASE_HASHTAGS", []))
+            n_pick = random.randint(10, 14)
+            sampled = random.sample(pool, min(n_pick, len(pool)))
+            script_tags = [t for t in script.get("tags", []) if t not in sampled]
+            all_tags = list(dict.fromkeys(script_tags + sampled))
 
-            # Descripción profesional y consistente para todos los videos:
-            # 1. Frase corta del conflicto (del LLM, 80-120 chars)
-            # 2. CTA de seguimiento (rotatorio del config)
-            # 3. Pie de afiliado si está configurado
             # Limpiar descripción: quitar hashtags que el LLM mete dentro del campo
-            # y truncar a máx 120 chars para que quede corta y limpia
             raw_desc = script["description"].strip()
             desc_words = [w for w in raw_desc.split() if not w.startswith("#")]
-            desc_line = " ".join(desc_words)[:120].rsplit(" ", 1)[0]
+            desc_line = " ".join(desc_words)[:130].rsplit(" ", 1)[0]
 
-            cta_follow = random.choice(config.CTA_FOLLOW)
-            affiliate = getattr(config, "AFFILIATE_FOOTER", "")
+            cta_follow      = random.choice(config.CTA_FOLLOW)
+            cta_comment     = random.choice(config.CTA_COMMENTS)
+            affiliate       = getattr(config, "AFFILIATE_FOOTER", "")
+            hook_line       = script.get("hook", "")[:90]
+            channel_link    = getattr(config, "TELEGRAM_CHANNEL_LINK", "")
+            # CTA al canal de Telegram — aparece en todas las descripciones para mover audiencia
+            _tg_ctas = [
+                f"📲 Historias completas + fotos exclusivas → {channel_link}",
+                f"🔥 La historia COMPLETA con imágenes está en mi Telegram → {channel_link}",
+                f"📸 Contenido exclusivo que no cabe en YouTube → {channel_link}",
+                f"💬 Únete a mi canal de Telegram para ver el final completo → {channel_link}",
+            ]
+            cta_telegram = random.choice(_tg_ctas) if channel_link else ""
 
-            description = f"{desc_line}\n\n{cta_follow}"
+            # 6 formatos distintos de descripción — rotan para no tener siempre el mismo bloque
+            _DESC_FORMATS = [
+                # 1. Gancho + pregunta al final
+                lambda: f"{hook_line}...\n\n{desc_line}\n\n{cta_comment} 👇\n{cta_follow}",
+                # 2. Solo conflicto + CTA directo
+                lambda: f"{desc_line}\n\n{cta_follow}",
+                # 3. Pregunta de apertura + descripción
+                lambda: f"¿Qué harías tú en esta situación?\n\n{desc_line}\n\n{cta_comment} 👇",
+                # 4. Descripción corta + emojis + CTA
+                lambda: f"🔴 {desc_line}\n\n{cta_follow}\n\n{cta_comment} ⬇️",
+                # 5. Intro personal + conflicto
+                lambda: f"Esto me pasó a mí y aún no lo proceso...\n\n{desc_line}\n\n{cta_follow}",
+                # 6. Conflicto + reflexión
+                lambda: f"{desc_line}\n\nA veces la verdad duele más que la mentira.\n\n{cta_follow}",
+            ]
+            description = random.choice(_DESC_FORMATS)()
+            if cta_telegram:
+                description = f"{description}\n\n{cta_telegram}"
             if affiliate:
                 description = f"{description}\n\n{affiliate}"
 
@@ -395,11 +478,13 @@ def run_factory(topic: str | None = None) -> bool | None:
                         from modules import tiktok_uploader
                         t0_tt = time.time()
                         logger.info("      Subiendo a TikTok...")
+                        _tiktok_thumb = run_dir / "thumbnail.jpg"
                         tiktok_url = tiktok_uploader.upload_to_tiktok(
                             video_path=video_path,
                             title=script["title"],
                             description=script.get("description", ""),
                             tags=script.get("tags", []),
+                            thumbnail_path=str(_tiktok_thumb) if _tiktok_thumb.exists() else "",
                         ) or ""
                         step_times["tiktok"] = time.time() - t0_tt
                         if tiktok_url:
@@ -409,12 +494,12 @@ def run_factory(topic: str | None = None) -> bool | None:
                     except Exception as e_tt:
                         logger.warning(f"      TikTok falló (no crítico): {e_tt}")
 
-                # Notificar por WhatsApp con los enlaces del video
-                if getattr(config, "WHATSAPP_APPROVAL_ENABLED", False) or getattr(config, "WHATSAPP_TO", ""):
+                # Notificar por Telegram con los enlaces del video
+                if getattr(config, "TELEGRAM_BOT_TOKEN", "") and getattr(config, "TELEGRAM_CHAT_ID", ""):
                     try:
-                        from modules import whatsapp_notifier
+                        from modules import telegram_notifier
                         thumbnail_p = Path(run_dir / "thumbnail.jpg")
-                        whatsapp_notifier.send_upload_confirmation(
+                        telegram_notifier.send_upload_confirmation(
                             title=script["title"],
                             youtube_url=youtube_url,
                             thumbnail_path=thumbnail_p if thumbnail_p.exists() else None,
@@ -427,14 +512,72 @@ def run_factory(topic: str | None = None) -> bool | None:
                             pregunta=script.get("pregunta", ""),
                             tiktok_url=tiktok_url,
                         )
-                    except Exception as e_wa:
-                        logger.warning(f"      Notificacion WhatsApp fallo (no critico): {e_wa}")
-                # Growth agent: pinear comentario + engagement (no crítico)
-                try:
-                    logger.info("      Iniciando growth agent post-upload...")
-                    growth_agent.run_growth_session(do_own=True, own_video_url=youtube_url)
-                except Exception as e_ga:
-                    logger.warning(f"      Growth agent falló (no crítico): {e_ga}")
+                    except Exception as e_tg:
+                        logger.warning(f"      Notificacion Telegram fallo (no critico): {e_tg}")
+                # Teaser en canal de Telegram (mueve audiencia YouTube → canal)
+                if getattr(config, "TELEGRAM_CHANNEL_ID", ""):
+                    try:
+                        ceo.channel.post_youtube_teaser(
+                            youtube_url=youtube_url,
+                            title=script["title"],
+                            hook=script.get("hook", script["title"]),
+                        )
+                    except Exception as e_ch:
+                        logger.debug(f"      Canal Telegram teaser fallo (no critico): {e_ch}")
+
+                # Growth agent en background — no bloquea el pipeline post-upload
+                import threading as _threading
+                def _run_yt_growth():
+                    try:
+                        growth_agent.run_growth_session(do_own=True, own_video_url=youtube_url)
+                    except Exception as e_ga:
+                        logger.warning(f"Growth agent fallo (no critico): {e_ga}")
+                _threading.Thread(target=_run_yt_growth, daemon=True, name="growth_yt_worker").start()
+                logger.info("      Growth agent lanzado en background")
+
+                # Extraer video_id para automatizaciones post-upload
+                import re as _re
+                _vid_match = _re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", youtube_url)
+                _video_id = _vid_match.group(1) if _vid_match else ""
+
+                if _video_id:
+                    # Monitor viral: alerta si despega en las primeras 2h
+                    try:
+                        viral_monitor.start_monitor(_video_id, script["title"], youtube_url)
+                    except Exception as e_vm:
+                        logger.debug(f"      Viral monitor no iniciado: {e_vm}")
+
+                    # Asignar a playlist según tema del video
+                    try:
+                        logger.info("      Asignando video a playlist temática...")
+                        playlist_manager.add_video_to_playlist(_video_id, script["title"])
+                    except Exception as e_pl:
+                        logger.warning(f"      Playlist manager falló (no crítico): {e_pl}")
+
+                    # End screen: el video necesita ~5 min para procesarse en YouTube
+                    def _delayed_end_screen(vid_id: str, dur: float) -> None:
+                        import time as _t
+                        _t.sleep(320)
+                        try:
+                            end_screen_manager.add_end_screen(vid_id, dur)
+                        except Exception as e_es:
+                            logger.warning(f"      End screen falló (no crítico): {e_es}")
+                    _threading.Thread(
+                        target=_delayed_end_screen,
+                        args=(_video_id, audio_duration),
+                        daemon=True,
+                        name="end_screen_worker",
+                    ).start()
+                    logger.info("      End screen programada en ~5 min (hilo en background)")
+
+                # TikTok growth en background
+                def _run_tt_growth():
+                    try:
+                        run_tiktok_growth()
+                    except Exception as e_ttg:
+                        logger.warning(f"TikTok growth fallo (no critico): {e_ttg}")
+                _threading.Thread(target=_run_tt_growth, daemon=True, name="growth_tt_worker").start()
+                logger.info("      TikTok growth lanzado en background")
             else:
                 logger.error(f"      ERROR: No se pudo subir el video | Tardó: {step_times['upload']:.0f}s")
 
@@ -473,6 +616,7 @@ def run_factory(topic: str | None = None) -> bool | None:
 
     except Exception as e:
         logger.error(f"Error fatal en el pipeline: {e}", exc_info=True)
+        telegram_commander.notify_error("pipeline", str(e))
         return False
 
 
@@ -748,16 +892,59 @@ def run_tests() -> None:
     print("="*60 + "\n")
 
 
+# ─── Orquestador: lee la memoria y decide la estrategia del día ──────────────
+
+def _orchestrator_briefing() -> dict:
+    """
+    Lee agent_memory y devuelve decisiones para el scheduler:
+      trend       → "rising" | "stable" | "falling"
+      top_topics  → lista de temas ganadores
+      avoid_topics → temas a evitar
+      action      → mensaje de acción recomendada
+
+    Si la memoria tiene más de 72h o está vacía, devuelve defaults neutros.
+    """
+    try:
+        from modules import agent_memory as _am
+        mem = _am.load()
+        ci = mem.get("content_insights", {})
+        trend        = ci.get("trend", "stable")
+        top_topics   = mem.get("top_topics", [])
+        avoid_topics = mem.get("avoid_topics", [])
+        avg_views    = ci.get("avg_views_per_video", 0)
+        top_title    = ci.get("top_video_title", "")
+
+        if trend == "rising":
+            action = (
+                f"Canal en ALZA (+views). Enfocando contenido en: {', '.join(top_topics[:2])}. "
+                f"Referencia: '{top_title[:50]}'"
+            )
+        elif trend == "falling":
+            action = (
+                f"Canal CAYENDO. Evitando: {', '.join(avoid_topics[:2])}. "
+                f"Rotando hacia temas frescos."
+            )
+        else:
+            action = f"Canal ESTABLE. Promedio: {avg_views:,} vistas/video."
+
+        return {
+            "trend": trend,
+            "top_topics": top_topics,
+            "avoid_topics": avoid_topics,
+            "action": action,
+        }
+    except Exception:
+        return {"trend": "stable", "top_topics": [], "avoid_topics": [], "action": "Sin datos de memoria."}
+
+
 # ─── Wrapper seguro para el scheduler ───────────────────────────────────────
 
 def _safe_run_factory(topic: str | None = None) -> bool:
     """
     Llama a run_factory() sin dejar morir al scheduler si algo falla.
-
-    Maneja tres resultados de run_factory():
-      True  → éxito, termina
-      False → error real, no reintenta
-      None  → rechazado por WhatsApp, regenera un video nuevo (hasta MAX_WA_RETRIES veces)
+      True  → éxito
+      None  → video rechazado por Telegram → reintenta con video nuevo (hasta MAX_WA_RETRIES)
+      False → error real → no reintenta
     """
     max_retries = getattr(config, "MAX_WA_RETRIES", 3)
 
@@ -769,22 +956,14 @@ def _safe_run_factory(topic: str | None = None) -> bool:
                 return True
 
             if result is None:
-                # Usuario respondió "no" por WhatsApp → generar video nuevo
                 if attempt < max_retries:
-                    logger.info(
-                        f"WhatsApp: video rechazado — generando nuevo video "
-                        f"(intento {attempt + 1}/{max_retries})..."
-                    )
+                    logger.info(f"Video rechazado — generando nuevo (intento {attempt + 1}/{max_retries})...")
                     continue
                 else:
-                    logger.warning(
-                        f"WhatsApp: {max_retries} videos rechazados consecutivos — "
-                        "no se sube nada en este slot."
-                    )
+                    logger.warning(f"{max_retries} videos rechazados consecutivos — no se sube nada en este slot.")
                     return False
 
-            # result is False → error real, no reintentar
-            return False
+            return False  # False = error real, no reintentar
 
         except KeyboardInterrupt:
             raise
@@ -824,9 +1003,12 @@ def _daily_schedule() -> list:
 
 
 def _run_analytics_and_report() -> None:
-    """Ejecuta analítica + CEO Report. Llamado una vez al día desde el scheduler."""
+    """Delega el análisis diario al Analytics Agent vía CEO."""
     if not getattr(config, "ANALYTICS_ENABLED", True):
         return
+    ceo.run_analytics()
+    return
+    # ── legado — ya no se ejecuta, el CEO delega al Analytics Agent ──────────
     try:
         logger.info("Analista — inicio de sesión diaria...")
         analytics_agent.run_analytics_session()
@@ -838,6 +1020,14 @@ def _run_analytics_and_report() -> None:
         ceo_report.run_ceo_report(send=True)
     except Exception as e:
         logger.warning(f"CEO Report falló (no crítico): {e}")
+
+    # Reporte semanal de tendencias — solo los lunes
+    if weekly_report.is_monday():
+        try:
+            logger.info("Weekly Report — generando y enviando (lunes)...")
+            weekly_report.generate_weekly_report(send=True)
+        except Exception as e:
+            logger.warning(f"Weekly report falló (no crítico): {e}")
 
 
 def _run_scheduler(topic: str | None = None) -> None:
@@ -853,6 +1043,7 @@ def _run_scheduler(topic: str | None = None) -> None:
     w1   = getattr(config, "SCHEDULE_WIN1", (11, 13))
     w2   = getattr(config, "SCHEDULE_WIN2", (16, 18))
     w3   = getattr(config, "SCHEDULE_WIN3", (20, 22))
+    ceo.brief_team()   # presenta el equipo activo al arrancar
     print(f"⏰ Scheduler: {n} videos/día en ventanas de audiencia pico")
     print(f"   WIN1: {w1[0]:02d}-{w1[1]:02d}h | WIN2: {w2[0]:02d}-{w2[1]:02d}h | WIN3: {w3[0]:02d}-{w3[1]:02d}h")
     print(f"   Analytics + CEO Report: todos los días a las {a_h:02d}:00h")
@@ -861,15 +1052,23 @@ def _run_scheduler(topic: str | None = None) -> None:
     _cleanup_old_runs(days_to_keep=7)
     _rotate_logs(max_files=30)
 
-    analytics_done_today: str = ""   # fecha ISO de la última ejecución de analytics
-
-    # Primer video: inmediatamente al arrancar
-    _safe_run_factory(topic=topic)
+    analytics_done_today: str  = ""
+    channel_done_today: str    = ""
+    _schedule_day: str         = ""   # día para el que se calcularon los slots actuales
+    today_slots: list          = []   # se recalcula una vez al día, no en cada iteración
 
     while True:
-        import datetime as _dt
         now = _dt.datetime.now()
         today_str = now.date().isoformat()
+
+        # Recalcular slots SOLO cuando cambia el día (fix: evitar horas aleatorias distintas en cada vuelta)
+        if _schedule_day != today_str:
+            _schedule_day = today_str
+            today_slots   = _daily_schedule()
+            logger.info(
+                f"Slots para hoy ({today_str}): "
+                f"{[t.strftime('%H:%M') for t in today_slots]}"
+            )
 
         # ── Analítica diaria ──────────────────────────────────────────────────
         analytics_target = _dt.datetime.combine(
@@ -882,16 +1081,37 @@ def _run_scheduler(topic: str | None = None) -> None:
         ):
             analytics_done_today = today_str
             _run_analytics_and_report()
+            # Después de analytics → leer memoria y comunicar decisión del día
+            briefing = _orchestrator_briefing()
+            logger.info(f"[ORQUESTADOR] {briefing['action']}")
+            telegram_commander.notify(f"🧠 Orquestador: {briefing['action']}")
+
+        # ── Confesiones diarias en el canal de Telegram ───────────────────────
+        channel_hour = getattr(config, "ANALYTICS_HOUR", 9) + 1  # una hora después del analytics
+        channel_target = _dt.datetime.combine(now.date(), _dt.time(channel_hour, 0))
+        if (
+            getattr(config, "TELEGRAM_CHANNEL_ID", "")
+            and channel_done_today != today_str
+            and now >= channel_target
+        ):
+            channel_done_today = today_str
+            n_daily = getattr(config, "TELEGRAM_CHANNEL_DAILY", 4)
+            logger.info(f"Canal Telegram: publicando {n_daily} confesiones del dia...")
+            import threading as _thr
+            _thr.Thread(
+                target=ceo.channel.run_daily_strategy,
+                kwargs={"slots": n_daily},
+                daemon=True,
+                name="channel_daily",
+            ).start()
 
         # ── Slots de video pendientes ─────────────────────────────────────────
-        pending = [t for t in _daily_schedule() if t > now]
+        pending = [t for t in today_slots if t > now]
 
         if not pending:
-            tomorrow = _dt.date.today() + _dt.timedelta(days=1)
-            pending = [
-                t.replace(year=tomorrow.year, month=tomorrow.month, day=tomorrow.day)
-                for t in _daily_schedule()
-            ]
+            # Todos los slots del día completados — dormir 5 min y re-verificar (mañana cambiará el día)
+            time.sleep(300)
+            continue
 
         for next_run in pending:
             wait_secs = (next_run - _dt.datetime.now()).total_seconds()
@@ -904,6 +1124,10 @@ def _run_scheduler(topic: str | None = None) -> None:
             )
             print(f"\n⏰ Próximo video: {next_run.strftime('%d/%m/%Y a las %H:%M')} "
                   f"(en {wait_secs / 3600:.1f}h)\n")
+            telegram_commander.notify_scheduler_next(
+                next_run.strftime("%d/%m/%Y a las %H:%M"),
+                wait_secs / 3600,
+            )
 
             # Sesión de growth a mitad de la espera (solo comentarios externos)
             half_wait = wait_secs / 2
@@ -924,11 +1148,7 @@ def _run_scheduler(topic: str | None = None) -> None:
                     analytics_done_today = today_inner
                     _run_analytics_and_report()
 
-            try:
-                logger.info("Growth agent — sesión intermedia (solo externos)...")
-                growth_agent.run_growth_session(do_own=False)
-            except Exception as e_ga:
-                logger.warning(f"Growth agent intermedio falló (no crítico): {e_ga}")
+            ceo.run_growth_session(do_own=False)
 
             while _dt.datetime.now() < next_run:
                 time.sleep(60)
@@ -991,7 +1211,11 @@ Prerequisitos:
         action="store_true",
         help="Generar y enviar el reporte ejecutivo por WhatsApp ahora"
     )
-
+    parser.add_argument(
+        "--channel",
+        action="store_true",
+        help="Publicar confesiones en el canal de Telegram ahora (sin esperar el scheduler)"
+    )
     args = parser.parse_args()
 
     print("\n" + "="*60)
@@ -1004,6 +1228,9 @@ Prerequisitos:
     print(f"  Duracion video : Automatica (basada en narracion)")
     print(f"  Canal          : {config.CHANNEL_NAME}")
     print("="*60 + "\n")
+
+    # Bot de Telegram: escucha comandos del CEO en background
+    telegram_commander.start_bot_background()
 
     if args.test:
         run_tests()
@@ -1020,7 +1247,14 @@ Prerequisitos:
         result = growth_agent.run_growth_session(do_own=True)
         print(f"\n  Comentarios externos : {result['external']}")
         print(f"  Replies propios      : {result['own']}")
-        print(f"  Omitidos             : {result['skipped']}\n")
+        print(f"  Omitidos             : {result['skipped']}")
+        try:
+            print("  Ejecutando TikTok growth...")
+            run_tiktok_growth()
+            print("  TikTok growth completado")
+        except Exception as e_ttg:
+            print(f"  TikTok growth falló (no crítico): {e_ttg}")
+        print()
 
     elif getattr(args, "analytics", False):
         setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -1041,6 +1275,18 @@ Prerequisitos:
         print(f"\n{'='*60}")
         print(report_text)
         print(f"{'='*60}\n")
+
+    elif getattr(args, "channel", False):
+        setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
+        n_daily = getattr(config, "TELEGRAM_CHANNEL_DAILY", 4)
+        channel_id = getattr(config, "TELEGRAM_CHANNEL_ID", "")
+        if not channel_id:
+            print("\n❌ TELEGRAM_CHANNEL_ID no configurado en .env")
+            print("   Ejemplo: TELEGRAM_CHANNEL_ID=@GataCuriosaS")
+            sys.exit(1)
+        print(f"\n📢 Publicando {n_daily} posts en {channel_id}...")
+        published = ceo.channel.run_daily_strategy(slots=n_daily)
+        print(f"\n✅ {published}/{n_daily} posts publicados en {channel_id}")
 
     else:
         _run_scheduler(topic=args.topic)
