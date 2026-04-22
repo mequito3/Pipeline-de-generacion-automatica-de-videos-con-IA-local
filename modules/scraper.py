@@ -419,6 +419,390 @@ def _fetch_confesiones_anonimas() -> list[dict]:
     return results
 
 
+_WATTPAD_HEADERS = {
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept":          "application/json",
+    "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer":         "https://www.wattpad.com/",
+}
+
+# Búsquedas dramáticas genéricas
+_WATTPAD_QUERIES = [
+    "confesion traicion drama",
+    "secreto familiar oscuro",
+    "descubrí engaño pareja",
+    "infidelidad verdad revelacion",
+    "historia real drama romance",
+    "traicion amor secreto",
+    "mentira familia drama",
+]
+
+# Búsquedas para historias eróticas/adultas de vida real — canal premium Stars
+# Enfocadas en relaciones prohibidas reales: jefe, cuñado, vecino, amigo, etc.
+_WATTPAD_ADULT_QUERIES = [
+    "infidelidad esposa amante secreto",
+    "jefe empleada seduccion prohibida",
+    "cuñado prohibido deseo culpa",
+    "mejor amigo traicion pasion secreta",
+    "vecino casado tension sexual",
+    "matrimonio aburrido amante apasionado",
+    "esposo infiel noche hotel otra",
+    "aventura extramarital confesion real",
+    "noche de hotel secreto prohibido",
+    "deseo prohibido amigo pareja",
+    "relacion prohibida trabajo pasion",
+    "encuentro casual pasion descontrolada",
+    "ex novio reencuentro prohibido",
+    "seduccion cuñada cuñado taboo",
+    "amante secreta anos mentira revelacion",
+    "primera vez experiencia prohibida adulto",
+    "pareja abierta celos confusion",
+    "trio accidental noche secreto",
+]
+
+# Palabras clave de fanfic/fantasía — descarta estas historias automáticamente
+_FANFIC_KEYWORDS = {
+    # Harry Potter
+    "hogwarts", "harry potter", "voldemort", "hermione", "dumbledore", "draco",
+    # Naruto / anime
+    "naruto", "sasuke", "kakashi", "genos", "sai", "anime", "manga",
+    "marinette", "adrien", "miraculous",
+    # Kpop
+    "kpop", "bts", "jungkook", "taehyung", "suga", "jimin", "jhope", "namjoon",
+    "exo", "stray kids", "txt", "ateez", "seventeen",
+    # Bandas pop
+    "one direction", "billie eilish", "shawn mendes", "zayn", "niall", "harry styles",
+    # Fantasia
+    "vampire", "vampiro", "werewolf", "lobo alfa", "alpha", "omega", "lycan",
+    "dragon", "dragón", "magia", "magic", "witch", "bruja", "hechizo", "pocion",
+    "elfo", "elfos", "duende", "hada", "hadas", "fantasia", "reino",
+    "demonio", "angel caido", "supernatural", "sobrenatural",
+    # Videojuegos / series
+    "hallownest", "hollow knight", "fnaf", "minecraft", "undertale",
+    "stranger things", "disney", "marvel", "avenger", "superman", "batman",
+    "spiderman", "deadpool", "thor",
+    # Novelas chinas / coreanas
+    "xianwang", "danmei", "wuxia", "xianxia", "manhwa", "manhwa",
+    "cultivation", "cultivacion", "sect", "immortal", "inmortal",
+    # Marcadores de fanfic
+    "fanfic", "fanfiction", "au ", "universo alterno", "wattpad original",
+    "x reader", "x lector",
+    # Listas / recopilaciones — no son historias
+    "lecturas de wattpad", "recomendaciones", "lista de", "mis lecturas",
+    "libros recomendados", "mejores historias", "top wattpad",
+}
+
+
+def _wattpad_part_text(part_id: int) -> str:
+    """Descarga un capítulo de Wattpad y extrae el texto plano."""
+    import re as _re
+    from html.parser import HTMLParser
+
+    class _Strip(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.chunks: list[str] = []
+        def handle_data(self, data: str):
+            self.chunks.append(data)
+
+    try:
+        url  = f"https://www.wattpad.com/apiv2/storytext?id={part_id}"
+        hdrs = {"User-Agent": _WATTPAD_HEADERS["User-Agent"]}
+        resp = requests.get(url, headers=hdrs, timeout=20)
+        if resp.status_code != 200:
+            return ""
+        parser = _Strip()
+        parser.feed(resp.text)
+        text = _re.sub(r"\s+", " ", " ".join(parser.chunks)).strip()
+        return text
+    except Exception as e:
+        logger.debug(f"Wattpad part {part_id}: {e}")
+        return ""
+
+
+def _fetch_wattpad() -> list[dict]:
+    """
+    Busca historias dramáticas en español en Wattpad via API no oficial.
+    Devuelve el texto del primer capítulo de cada historia encontrada.
+
+    API usada (pública, sin auth):
+      GET https://www.wattpad.com/api/v3/stories?query=...&language=3&filter=hot
+      language=3 → Español en la codificación de Wattpad
+    """
+    import re as _re
+
+    results: list[dict] = []
+    queries = random.sample(_WATTPAD_QUERIES, min(3, len(_WATTPAD_QUERIES)))
+    seen_ids: set[str] = set()
+
+    for query in queries:
+        try:
+            resp = requests.get(
+                "https://www.wattpad.com/api/v3/stories",
+                headers=_WATTPAD_HEADERS,
+                params={
+                    "query":    query,
+                    "language": 5,            # 5 = Español
+                    "limit":    20,
+                    "offset":   random.randint(0, 40),
+                },
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"Wattpad query '{query}': HTTP {resp.status_code}")
+                continue
+
+            stories = resp.json().get("stories", [])
+            logger.debug(f"Wattpad '{query}': {len(stories)} historias")
+
+            for story in stories:
+                story_id = str(story.get("id", ""))
+                if not story_id or story_id in seen_ids:
+                    continue
+                seen_ids.add(story_id)
+
+                title       = story.get("title", "").strip()
+                description = story.get("description", "").strip()
+                parts       = story.get("parts", [])
+                reads       = story.get("readCount", 0)
+                votes       = story.get("voteCount", 0)
+
+                if not parts:
+                    continue
+
+                # Tomar el primer capítulo
+                first_part_id = parts[0].get("id") if isinstance(parts[0], dict) else None
+                if not first_part_id:
+                    continue
+
+                text = _wattpad_part_text(first_part_id)
+
+                # Si el capítulo está vacío o es muy corto, usar la descripción
+                if len(text) < config.STORY_MIN_CHARS:
+                    text = description
+                if len(text) < config.STORY_MIN_CHARS:
+                    continue
+
+                # Limpiar etiquetas HTML residuales
+                text = _re.sub(r"<[^>]+>", "", text).strip()
+                if len(text) > config.STORY_MAX_CHARS:
+                    text = text[:config.STORY_MAX_CHARS]
+
+                # Score proporcional a popularidad en la plataforma
+                pop_score = min(votes // 5 + reads // 500, 800)
+
+                results.append({
+                    "id":          f"wattpad_{story_id}",
+                    "title":       title,
+                    "selftext":    text,
+                    "score":       200 + pop_score,
+                    "num_comments": 0,
+                    "is_self":     True,
+                    "_source":     "Wattpad",
+                })
+
+            time.sleep(1.5)  # respetar rate limit de Wattpad
+
+        except requests.exceptions.ConnectionError:
+            logger.warning("Wattpad: sin conexión a internet")
+            break
+        except Exception as e:
+            logger.debug(f"Wattpad query '{query}': {e}")
+
+    if results:
+        logger.info(f"Wattpad: {len(results)} historias obtenidas")
+    return results
+
+
+def _fetch_wattpad_adult() -> list[dict]:
+    """
+    Busca historias eróticas/adultas de vida real en Wattpad.
+    Filtra fanfic/fantasía automáticamente.
+    Intenta hasta 3 partes por historia si la primera es corta.
+    """
+    import re as _re
+
+    results:  list[dict] = []
+    queries   = random.sample(_WATTPAD_ADULT_QUERIES, min(6, len(_WATTPAD_ADULT_QUERIES)))
+    seen_ids: set[str]   = set()
+    MIN_CHARS    = 300
+    MIN_READS    = 5_000   # solo historias con tracción real
+
+    for query in queries:
+        try:
+            resp = requests.get(
+                "https://www.wattpad.com/api/v3/stories",
+                headers=_WATTPAD_HEADERS,
+                params={
+                    "query":    query,
+                    "language": 5,
+                    "limit":    40,   # más candidatos para poder filtrar por popularidad
+                    "offset":   0,    # siempre desde el top — queremos las más leídas
+                },
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                logger.debug(f"Wattpad adult '{query}': HTTP {resp.status_code}")
+                continue
+
+            stories = resp.json().get("stories", [])
+            logger.debug(f"Wattpad adult '{query}': {len(stories)} raw")
+
+            for story in stories:
+                story_id = str(story.get("id", ""))
+                if not story_id or story_id in seen_ids:
+                    continue
+                seen_ids.add(story_id)
+
+                title = story.get("title", "").strip()
+                parts = story.get("parts", [])
+                reads = story.get("readCount", 0)
+                votes = story.get("voteCount", 0)
+                desc  = story.get("description", "")
+
+                if not parts or not title:
+                    continue
+
+                # Descartar historias con pocas lecturas — solo virales
+                if reads < MIN_READS:
+                    logger.debug(f"Wattpad adult: pocas lecturas ({reads}) '{title[:40]}'")
+                    continue
+
+                # Filtrar fanfic/fantasía
+                tags_raw   = story.get("tags", [])
+                tags_str   = " ".join(t if isinstance(t, str) else t.get("name", "") for t in tags_raw)
+                combined   = f"{title} {desc} {tags_str}".lower()
+                if any(kw in combined for kw in _FANFIC_KEYWORDS):
+                    logger.debug(f"Wattpad adult: fanfic descartado '{title[:40]}'")
+                    continue
+
+                # Intentar hasta 3 partes para encontrar texto suficiente
+                text = ""
+                for part in parts[:3]:
+                    if not isinstance(part, dict):
+                        continue
+                    pid = part.get("id")
+                    if not pid:
+                        continue
+                    t = _wattpad_part_text(pid)
+                    if len(t) >= MIN_CHARS:
+                        text = t
+                        break
+
+                if not text:
+                    text = desc.strip()
+                if len(text) < MIN_CHARS:
+                    continue
+
+                text = _re.sub(r"<[^>]+>", "", text).strip()
+                if len(text) > config.STORY_MAX_CHARS:
+                    text = text[:config.STORY_MAX_CHARS]
+
+                # Score real: lecturas pesan más que votos
+                pop_score = reads // 1000 + votes // 10
+                results.append({
+                    "id":           f"wattpad_adult_{story_id}",
+                    "title":        title,
+                    "selftext":     text,
+                    "score":        300 + pop_score,
+                    "num_comments": 0,
+                    "is_self":      True,
+                    "_source":      "Wattpad",
+                    "_reads":       reads,
+                    "_adult":       True,
+                })
+
+            time.sleep(0.8)
+        except Exception as e:
+            logger.warning(f"Wattpad adult '{query}': {e}")
+
+    results.sort(key=lambda r: r.get("score", 0), reverse=True)
+    if results:
+        top = results[0]
+        logger.info(
+            f"Wattpad adult: {len(results)} historias validas "
+            f"| top: '{top['title'][:50]}' ({top.get('_reads',0):,} lecturas)"
+        )
+    else:
+        logger.info("Wattpad adult: 0 historias validas")
+    return results
+
+
+def _load_used_ids_channel() -> set:
+    """Carga los IDs usados por el canal de Telegram (lista separada de YouTube)."""
+    channel_file = getattr(config, "USED_POSTS_CHANNEL_FILE", None)
+    if channel_file and Path(channel_file).exists():
+        try:
+            data = json.loads(Path(channel_file).read_text(encoding="utf-8"))
+            return set(data.get("used_ids", []))
+        except Exception:
+            pass
+    return set()
+
+
+def _mark_as_used_channel(post_id: str) -> None:
+    """Marca un post como usado para el canal de Telegram."""
+    channel_file = getattr(config, "USED_POSTS_CHANNEL_FILE", None)
+    if not channel_file:
+        mark_as_used(post_id)
+        return
+    used = _load_used_ids_channel()
+    used.add(post_id)
+    Path(channel_file).write_text(
+        json.dumps({"used_ids": list(used)}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def get_story_for_channel() -> dict | None:
+    """
+    Versión especial de get_story() para el canal premium de Telegram.
+    Prioriza historias de Wattpad con contenido adulto/morboso que el LLM
+    reescribirá para hacerlas más intensas antes de publicarlas detrás del paywall.
+    Usa su propia lista de usados (used_posts_channel.json) para no desperdiciar
+    historias que YouTube aún no ha usado.
+
+    Returns:
+        Dict con keys: titulo, historia, fuente, upvotes, post_id, _adult
+        None si no encuentra nada.
+    """
+    used_ids = _load_used_ids_channel()
+
+    # Intentar primero Wattpad adulto, luego fuentes normales como fallback
+    sources = [
+        ("wattpad_adult", _fetch_wattpad_adult),
+        ("wattpad",       _fetch_wattpad),
+        ("confesiones",   _fetch_confesiones_anonimas),
+    ]
+
+    for source_name, fetch_fn in sources:
+        logger.info(f"Canal premium: buscando en {source_name}...")
+        try:
+            posts = fetch_fn()
+        except Exception as e:
+            logger.debug(f"{source_name} error: {e}")
+            continue
+
+        posts.sort(key=lambda p: p.get("score", 0), reverse=True)
+        random.shuffle(posts[:5])  # mezcla el top 5 para variedad
+
+        for post in posts:
+            story = _try_post(post, used_ids)
+            if story:
+                story["_adult"] = post.get("_adult", False)
+                _mark_as_used_channel(story["post_id"])
+                logger.info(
+                    f"Historia para canal ({source_name}): "
+                    f"'{story['titulo'][:60]}' | {len(story['historia'])} chars"
+                )
+                return story
+
+    logger.warning("Canal premium: sin historias disponibles en ninguna fuente")
+    return None
+
+
 def _try_post(post: dict, used_ids: set) -> dict | None:
     """Aplica filtros y devuelve story dict si el post es válido, None si no."""
     post_id = post.get("id", "")
@@ -470,14 +854,20 @@ def get_story() -> dict | None:
     """
     used_ids = _load_used_ids()
 
-    # Seleccion de fuente primaria con pesos (Reddit dominante, CA como fuente hispanohablante)
+    # Seleccion de fuente primaria con pesos
+    #   40% Reddit (señal social real — upvotes = validación humana)
+    #   25% confesionesanonimas.org (hispanohablante, dramático)
+    #   25% Wattpad (ficción dramática en español, historias largas y bien escritas)
+    #   10% grouphug.us (confesiones cortas, fallback)
     fuente_rand = random.random()
-    if fuente_rand < 0.50:
-        orden_fuentes = ["reddit", "confesionesanonimas", "grouphug"]
-    elif fuente_rand < 0.80:
-        orden_fuentes = ["confesionesanonimas", "reddit", "grouphug"]
+    if fuente_rand < 0.40:
+        orden_fuentes = ["reddit", "confesionesanonimas", "wattpad", "grouphug"]
+    elif fuente_rand < 0.65:
+        orden_fuentes = ["confesionesanonimas", "wattpad", "reddit", "grouphug"]
+    elif fuente_rand < 0.90:
+        orden_fuentes = ["wattpad", "confesionesanonimas", "reddit", "grouphug"]
     else:
-        orden_fuentes = ["grouphug", "reddit", "confesionesanonimas"]
+        orden_fuentes = ["grouphug", "reddit", "confesionesanonimas", "wattpad"]
 
     logger.info(f"Orden de fuentes para esta ejecucion: {orden_fuentes}")
 
@@ -537,6 +927,25 @@ def get_story() -> dict | None:
                     return story
 
             logger.info("confesionesanonimas.org: sin resultados validos")
+
+        # ── Wattpad ───────────────────────────────────────────────────────────
+        elif fuente == "wattpad":
+            logger.info("Intentando Wattpad...")
+            wp_posts = _fetch_wattpad()
+            wp_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
+            top_wp = wp_posts[:5]
+            random.shuffle(top_wp)
+            top_wp += wp_posts[5:]
+            for post in top_wp:
+                story = _try_post(post, used_ids)
+                if story:
+                    mark_as_used(story["post_id"])
+                    logger.info(
+                        f"Historia seleccionada (Wattpad): "
+                        f"'{story['titulo'][:60]}' | {len(story['historia'])} chars"
+                    )
+                    return story
+            logger.info("Wattpad: sin resultados validos")
 
         # ── grouphug.us ───────────────────────────────────────────────────────
         elif fuente == "grouphug":
