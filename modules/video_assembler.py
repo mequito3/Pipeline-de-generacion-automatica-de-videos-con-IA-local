@@ -197,6 +197,15 @@ def _make_sticker_png(out_path: Path, scene_idx: int) -> dict | None:
         if angle:
             box = box.rotate(angle, expand=True, resample=Image.BICUBIC)
 
+        # Glow: sombra borrosa detrás del sticker para que destaque sobre el video
+        glow_radius = 14
+        glow = box.filter(ImageFilter.GaussianBlur(radius=glow_radius))
+        pad = glow_radius * 2
+        canvas = Image.new("RGBA", (box.width + pad, box.height + pad), (0, 0, 0, 0))
+        canvas.paste(glow, (pad // 2, pad // 2), glow)
+        canvas.paste(box, (pad // 2, pad // 2), box)
+        box = canvas
+
         box.save(str(out_path), "PNG")
         fw, fh = box.size
 
@@ -223,6 +232,261 @@ def _make_sticker_png(out_path: Path, scene_idx: int) -> dict | None:
         return {"path": str(out_path), "x": x, "y": y}
     except Exception as e:
         logger.debug(f"  Sticker fallido escena {scene_idx}: {e}")
+        return None
+
+
+# 6 personalidades visuales para el hook — elegidas al azar cada video
+_HOOK_STYLES = [
+    {   # Drama negro — barra oscura, texto amarillo impacto
+        "id": "drama",
+        "bg": lambda: (*random.choice([(0,0,0),(15,0,0),(10,0,25)]), random.randint(185,215)),
+        "fg": lambda: random.choice([(255,220,0),(255,200,0),(255,240,60)]),
+        "stroke": (0, 0, 0),
+        "size": lambda: random.choice([62, 66, 70]),
+        "case": "upper",
+        "prefix": lambda: random.choice(["", "⚡ ", "🔥 ", "👀 ", ""]),
+        "bar": True,
+        "y_frac": lambda: random.uniform(0.07, 0.12),
+    },
+    {   # Alerta roja — fondo rojo, letras blancas tipo breaking news
+        "id": "alert",
+        "bg": lambda: (*random.choice([(185,0,0),(200,20,20),(160,0,50)]), random.randint(205,235)),
+        "fg": lambda: (255, 255, 255),
+        "stroke": (70, 0, 0),
+        "size": lambda: random.choice([58, 62, 66]),
+        "case": "upper",
+        "prefix": lambda: random.choice(["🚨 ", "❗ ", "⛔ ", "🔴 "]),
+        "bar": True,
+        "y_frac": lambda: random.uniform(0.08, 0.13),
+    },
+    {   # Ghost — sin barra, texto blanco con sombra negra brutal
+        "id": "ghost",
+        "bg": None,
+        "fg": lambda: (255, 255, 255),
+        "stroke": (0, 0, 0),
+        "size": lambda: random.choice([68, 72, 76]),
+        "case": "upper",
+        "prefix": lambda: "",
+        "bar": False,
+        "y_frac": lambda: random.uniform(0.09, 0.15),
+    },
+    {   # Explosivo — fondo amarillo/naranja, texto negro
+        "id": "explosive",
+        "bg": lambda: (*random.choice([(255,200,0),(255,155,0),(255,230,50)]), random.randint(220,245)),
+        "fg": lambda: (10, 10, 10),
+        "stroke": (80, 50, 0),
+        "size": lambda: random.choice([56, 60, 64]),
+        "case": "upper",
+        "prefix": lambda: random.choice(["💥 ", "🔥 ", "😱 ", "⚡ "]),
+        "bar": True,
+        "y_frac": lambda: random.uniform(0.07, 0.11),
+    },
+    {   # Misterio — fondo morado oscuro, texto verde neón
+        "id": "mystery",
+        "bg": lambda: (*random.choice([(20,0,45),(30,0,60),(10,10,35)]), random.randint(200,220)),
+        "fg": lambda: random.choice([(180,255,120),(140,255,80),(200,255,150)]),
+        "stroke": (0, 30, 0),
+        "size": lambda: random.choice([60, 64, 68]),
+        "case": "upper",
+        "prefix": lambda: random.choice(["👁️ ", "🫣 ", "💀 ", "🕵️ "]),
+        "bar": True,
+        "y_frac": lambda: random.uniform(0.08, 0.13),
+    },
+    {   # Chyron TV — azul profundo, texto blanco, estilo noticiero
+        "id": "chyron",
+        "bg": lambda: (*random.choice([(0,55,180),(0,40,150),(25,0,120)]), random.randint(215,240)),
+        "fg": lambda: (255, 255, 255),
+        "stroke": (0, 0, 60),
+        "size": lambda: random.choice([54, 58, 62]),
+        "case": "upper",
+        "prefix": lambda: random.choice(["📺 ", "🎙️ ", "📣 ", ""]),
+        "bar": True,
+        "y_frac": lambda: random.uniform(0.07, 0.10),
+    },
+]
+
+
+def _make_hook_png(out_path: Path, hook_text: str) -> dict | None:
+    """
+    Genera PNG del hook del video con personalidad visual aleatoria (6 estilos).
+    Cada video tiene un look completamente distinto — evita detección de contenido
+    repetitivo/automático por YouTube.
+    """
+    try:
+        W = config.VIDEO_WIDTH
+        style = random.choice(_HOOK_STYLES)
+        font_size: int = style["size"]()
+        font_path = _find_font()
+        font = _load_font(font_path, font_size)
+        draw_dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+        prefix: str = style["prefix"]()
+        raw = hook_text.upper() if style["case"] == "upper" else hook_text.title()
+        full_text = prefix + raw
+
+        max_w = W - 80
+        words = full_text.split()
+        lines: list[str] = []
+        cur: list[str] = []
+        for word in words:
+            test = " ".join(cur + [word])
+            bbox = draw_dummy.textbbox((0, 0), test, font=font)
+            if bbox[2] - bbox[0] > max_w and cur:
+                lines.append(" ".join(cur))
+                cur = [word]
+            else:
+                cur.append(word)
+        if cur:
+            lines.append(" ".join(cur))
+
+        lh = draw_dummy.textbbox((0, 0), "Ay", font=font)[3] + 14
+        pad_y = random.randint(18, 30)
+        total_h = lh * len(lines) + pad_y * 2
+
+        if style["bar"] and style["bg"] is not None:
+            bg_rgba = style["bg"]()
+            canvas = Image.new("RGBA", (W, total_h), bg_rgba)
+        else:
+            canvas = Image.new("RGBA", (W, total_h), (0, 0, 0, 0))
+
+        draw = ImageDraw.Draw(canvas)
+        fg = style["fg"]()
+        stroke = style["stroke"]
+        y = pad_y
+        stroke_off = random.randint(2, 4)
+
+        for line in lines:
+            bbox = draw_dummy.textbbox((0, 0), line, font=font)
+            tw = bbox[2] - bbox[0]
+            x = (W - tw) // 2
+            # Sombra/stroke: dibuja el texto 8 veces offset para stroke grueso
+            for ox, oy in [(-stroke_off,-stroke_off),(0,-stroke_off),(stroke_off,-stroke_off),
+                           (-stroke_off,0),(stroke_off,0),
+                           (-stroke_off,stroke_off),(0,stroke_off),(stroke_off,stroke_off)]:
+                draw.text((x+ox, y+oy), line, font=font, fill=(*stroke, 220))
+            draw.text((x, y), line, font=font, fill=(*fg, 255))
+            y += lh
+
+        # Rotación sutil para estilos sin barra (más natural, menos bot)
+        angle = random.uniform(-1.5, 1.5) if not style["bar"] else 0
+        if angle:
+            canvas = canvas.rotate(angle, expand=False, resample=Image.BICUBIC)
+
+        canvas.save(str(out_path), "PNG")
+        y_pos = int(config.VIDEO_HEIGHT * style["y_frac"]())
+        logger.info(f"  Hook estilo '{style['id']}' | prefijo='{prefix}' | y={y_pos}")
+        return {"path": str(out_path), "x": 0, "y": y_pos}
+    except Exception as e:
+        logger.debug(f"Hook PNG fallido: {e}")
+        return None
+
+
+def _make_chat_bubble_png(out_path: Path, text: str, scene_idx: int) -> dict | None:
+    """Overlay burbuja de chat estilo WhatsApp para escenas DESCUBRIMIENTO."""
+    try:
+        W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+        font_path = _find_font()
+        font = _load_font(font_path, 38)
+        draw_dummy = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+        max_w = int(W * 0.72)
+        lines = _wrap_text(draw_dummy, text, font, max_w)[:3]
+        lh = draw_dummy.textbbox((0, 0), "Ay", font=font)[3] + 10
+        pad_x, pad_y = 28, 20
+        bw = max(draw_dummy.textbbox((0, 0), l, font=font)[2] for l in lines) + 2 * pad_x
+        bh = lh * len(lines) + 2 * pad_y
+
+        bubble = Image.new("RGBA", (bw + 20, bh + 20), (0, 0, 0, 0))
+        bd = ImageDraw.Draw(bubble)
+        bd.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=18, fill=(37, 211, 102, 230))
+        bd.rounded_rectangle([0, 0, bw - 1, bh - 1], radius=18, outline=(20, 180, 80, 200), width=3)
+        bd.polygon([(0, bh - 20), (0, bh + 14), (18, bh - 10)], fill=(37, 211, 102, 230))
+        y = pad_y
+        for line in lines:
+            bd.text((pad_x, y), line, font=font, fill=(255, 255, 255, 255))
+            y += lh
+        bubble.save(str(out_path), "PNG")
+        bw_f, bh_f = bubble.size
+
+        x = 30
+        y_pos = int(H * 0.28) + (scene_idx % 3) * 60
+        y_pos = max(120, min(y_pos, H - bh_f - 450))
+        return {"path": str(out_path), "x": x, "y": y_pos}
+    except Exception as e:
+        logger.debug(f"Chat bubble fallido: {e}")
+        return None
+
+
+def _make_notification_png(out_path: Path, scene_idx: int) -> dict | None:
+    """Overlay notificación iOS/Android para escenas INICIO o REFLEXION."""
+    try:
+        W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+        font_path  = _find_font()
+        font_title = _load_font(font_path, 32)
+        font_body  = _load_font(font_path, 28)
+
+        titles = ["CONFESIÓN REAL", "HISTORIA IMPACTANTE", "ALERTA EMOCIONAL", "CASO REAL"]
+        bodies  = [
+            "No vas a creer lo que pasó...",
+            "Una historia que te dejará sin palabras",
+            "Lo que nadie se atrevió a decir",
+            "Esto cambió todo para siempre",
+        ]
+        title_txt = titles[scene_idx % len(titles)]
+        body_txt  = bodies[scene_idx % len(bodies)]
+
+        nw, nh = int(W * 0.82), 110
+        notif = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+        nd    = ImageDraw.Draw(notif)
+        nd.rounded_rectangle([0, 0, nw - 1, nh - 1], radius=14, fill=(18, 18, 18, 210))
+        nd.rounded_rectangle([0, 0, nw - 1, nh - 1], radius=14, outline=(80, 80, 80, 180), width=2)
+        nd.ellipse([16, 18, 38, 40], fill=(220, 30, 30, 255))
+        nd.text((54, 14), title_txt, font=font_title, fill=(255, 255, 255, 255))
+        nd.text((54, 56), body_txt,  font=font_body,  fill=(180, 180, 180, 255))
+        nd.text((nw - 72, 14), "ahora", font=font_body, fill=(130, 130, 130, 255))
+        notif.save(str(out_path), "PNG")
+
+        x = (W - nw) // 2
+        y = 160 + (scene_idx % 2) * 20
+        return {"path": str(out_path), "x": x, "y": y}
+    except Exception as e:
+        logger.debug(f"Notification overlay fallido: {e}")
+        return None
+
+
+def _make_news_ticker_png(out_path: Path, text: str) -> dict | None:
+    """Overlay ticker de noticias para escenas CLIMAX/CONFRONTACION."""
+    try:
+        W, H      = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+        font_path  = _find_font()
+        font_label = _load_font(font_path, 32)
+        font_news  = _load_font(font_path, 36)
+
+        label     = "ULTIMA HORA"
+        ticker_h  = 90
+        ticker_w  = W
+
+        ticker = Image.new("RGBA", (ticker_w, ticker_h), (0, 0, 0, 0))
+        td     = ImageDraw.Draw(ticker)
+
+        lw = td.textbbox((0, 0), label, font=font_label)[2] + 40
+        td.rectangle([0, 0, lw, ticker_h],         fill=(200, 20, 20, 235))
+        td.rectangle([lw, 0, ticker_w, ticker_h],   fill=(15, 15, 15, 215))
+        td.rectangle([0, 0, ticker_w, 4],           fill=(255, 220, 0, 255))
+        td.rectangle([0, ticker_h - 4, ticker_w, ticker_h], fill=(255, 220, 0, 255))
+
+        lh = td.textbbox((0, 0), label, font=font_label)[3]
+        td.text((16, (ticker_h - lh) // 2), label, font=font_label, fill=(255, 255, 255, 255))
+
+        news_short = text[:55] + ("..." if len(text) > 55 else "")
+        td.text((lw + 18, (ticker_h - 36) // 2), news_short, font=font_news,
+                fill=(255, 255, 255, 255))
+        ticker.save(str(out_path), "PNG")
+
+        y = H - 560
+        return {"path": str(out_path), "x": 0, "y": y}
+    except Exception as e:
+        logger.debug(f"News ticker fallido: {e}")
         return None
 
 
@@ -383,7 +647,6 @@ def _render_intro_png(hook: str, title: str, first_image_path: str | None) -> Im
     # ── 3. Vignette en bordes (esquinas oscuras, efecto cinemático) ───────────
     vig    = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd     = ImageDraw.Draw(vig)
-    radius = int(W * 0.55)
     for px in range(0, W, 3):
         for py in range(0, H, 3):
             dx = px - W / 2
@@ -525,6 +788,17 @@ def generate_thumbnail(script: dict, images: list[str], output_path: str) -> str
     GOLD      = (255, 210, 40)
     WHITE     = (255, 255, 255)
     YELLOW    = (255, 230, 0)
+
+    # Normalizar: images puede ser list[str] o list[list[str]]
+    flat_images: list[str] = []
+    for item in images:
+        if isinstance(item, list):
+            valid = [str(p) for p in item if Path(p).exists()]
+            if valid:
+                flat_images.append(valid[0])
+        elif Path(item).exists():
+            flat_images.append(str(item))
+    images = flat_images
 
     scenes = script.get("scenes", [])
 
@@ -670,6 +944,7 @@ def _render_outro_png(
     font_cta       = _load_font(font_path, 46)
     font_follow    = _load_font(font_path, 40)
     font_channel   = _load_font(font_path, 32)
+    font_telegram  = _load_font(font_path, 34)
 
     center_y = H // 2
 
@@ -706,11 +981,27 @@ def _render_outro_png(
     cta2_y  = cta1_y + 70
     _draw_text_with_stroke(draw, c2_x, cta2_y, cta2, font_follow, GRAY, 2)
 
+    # Link de Telegram (si está configurado)
+    channel_link = getattr(config, "TELEGRAM_CHANNEL_LINK", "")
+    if channel_link:
+        tg_text = ">> MAS HISTORIAS EN TELEGRAM <<"
+        tg_bbox = draw.textbbox((0, 0), tg_text, font=font_telegram)
+        tg_x    = (W - (tg_bbox[2] - tg_bbox[0])) // 2
+        tg_y    = cta2_y + 62
+        _draw_text_with_stroke(draw, tg_x, tg_y, tg_text, font_telegram, (0, 200, 255), 2)
+
+        link_bbox = draw.textbbox((0, 0), channel_link, font=font_telegram)
+        link_x    = (W - (link_bbox[2] - link_bbox[0])) // 2
+        _draw_text_with_stroke(draw, link_x, tg_y + 44, channel_link, font_telegram, (255, 255, 255), 2)
+        ch_y_offset = tg_y + 106
+    else:
+        ch_y_offset = H - 110
+
     # Nombre del canal
     channel = getattr(config, "CHANNEL_NAME", "CONFESIONES DRAMÁTICAS")
     ch_bbox = draw.textbbox((0, 0), channel, font=font_channel)
     ch_x    = (W - (ch_bbox[2] - ch_bbox[0])) // 2
-    ch_y    = H - 110
+    ch_y    = max(ch_y_offset, H - 110)
     _draw_text_with_stroke(draw, ch_x, ch_y, channel, font_channel, (170, 170, 170), 2)
 
     # Barra inferior del tema
@@ -786,44 +1077,73 @@ def _open_as_image(path: str, size: tuple[int, int]) -> Image.Image:
     return Image.open(path).convert("RGB").resize(size, Image.LANCZOS)
 
 
-# ─── Clip de escena desde stock video (Pexels) ────────────────────────────────
+def _normalize_scene_images(images: list) -> list[list[str]]:
+    """
+    Normaliza la lista de imágenes/videos de escenas a list[list[str]].
+    Acepta tanto list[str] (legado) como list[list[str]] (multi-cut de pexels_fetcher).
+    """
+    result: list[list[str]] = []
+    for item in images:
+        if isinstance(item, list):
+            valid = [str(Path(p)) for p in item if Path(p).exists()]
+            if valid:
+                result.append(valid)
+        elif Path(item).exists():
+            result.append([str(Path(item))])
+    return result
 
-def _build_scene_clip_from_video(
+
+def _build_one_subclip(
     video_path: str,
     duration: float,
     fps: int,
     out_path: Path,
-    scene_idx: int,
+    act: str,
+    kb_style: str,
 ) -> None:
     """
-    Prepara un clip de stock video para una escena:
-    - Escala y recorta a 1080x1920 (portrait center-crop)
-    - Toma un segmento aleatorio dentro del clip (variedad entre runs)
-    - Si el clip es más corto que duration, lo loopea
-    - Añade fade in/out suave
-    Usa libx264 (CPU) porque los clips ya tienen movimiento real — no necesitan GPU.
+    Genera un sub-clip individual con Ken Burns específico y sin overlays.
+    kb_style: zoom_in | zoom_out | pan_right | pan_left | pan_up | pan_down | dramatic
     """
     W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
-    fade_d = round(min(random.choice([0.05, 0.15, 0.25, 0.35]), duration * 0.18), 3)
+    fade_d         = round(min(0.12, duration * 0.15), 3)
     fade_out_start = round(max(0.0, duration - fade_d), 3)
 
-    # Slow camera drift: scale a 110% → portrait center-crop → deriva en dirección aleatoria
-    SW, SH = int(W * 1.10), int(H * 1.10)   # 1188 × 2112
-    dx, dy = SW - W, SH - H                  # 108, 192 px disponibles para driftar
-    spd_x  = round(dx / max(duration, 1.0), 2)
-    spd_y  = round(dy / max(duration, 1.0), 2)
-    drift  = random.choice(["pan_right", "pan_left", "pan_up", "pan_down", "static"])
-
-    if drift == "pan_right":
-        crop_expr = f"crop={W}:{H}:x='min({dx},t*{spd_x})':y={dy//2}"
-    elif drift == "pan_left":
-        crop_expr = f"crop={W}:{H}:x='max(0,{dx}-t*{spd_x})':y={dy//2}"
-    elif drift == "pan_up":
-        crop_expr = f"crop={W}:{H}:x={dx//2}:y='min({dy},t*{spd_y})'"
-    elif drift == "pan_down":
-        crop_expr = f"crop={W}:{H}:x={dx//2}:y='max(0,{dy}-t*{spd_y})'"
+    _DRAMATIC_ACTS = {"CLIMAX", "CONFRONTACION", "DESCUBRIMIENTO", "GIRO", "REVELACION"}
+    if kb_style == "dramatic" or act.upper() in _DRAMATIC_ACTS:
+        SW, SH = int(W * 1.18), int(H * 1.18)
+        dx, dy = SW - W, SH - H
+        spd_x  = round(dx / max(duration, 1.0), 4)
+        spd_y  = round(dy / max(duration, 1.0), 4)
+        if kb_style in ("zoom_in", "dramatic"):
+            crop_expr = (
+                f"crop={W}:{H}:"
+                f"x='max(0,min({dx},{dx}-t*{spd_x}))':"
+                f"y='max(0,min({dy},{dy}-t*{spd_y}))'"
+            )
+        else:
+            crop_expr = (
+                f"crop={W}:{H}:"
+                f"x='max(0,min({dx},t*{spd_x}))':"
+                f"y='max(0,min({dy},t*{spd_y}))'"
+            )
     else:
-        crop_expr = f"crop={W}:{H}:x={dx//2}:y={dy//2}"
+        SW, SH = int(W * 1.10), int(H * 1.10)
+        dx, dy = SW - W, SH - H
+        spd_x  = round(dx / max(duration, 1.0), 2)
+        spd_y  = round(dy / max(duration, 1.0), 2)
+        styles = {
+            "pan_right": f"crop={W}:{H}:x='min({dx},t*{spd_x})':y={dy//2}",
+            "pan_left":  f"crop={W}:{H}:x='max(0,{dx}-t*{spd_x})':y={dy//2}",
+            "pan_up":    f"crop={W}:{H}:x={dx//2}:y='min({dy},t*{spd_y})'",
+            "pan_down":  f"crop={W}:{H}:x={dx//2}:y='max(0,{dy}-t*{spd_y})'",
+            "zoom_in":   (f"crop={W}:{H}:"
+                          f"x='max(0,min({dx},{dx}-t*{spd_x}))':"
+                          f"y='max(0,min({dy},{dy}-t*{spd_y}))'"),
+            "zoom_out":  (f"crop={W}:{H}:"
+                          f"x='min({dx},t*{spd_x})':y='min({dy},t*{spd_y})'"),
+        }
+        crop_expr = styles.get(kb_style, styles["pan_right"])
 
     vf = (
         f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
@@ -833,61 +1153,296 @@ def _build_scene_clip_from_video(
         f"fade=t=out:st={fade_out_start}:d={fade_d}"
     )
 
-    clip_dur = _get_audio_duration(video_path)
+    clip_dur   = _get_audio_duration(video_path)
     max_offset = max(0.0, clip_dur - duration - 0.5)
-    start_offset = round(random.uniform(0.0, max_offset), 2) if max_offset > 0 else 0.0
+    start_off  = round(random.uniform(0.0, max_offset), 2) if max_offset > 0 else 0.0
 
-    # Sticker viral: 40% de probabilidad por escena
-    sticker = None
-    if random.random() < 0.40:
+    if clip_dur < duration:
+        _ffmpeg(
+            "-stream_loop", "-1", "-i", video_path,
+            "-t", str(duration), "-vf", vf,
+            "-r", str(fps), "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an", str(out_path),
+            desc=f"subclip loop {Path(video_path).name[:25]}",
+        )
+    else:
+        _ffmpeg(
+            "-ss", str(start_off), "-i", video_path,
+            "-t", str(duration), "-vf", vf,
+            "-r", str(fps), "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an", str(out_path),
+            desc=f"subclip {Path(video_path).name[:25]}",
+        )
+
+
+def _fast_concat_subclips(sub_paths: list[Path], out_path: Path, fps: int) -> None:
+    """Concatena sub-clips con cortes rápidos (xfade 0.05s) para ritmo de edición activa."""
+    if len(sub_paths) == 1:
+        shutil.copy(str(sub_paths[0]), str(out_path))
+        return
+
+    FAST_CUT = 0.05
+    durations = []
+    for p in sub_paths:
+        try:
+            durations.append(_get_audio_duration(str(p)))
+        except Exception:
+            durations.append(2.0)
+
+    input_args: list[str] = []
+    for p in sub_paths:
+        input_args.extend(["-i", str(p)])
+
+    filter_parts: list[str] = []
+    prev_label  = "[0:v]"
+    cumulative  = 0.0
+    for i in range(1, len(sub_paths)):
+        cumulative += durations[i - 1]
+        offset      = max(0.05, cumulative - i * FAST_CUT)
+        new_label   = f"[fc{i}]"
+        filter_parts.append(
+            f"{prev_label}[{i}:v]xfade=transition=fade"
+            f":duration={FAST_CUT}:offset={offset:.3f}{new_label}"
+        )
+        prev_label = new_label
+
+    try:
+        _ffmpeg(
+            *input_args,
+            "-filter_complex", ";".join(filter_parts),
+            "-map", prev_label,
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            str(out_path),
+            desc="fast concat subclips",
+        )
+    except RuntimeError:
+        concat_txt = out_path.parent / f"_fc_{out_path.stem}.txt"
+        concat_txt.write_text(
+            "\n".join(f"file '{p.as_posix()}'" for p in sub_paths),
+            encoding="utf-8",
+        )
+        _ffmpeg(
+            "-f", "concat", "-safe", "0", "-i", str(concat_txt),
+            "-c", "copy", str(out_path),
+            desc="fast concat copy fallback",
+        )
+        concat_txt.unlink(missing_ok=True)
+
+
+# ─── Clip de escena desde stock video (Pexels) ────────────────────────────────
+
+def _build_scene_clip_from_video(
+    video_paths: list[str],
+    duration: float,
+    fps: int,
+    out_path: Path,
+    scene_idx: int,
+    act: str = "",
+    hook_text: str = "",
+) -> None:
+    """
+    Prepara el clip de escena con stock videos.
+    Si video_paths tiene >1 clips: N sub-clips con Ken Burns alternado + cortes rápidos.
+    Aplica overlays contextuales según el acto narrativo (chat bubble / ticker / notif / sticker).
+    """
+    W, H = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    _DRAMATIC_ACTS = {"CLIMAX", "CONFRONTACION", "DESCUBRIMIENTO", "GIRO", "REVELACION"}
+    is_dramatic    = act.upper() in _DRAMATIC_ACTS
+
+    # ── 1. Construir clip base (sin overlays) ─────────────────────────────────
+    raw_clip = out_path.parent / f"{out_path.stem}_raw.mp4"
+
+    if len(video_paths) > 1:
+        # Multi-corte: N sub-clips con direcciones Ken Burns alternadas
+        n        = len(video_paths)
+        sub_dur  = duration / n
+        sub_outs = [out_path.parent / f"{out_path.stem}_sub{j}.mp4" for j in range(n)]
+        kb_dirs  = (
+            ["zoom_in", "zoom_out"] * (n // 2 + 1)
+            if is_dramatic else
+            ["pan_right", "pan_left", "zoom_in", "pan_up"] * (n // 2 + 1)
+        )
+        for j, vp in enumerate(video_paths):
+            _build_one_subclip(vp, sub_dur, fps, sub_outs[j], act, kb_dirs[j])
+        _fast_concat_subclips(sub_outs, raw_clip, fps)
+        for sp in sub_outs:
+            sp.unlink(missing_ok=True)
+    else:
+        # Un solo clip — Ken Burns completo (comportamiento original)
+        video_path     = video_paths[0]
+        fade_d         = round(min(random.choice([0.05, 0.15, 0.25, 0.35]), duration * 0.18), 3)
+        fade_out_start = round(max(0.0, duration - fade_d), 3)
+
+        if is_dramatic:
+            SW, SH     = int(W * 1.18), int(H * 1.18)
+            dx, dy     = SW - W, SH - H
+            zoom_spd_x = round(dx / max(duration, 1.0), 4)
+            zoom_spd_y = round(dy / max(duration, 1.0), 4)
+            if act.upper() == "CLIMAX":
+                shake_amp  = 6
+                shake_hz   = 3
+                shake_expr = f"{dx//2}+{shake_amp}*sin(t*{shake_hz}*2*3.14159)"
+                crop_expr  = (
+                    f"crop={W}:{H}:"
+                    f"x='max(0,min({dx},{dx}-t*{zoom_spd_x}+{shake_expr}))':"
+                    f"y='max(0,min({dy},{dy//2}-t*{zoom_spd_y}))'"
+                )
+            else:
+                crop_expr = (
+                    f"crop={W}:{H}:"
+                    f"x='max(0,min({dx},{dx//2}+t*{zoom_spd_x}/2))':"
+                    f"y='max(0,min({dy},{dy}-t*{zoom_spd_y}))'"
+                )
+        else:
+            SW, SH = int(W * 1.10), int(H * 1.10)
+            dx, dy = SW - W, SH - H
+            spd_x  = round(dx / max(duration, 1.0), 2)
+            spd_y  = round(dy / max(duration, 1.0), 2)
+            drift  = random.choice(["pan_right", "pan_left", "pan_up", "pan_down", "static"])
+            if drift == "pan_right":
+                crop_expr = f"crop={W}:{H}:x='min({dx},t*{spd_x})':y={dy//2}"
+            elif drift == "pan_left":
+                crop_expr = f"crop={W}:{H}:x='max(0,{dx}-t*{spd_x})':y={dy//2}"
+            elif drift == "pan_up":
+                crop_expr = f"crop={W}:{H}:x={dx//2}:y='min({dy},t*{spd_y})'"
+            elif drift == "pan_down":
+                crop_expr = f"crop={W}:{H}:x={dx//2}:y='max(0,{dy}-t*{spd_y})'"
+            else:
+                crop_expr = f"crop={W}:{H}:x={dx//2}:y={dy//2}"
+
+        vf = (
+            f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
+            f"crop={SW}:{SH},"
+            f"{crop_expr},"
+            f"fade=t=in:st=0:d={fade_d},"
+            f"fade=t=out:st={fade_out_start}:d={fade_d}"
+        )
+
+        clip_dur   = _get_audio_duration(video_path)
+        max_offset = max(0.0, clip_dur - duration - 0.5)
+        start_off  = round(random.uniform(0.0, max_offset), 2) if max_offset > 0 else 0.0
+
+        if clip_dur < duration:
+            input_pfx = ["-stream_loop", "-1", "-i", video_path]
+        else:
+            input_pfx = ["-ss", str(start_off), "-i", video_path]
+
+        _ffmpeg(
+            *input_pfx,
+            "-t", str(duration), "-vf", vf,
+            "-r", str(fps), "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an", str(raw_clip),
+            desc=f"escena {scene_idx} raw",
+        )
+
+    # ── 2. Overlays según acto narrativo ─────────────────────────────────────
+    overlays_data: list[tuple[str, int, int, float, float]] = []
+
+    if scene_idx == 0 and hook_text:
+        hook_png_path = out_path.parent / f"hook_{scene_idx:03d}.png"
+        hook_png = _make_hook_png(hook_png_path, hook_text)
+        if hook_png:
+            t_end = round(min(2.5, duration * 0.40), 2)
+            overlays_data.append((hook_png["path"], hook_png["x"], hook_png["y"], 0.0, t_end))
+            logger.info(f"  Escena 1: hook '{hook_text[:40]}' ({t_end}s)")
+
+    contextual_added = False
+    act_u = act.upper()
+
+    if act_u == "DESCUBRIMIENTO" and random.random() < 0.65:
+        bubble_path = out_path.parent / f"bubble_{scene_idx:03d}.png"
+        bubble_txt  = random.choice([
+            "Algo no cuadraba...", "No podía creer lo que veía",
+            "Ahí lo descubrí todo", "Mi mundo se detuvo", "No debí buscar eso",
+        ])
+        bubble = _make_chat_bubble_png(bubble_path, bubble_txt, scene_idx)
+        if bubble:
+            appear = round(random.uniform(0.5, duration * 0.35), 2)
+            vanish = round(min(duration - 0.2, appear + random.uniform(2.5, 3.5)), 2)
+            overlays_data.append((bubble["path"], bubble["x"], bubble["y"], appear, vanish))
+            logger.info(f"  Escena {scene_idx+1}: chat bubble DESCUBRIMIENTO")
+            contextual_added = True
+
+    elif act_u in ("INICIO", "REFLEXION") and scene_idx >= 1 and random.random() < 0.55:
+        notif_path = out_path.parent / f"notif_{scene_idx:03d}.png"
+        notif = _make_notification_png(notif_path, scene_idx)
+        if notif:
+            appear = round(random.uniform(0.3, 1.0), 2)
+            vanish = round(min(duration - 0.2, appear + 2.2), 2)
+            overlays_data.append((notif["path"], notif["x"], notif["y"], appear, vanish))
+            logger.info(f"  Escena {scene_idx+1}: notification {act_u}")
+            contextual_added = True
+
+    elif act_u in ("CLIMAX", "CONFRONTACION") and random.random() < 0.70:
+        ticker_path = out_path.parent / f"ticker_{scene_idx:03d}.png"
+        ticker_txt  = random.choice([
+            "La verdad salió a la luz de la peor manera",
+            "Nadie esperaba lo que pasó a continuación",
+            "El momento más oscuro de la historia",
+            "Todo explotó sin control",
+            "Aquí llegó el punto de quiebre",
+        ])
+        ticker = _make_news_ticker_png(ticker_path, ticker_txt)
+        if ticker:
+            appear = round(random.uniform(0.4, duration * 0.30), 2)
+            vanish = round(min(duration - 0.2, appear + random.uniform(2.5, 4.0)), 2)
+            overlays_data.append((ticker["path"], ticker["x"], ticker["y"], appear, vanish))
+            logger.info(f"  Escena {scene_idx+1}: news ticker {act_u}")
+            contextual_added = True
+
+    if not contextual_added and random.random() < 0.40:
         sticker_png = out_path.parent / f"sticker_{scene_idx:03d}.png"
         sticker = _make_sticker_png(sticker_png, scene_idx)
         if sticker:
-            logger.info(f"  Escena {scene_idx + 1}: sticker en ({sticker['x']},{sticker['y']})")
+            appear = round(random.uniform(0.4, max(0.4, duration * 0.35)), 2)
+            vanish = round(min(duration - 0.2, appear + random.uniform(2.0, 3.2)), 2)
+            overlays_data.append((sticker["path"], sticker["x"], sticker["y"], appear, vanish))
+            logger.info(f"  Escena {scene_idx+1}: sticker ({sticker['x']},{sticker['y']})")
 
-    def _build_ffmpeg_cmd(input_prefix: list[str]) -> list[str]:
-        """Construye los argumentos de FFmpeg con o sin sticker."""
-        if sticker:
-            sx, sy = sticker["x"], sticker["y"]
-            appear  = round(random.uniform(0.4, max(0.4, duration * 0.35)), 2)
-            vanish  = round(min(duration - 0.2, appear + random.uniform(2.0, 3.2)), 2)
-            fc = (f"[0:v]{vf}[base];"
-                  f"[base][1:v]overlay=x={sx}:y={sy}:"
-                  f"enable='between(t,{appear},{vanish})'[out]")
-            return [
-                *input_prefix,
-                "-i", sticker["path"],
-                "-t", str(duration),
-                "-filter_complex", fc,
-                "-map", "[out]",
-                "-r", str(fps),
-                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-an",
-                str(out_path),
-            ]
-        else:
-            return [
-                *input_prefix,
-                "-t", str(duration),
-                "-vf", vf,
-                "-r", str(fps),
-                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-an",
-                str(out_path),
-            ]
+    # ── 3. Aplicar overlays sobre el raw clip ─────────────────────────────────
+    if overlays_data:
+        fd           = 0.28
+        extra_inputs: list[str] = []
+        for ov in overlays_data:
+            extra_inputs.extend(["-i", ov[0]])
 
-    if clip_dur < duration:
-        cmd = _build_ffmpeg_cmd(["-stream_loop", "-1", "-i", video_path])
-        label = f"escena {scene_idx} (loop{'+ sticker' if sticker else ''})"
+        fc_parts: list[str] = []
+        prev = "0:v"
+        for i, (_, ox, oy, ta, tb) in enumerate(overlays_data):
+            ov_lbl   = f"ov{i}"
+            next_lbl = "out" if i == len(overlays_data) - 1 else f"v{i+1}"
+            fo_start = round(max(ta, tb - fd), 3)
+            fc_parts.append(
+                f"[{i+1}:v]"
+                f"fade=t=in:st={ta:.3f}:d={fd}:alpha=1,"
+                f"fade=t=out:st={fo_start:.3f}:d={fd}:alpha=1"
+                f"[{ov_lbl}]"
+            )
+            fc_parts.append(
+                f"[{prev}][{ov_lbl}]overlay=x={ox}:y={oy}:"
+                f"enable='between(t,{max(0,ta-0.05):.3f},{tb+0.05:.3f})'[{next_lbl}]"
+            )
+            prev = next_lbl
+
+        _ffmpeg(
+            "-i", str(raw_clip), *extra_inputs,
+            "-filter_complex", ";".join(fc_parts),
+            "-map", "[out]",
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-an", str(out_path),
+            desc=f"escena {scene_idx} overlays ({len(overlays_data)})",
+        )
+        raw_clip.unlink(missing_ok=True)
     else:
-        cmd = _build_ffmpeg_cmd(["-ss", str(start_offset), "-i", video_path])
-        label = f"escena {scene_idx} (stock video{'+ sticker' if sticker else ''})"
-
-    _ffmpeg(*cmd, desc=label)
+        raw_clip.rename(out_path)
 
 
 
 # ─── Música de fondo ──────────────────────────────────────────────────────────
+
+_CONTENT_ID_BLACKLIST = ["fesliyan", "bensound", "incompetech"]  # registradas en Content ID de YouTube
 
 def _pick_music() -> Path | None:
     """Elige aleatoriamente un archivo de música de assets/music/."""
@@ -895,6 +1450,15 @@ def _pick_music() -> Path | None:
     tracks = list(music_dir.glob("*.mp3")) + list(music_dir.glob("*.wav"))
     if not tracks:
         return None
+    for t in tracks:
+        name_lower = t.name.lower()
+        for blocked in _CONTENT_ID_BLACKLIST:
+            if blocked in name_lower:
+                logger.warning(
+                    f"MÚSICA BLOQUEADA POR CONTENT ID: '{t.name}' es de '{blocked}' "
+                    "— registrada en YouTube Content ID. Elimínala de assets/music/ y "
+                    "reemplázala con música de Pixabay Music (pixabay.com/music) — CC0, no registrada."
+                )
     return random.choice(tracks)
 
 
@@ -945,7 +1509,9 @@ def _concat_with_xfade(clip_paths: list[Path], tmp_dir: Path, fps: int) -> Path:
         return out
 
     TRANSITIONS = [
-        "fade", "fadeblack", "dissolve",
+        "fade", "fadeblack",
+        "fadewhite", "fadewhite", "fadewhite",  # flash blanco — estilo viral TikTok
+        "dissolve",
         "wipeleft", "wiperight",
         "smoothleft", "smoothright",
         "slideup", "slideleft",
@@ -1063,9 +1629,11 @@ def assemble_video(
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio no encontrado: {audio_path}")
 
-    valid_images = [str(Path(p)) for p in images if Path(p).exists()]
-    if not valid_images:
+    # Normalizar: images puede ser list[str] (legado) o list[list[str]] (multi-cut)
+    scene_images = _normalize_scene_images(images)
+    if not scene_images:
         raise FileNotFoundError("No hay imágenes válidas para ensamblar")
+    valid_images = [clips[0] for clips in scene_images]  # primer clip por escena (para intro/outro)
 
     if output_path is None:
         ts          = time.strftime("%Y%m%d_%H%M%S")
@@ -1078,17 +1646,28 @@ def assemble_video(
     # ── 1. Duración del audio ──────────────────────────────────────────────────
     total_duration = _get_audio_duration(str(audio_path))
 
+    # Cap de duración: YouTube bloquea Shorts >60s con música que tenga Content ID.
+    # Máximo seguro: 54s narración + 5.5s outro = 59.5s total.
+    _outro_dur_ref = getattr(config, "OUTRO_DURATION", 5.5)
+    _max_narration = 54.0 - _outro_dur_ref  # deja margen de ~0.5s
+    if total_duration > _max_narration:
+        logger.warning(
+            f"Audio demasiado largo ({total_duration:.1f}s > {_max_narration:.0f}s). "
+            f"El Short total superaría 60s — el script debe ser más corto (objetivo: 110-130 palabras). "
+            f"Continuando igualmente, pero el video puede ser bloqueado por YouTube."
+        )
+
     # Compensar xfade: cada transición resta XFADE_DUR del timeline total.
     # Sin compensación el outro aparece N*0.4s antes de que acabe la narración.
     # Fórmula: scene_duration = TTS/n_scenes + XFADE_DUR garantiza que el
     # offset del xfade scene→outro caiga exactamente en t=total_duration.
-    scene_duration = total_duration / len(valid_images) + _XFADE_DUR
+    scene_duration = total_duration / len(scene_images) + _XFADE_DUR
 
     # Elegir tema visual para este video
     theme = random.choice(_VIDEO_THEMES)
     logger.info(
         f"Audio: {total_duration:.1f}s | "
-        f"{len(valid_images)} escenas x {scene_duration:.1f}s | "
+        f"{len(scene_images)} escenas x {scene_duration:.1f}s | "
         f"tema: {theme['name']}"
     )
 
@@ -1130,34 +1709,36 @@ def assemble_video(
         # REMOVIDO: Ahora se inyecta directamente vía FFmpeg ASS en el paso 6.
 
         # ── 4. Generar clips de escena en paralelo ─────────────────────────────
-        logger.info(f"Generando {len(valid_images)} clips (stock video Pexels)...")
+        n_scenes = len(scene_images)
+        logger.info(f"Generando {n_scenes} clips (stock video)...")
         t0 = time.time()
 
-        scene_clip_paths = [tmp_dir / f"clip_{i+1:03d}_scene.mp4"
-                            for i in range(len(valid_images))]
+        scene_clip_paths = [tmp_dir / f"clip_{i+1:03d}_scene.mp4" for i in range(n_scenes)]
 
         def build_scene(idx):
-            t_s  = time.time()
-            act  = scenes[idx].get("act", "") if idx < len(scenes) else ""
-            src  = valid_images[idx]
-            if _is_video(src):
+            t_s   = time.time()
+            act   = scenes[idx].get("act", "") if idx < len(scenes) else ""
+            hook  = script.get("hook", "") if idx == 0 else ""
+            clips = scene_images[idx]  # list[str] — uno o más clips para esta escena
+            if _is_video(clips[0]):
                 _build_scene_clip_from_video(
-                    video_path=src,
+                    video_paths=clips,
                     duration=scene_duration,
                     fps=config.FPS,
                     out_path=scene_clip_paths[idx],
                     scene_idx=idx,
+                    act=act,
+                    hook_text=hook,
                 )
             logger.info(
-                f"  Escena {idx+1}/{len(valid_images)} [{act or '-'}] lista "
-                f"({time.time()-t_s:.1f}s)"
+                f"  Escena {idx+1}/{n_scenes} [{act or '-'}] "
+                f"({len(clips)} clip(s)) lista ({time.time()-t_s:.1f}s)"
             )
 
         # Paralelo — 4 workers máximo (más saturan CPU/IO sin beneficio)
         errors = []
-        with ThreadPoolExecutor(max_workers=min(4, len(valid_images))) as executor:
-            futures = {executor.submit(build_scene, i): i
-                       for i in range(len(valid_images))}
+        with ThreadPoolExecutor(max_workers=min(4, n_scenes)) as executor:
+            futures = {executor.submit(build_scene, i): i for i in range(n_scenes)}
             for future in as_completed(futures):
                 idx = futures[future]
                 try:

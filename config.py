@@ -31,12 +31,17 @@ OLLAMA_MODEL: str = os.getenv(
 OLLAMA_FALLBACK_MODEL: str = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))  # lee del .env
 
-# ─── Pexels (stock videos) ───────────────────────────────────────────────────
+# ─── Pexels (stock videos — fuente primaria) ─────────────────────────────────
 # Regístrate gratis en https://www.pexels.com/api/ (200 req/hora, 20k/mes)
 PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
-USE_PEXELS: bool = True  # Siempre Pexels — Stable Diffusion eliminado
 PEXELS_POOL_SIZE: int = int(os.getenv("PEXELS_POOL_SIZE", "15"))  # clips por keyword
 PEXELS_HISTORY_LIMIT: int = int(os.getenv("PEXELS_HISTORY_LIMIT", "100"))  # clips recientes a evitar
+
+# ─── Pixabay (stock videos — fuente secundaria, CC0, sin Content ID) ─────────
+# Registrate gratis en pixabay.com/api/docs/ — hasta 100 req/min
+# Se usa como fallback cuando Pexels no tiene clips frescos para una escena.
+# Diversificar fuentes reduce el riesgo de flag "reused content" de YouTube.
+PIXABAY_API_KEY: str = os.getenv("PIXABAY_API_KEY", "")
 
 # ─── Video ────────────────────────────────────────────────────────────────────
 VIDEO_WIDTH: int = 1080
@@ -44,7 +49,16 @@ VIDEO_HEIGHT: int = 1920
 VIDEO_DURATION: int = 50  # 50s = sweet spot retención Shorts de confesiones (35s era muy corto para medir watch time)
 FPS: int = 30
 INTRO_DURATION: float = 0.0   # 0 = sin intro (recomendado Shorts: viewers hacen swipe si no ven historia en <2s)
-OUTRO_DURATION: float = 4.0   # CTA final con pregunta de engagement
+OUTRO_DURATION: float = 5.5   # CTA final con pregunta de engagement
+
+# ─── Edición avanzada ────────────────────────────────────────────────────────
+# Cortes por escena: 1=un clip por escena (estilo plantilla), 2=dos clips distintos
+# por escena con corte rápido entre ellos (ritmo TikTok viral). Default: 2.
+CUTS_PER_SCENE: int = int(os.getenv("CUTS_PER_SCENE", "2"))
+# Efectos de sonido en transiciones y momentos dramáticos.
+# Los SFX se generan con ffmpeg (sin dependencias externas) y se cachean en assets/sfx/.
+SFX_ENABLED: bool = os.getenv("SFX_ENABLED", "true").lower() == "true"
+SFX_VOLUME: float = float(os.getenv("SFX_VOLUME", "0.30"))
 
 # ─── TTS (Text-to-Speech) ─────────────────────────────────────────────────────
 # TTS_BACKEND:
@@ -59,6 +73,13 @@ TTS_VOLUME: float = 1.0
 # "cpu" por defecto — evita conflicto de VRAM cuando VoiceBox ya carga su modelo en GPU.
 # Cambia a "cuda" solo si tienes VRAM de sobra (>= 8 GB libres con VoiceBox activo).
 WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")
+# Timeout para VoiceBox en segundos. Si el servidor tarda más que esto, el pipeline
+# hace fallback automático a edge-tts en vez de esperar 2 horas colgado.
+# 1500 s = 25 min — suficiente para scripts normales en GPU; en CPU tardará más y hará fallback.
+VOICEBOX_TIMEOUT_SECS: int = int(os.getenv("VOICEBOX_TIMEOUT_SECS", "1500"))
+# Velocidad de narración VoiceBox (0.85=lento, 1.0=normal, 1.15=rápido).
+# 0.92 da narración dramática clara sin alargar demasiado el audio.
+VOICEBOX_SPEED: float = float(os.getenv("VOICEBOX_SPEED", "0.92"))
 # Boost de volumen para la voz clonada (VoiceBox) antes del filtro de limpieza.
 # La voz femenina clonada suena más suave de base → necesita más ganancia.
 VOICE_VOLUME_FEMALE: float = float(os.getenv("VOICE_VOLUME_FEMALE", "2.0"))
@@ -85,7 +106,10 @@ TELEGRAM_CHANNEL_LINK: str  = os.getenv("TELEGRAM_CHANNEL_LINK", "")
 # Precio en Stars para desbloquear contenido premium (mínimo 1, recomendado 50-100)
 TELEGRAM_CHANNEL_STARS: int = int(os.getenv("TELEGRAM_CHANNEL_STARS", "50"))
 # Cuántas confesiones publicar en el canal por día
-TELEGRAM_CHANNEL_DAILY: int = int(os.getenv("TELEGRAM_CHANNEL_DAILY", "4"))
+TELEGRAM_CHANNEL_DAILY: int = int(os.getenv("TELEGRAM_CHANNEL_DAILY", "2"))
+# Horas que se conservan los mensajes del canal antes de borrarse automáticamente.
+# 0 = nunca borrar. 48h = los suscriptores que revisan cada 2 días siempre ven contenido.
+TELEGRAM_CHANNEL_TTL_HOURS: int = int(os.getenv("TELEGRAM_CHANNEL_TTL_HOURS", "48"))
 
 # ─── YouTube (Selenium) ───────────────────────────────────────────────────────
 YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
@@ -100,13 +124,17 @@ YOUTUBE_UPLOAD_ENABLED: bool = (
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 VIDEOS_PER_DAY: int = int(os.getenv("VIDEOS_PER_DAY", "3"))
+
+# Semanas de vida del canal — controla la rampa de publicación automática:
+#   1-2 semanas → 1 video/día (canal nuevo, no generar alertas de spam)
+#   3-4 semanas → 2 videos/día
+#   5+ semanas  → VIDEOS_PER_DAY completo
+# Incrementa este valor cada semana para subir gradualmente.
+CHANNEL_AGE_WEEKS: int = int(os.getenv("CHANNEL_AGE_WEEKS", "1"))
 # Ventanas de audiencia pico (latinoamérica): almuerzo / tarde / noche
 SCHEDULE_WIN1: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN1_MIN", "11")), int(os.getenv("SCHEDULE_WIN1_MAX", "13")))
 SCHEDULE_WIN2: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN2_MIN", "16")), int(os.getenv("SCHEDULE_WIN2_MAX", "18")))
 SCHEDULE_WIN3: tuple[int, int] = (int(os.getenv("SCHEDULE_WIN3_MIN", "20")), int(os.getenv("SCHEDULE_WIN3_MAX", "22")))
-# Retrocompatibilidad
-SCHEDULE_MIN_HOUR: int = int(os.getenv("SCHEDULE_MIN_HOUR", "18"))
-SCHEDULE_MAX_HOUR: int = int(os.getenv("SCHEDULE_MAX_HOUR", "22"))
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 OUTPUT_DIR: Path = BASE_DIR / "output"
@@ -201,8 +229,6 @@ HASHTAG_POOL: list[str] = [
     "#shortsespanol", "#videoviral", "#relatosverdaderos", "#nolopodiacreeer",
     "#latinoamerica", "#mexico", "#colombia", "#argentina", "#espanol",
 ]
-# Para compatibilidad: BASE_HASHTAGS apunta al pool completo
-BASE_HASHTAGS: list[str] = HASHTAG_POOL
 
 # ─── Pie de afiliado en descripción (dejar vacío para desactivar) ─────────────
 AFFILIATE_FOOTER: str = os.getenv("AFFILIATE_FOOTER", "")

@@ -24,8 +24,8 @@ import config
 logger = logging.getLogger(__name__)
 
 PEXELS_VIDEO_API = "https://api.pexels.com/videos/search"
-POOL_SIZE      = 15   # Clips a mantener por keyword
-HISTORY_LIMIT  = 100  # Clips recientes a evitar entre runs
+POOL_SIZE      = getattr(config, "PEXELS_POOL_SIZE", 15)
+HISTORY_LIMIT  = getattr(config, "PEXELS_HISTORY_LIMIT", 100)
 CACHE_DIR      = config.BASE_DIR / "assets" / "pexels_cache"
 CACHE_FILE     = CACHE_DIR / "cache.json"
 HISTORY_FILE   = CACHE_DIR / "history.json"
@@ -159,24 +159,26 @@ def _cache_add(keyword: str, path: str) -> None:
     _save_disk_cache(disk)
 
 
-def _pick_unused(pool: list[str]) -> str | None:
+def _pick_unused(pool: list[str], extra_exclude: set | None = None) -> str | None:
     """
     Elige un clip del pool priorizando:
     1. No usado en este run Y no en historial reciente
     2. No usado en este run (pero sí en historial)
     3. Cualquier clip válido (último recurso)
+    extra_exclude: set adicional de paths a evitar (para multi-corte por escena).
     """
+    exclude = _run_used | (extra_exclude or set())
     valid = [p for p in pool if Path(p).exists()]
     if not valid:
         return None
 
     # Prioridad 1: fresco (no en run ni en historial)
-    fresh = [p for p in valid if p not in _run_used and p not in _history]
+    fresh = [p for p in valid if p not in exclude and p not in _history]
     if fresh:
         return random.choice(fresh)
 
-    # Prioridad 2: no usado en este run
-    unused_run = [p for p in valid if p not in _run_used]
+    # Prioridad 2: no usado en este run ni en extra_exclude
+    unused_run = [p for p in valid if p not in exclude]
     if unused_run:
         return random.choice(unused_run)
 
@@ -349,18 +351,65 @@ def _refresh_pool_if_exhausted(keyword: str, api_key: str) -> list[str]:
 
 # ─── Función principal ────────────────────────────────────────────────────────
 
-def fetch_videos(scenes: list[dict], output_dir: str) -> list[str]:
+def _pick_one_clip(
+    queries: list[str],
+    api_key: str,
+    scene_num: int,
+    label: str = "",
+    exclude: set | None = None,
+) -> str | None:
+    """Elige un clip de Pexels para una consulta, con fallback a Pixabay."""
+    if exclude is None:
+        exclude = _run_used
+
+    for query in queries:
+        pool = _mem_cache.get(query, [])
+        if len(pool) < POOL_SIZE:
+            pool = _expand_pool(query, api_key, target=POOL_SIZE)
+        if pool and all(p in _history for p in pool if Path(p).exists()):
+            pool = _refresh_pool_if_exhausted(query, api_key)
+        picked = _pick_unused(pool, extra_exclude=exclude)
+        if picked:
+            logger.info(f"  Escena {scene_num} {label}: '{query}' → {Path(picked).name}")
+            return picked
+
+    # Fallback: caché global Pexels
+    all_cached = [p for paths in _mem_cache.values() for p in paths
+                  if Path(p).exists() and p not in exclude]
+    fresh_global = [p for p in all_cached if p not in _history]
+    if fresh_global or all_cached:
+        picked = random.choice(fresh_global or all_cached)
+        logger.warning(f"  Escena {scene_num} {label}: usando global Pexels")
+        return picked
+
+    # Fallback: Pixabay
+    try:
+        from modules import pixabay_fetcher
+        q = queries[0] if queries else "dramatic emotional portrait"
+        picked = pixabay_fetcher.fetch_clip(q, exclude_paths=exclude)
+        if picked:
+            logger.info(f"  Escena {scene_num} {label}: Pixabay → {Path(picked).name}")
+            return picked
+        picked = pixabay_fetcher.fetch_clip_generic(exclude_paths=exclude)
+        if picked:
+            logger.info(f"  Escena {scene_num} {label}: Pixabay genérico → {Path(picked).name}")
+            return picked
+    except Exception as _epx:
+        logger.debug(f"  Pixabay fallback: {_epx}")
+
+    return None
+
+
+def fetch_videos(scenes: list[dict], output_dir: str) -> list[list[str]]:
     """
     Descarga clips portrait de Pexels para cada escena.
 
-    Garantías de variedad:
-    - Pool de 15 clips por query (era 3)
-    - Historial de 100 clips usados entre runs → evita repetición cross-run
-    - 4 queries por escena para mayor cobertura
-    - Páginas Pexels aleatorias (1-25) para variedad real en descargas
+    Devuelve una lista de listas: cada escena recibe CUTS_PER_SCENE clips distintos
+    para crear cortes rápidos dentro de la escena (ritmo TikTok viral).
+    CUTS_PER_SCENE=1 → comportamiento original (un clip por escena).
 
     Returns:
-        Lista de paths MP4 locales, misma longitud que scenes.
+        list[list[str]] — una lista de paths por escena, misma longitud que scenes.
     """
     api_key = getattr(config, "PEXELS_API_KEY", "")
     if not api_key:
@@ -370,6 +419,8 @@ def fetch_videos(scenes: list[dict], output_dir: str) -> list[str]:
             "2. Añade al .env: PEXELS_API_KEY=tu_clave"
         )
 
+    cuts_per_scene = int(getattr(config, "CUTS_PER_SCENE", 2))
+
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     global _mem_cache, _run_used, _history
@@ -378,61 +429,56 @@ def fetch_videos(scenes: list[dict], output_dir: str) -> list[str]:
     _run_used  = set()
 
     cached_count = sum(len(v) for v in _mem_cache.values())
-    logger.info(f"Pexels: {cached_count} clips en caché | {len(_history)} en historial reciente")
+    logger.info(
+        f"Pexels: {cached_count} clips en caché | {len(_history)} en historial reciente "
+        f"| {cuts_per_scene} corte(s)/escena"
+    )
 
-    results:    list[str] = []
+    results:    list[list[str]] = []
     last_valid: str | None = None
 
     for i, scene in enumerate(scenes):
         image_prompt = scene.get("image_prompt", "") or scene.get("text", "")
         act          = scene.get("act", "")
         queries      = _queries_for_scene(image_prompt, act, i)
+        # Queries rotadas para los cortes adicionales (evita repetir misma query)
+        queries_alt  = _queries_for_scene(image_prompt, act, i + len(scenes))
 
-        picked: str | None = None
+        scene_clips: list[str] = []
 
-        for query in queries:
-            pool = _mem_cache.get(query, [])
-
-            # Asegurar pool mínimo
-            if len(pool) < POOL_SIZE:
-                pool = _expand_pool(query, api_key, target=POOL_SIZE)
-
-            # Renovar si el pool está agotado en historial
-            if pool and all(p in _history for p in pool if Path(p).exists()):
-                pool = _refresh_pool_if_exhausted(query, api_key)
-
-            picked = _pick_unused(pool)
-            if picked:
-                logger.info(f"  Escena {i+1} [{act or '-'}]: '{query}' → {Path(picked).name}")
-                break
-
+        # Clip principal
+        picked = _pick_one_clip(queries, api_key, i + 1, "[A]")
         if not picked:
-            # Último recurso: cualquier clip del caché global no usado en este run
-            all_cached = [p for paths in _mem_cache.values() for p in paths
-                          if Path(p).exists() and p not in _run_used]
-            # Priorizar los que tampoco están en historial
-            fresh_global = [p for p in all_cached if p not in _history]
-            pool_fallback = fresh_global or all_cached
-
-            if pool_fallback:
-                picked = random.choice(pool_fallback)
-                logger.warning(f"  Escena {i+1}: sin clips nuevos, usando global '{Path(picked).name}'")
-            elif last_valid:
+            if last_valid:
                 picked = last_valid
-                logger.warning(f"  Escena {i+1}: pool agotado, repitiendo '{Path(picked).name}'")
+                logger.warning(f"  Escena {i+1}: pool agotado, repitiendo clip anterior")
             else:
                 logger.error(f"  Escena {i+1}: sin clips disponibles")
-                results.append("")
+                results.append([""])
                 continue
 
         _run_used.add(picked)
         _history.append(picked)
-        results.append(picked)
+        scene_clips.append(picked)
         last_valid = picked
+
+        # Clips adicionales para multi-corte
+        for cut_idx in range(1, cuts_per_scene):
+            q_extra = queries_alt if cut_idx % 2 == 1 else queries
+            extra = _pick_one_clip(q_extra, api_key, i + 1, f"[{chr(65+cut_idx)}]",
+                                   exclude=set(_run_used))
+            if extra:
+                _run_used.add(extra)
+                _history.append(extra)
+                scene_clips.append(extra)
+            else:
+                scene_clips.append(scene_clips[0])  # repite el principal si no hay más
+
+        results.append(scene_clips)
 
     # Persistir historial actualizado
     _save_history()
 
-    used_unique = len({p for p in results if p})
-    logger.info(f"Pexels: {len(scenes)} escenas → {used_unique} clips únicos")
+    used_unique = len({p for clips in results for p in clips if p})
+    logger.info(f"Pexels: {len(scenes)} escenas → {used_unique} clips únicos ({cuts_per_scene} corte(s)/escena)")
     return results
