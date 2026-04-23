@@ -1798,7 +1798,26 @@ def assemble_video(
         # Mezclar TTS con música de fondo si hay tracks disponibles
         mixed_audio = tmp_dir / "audio_mixed.aac"
         music_vol   = getattr(config, "MUSIC_VOLUME", 0.10)
-        final_audio_raw = _mix_with_music(audio_path, mixed_audio, music_vol=music_vol)
+        tts_music   = _mix_with_music(audio_path, mixed_audio, music_vol=music_vol)
+
+        # Capa de SFX sincronizados con los cortes de escena
+        sfx_audio = tmp_dir / "audio_sfx.aac"
+        try:
+            from modules import sfx_manager
+            scene_start_times = [
+                config.INTRO_DURATION + i * scene_duration
+                for i in range(len(scene_images))
+            ]
+            act_seq = [
+                scenes[i].get("act", "") if i < len(scenes) else ""
+                for i in range(len(scene_images))
+            ]
+            final_audio_raw = sfx_manager.mix_sfx_layer(
+                tts_music, scene_start_times, act_seq, sfx_audio
+            )
+        except Exception as _sfx_e:
+            logger.debug(f"SFX omitidos: {_sfx_e}")
+            final_audio_raw = tts_music
 
         # Padding de audio: outro_dur + XFADE_DUR para que el silencio cubra
         # el overlap del último xfade (scene→outro) sin cortar el CTA.
