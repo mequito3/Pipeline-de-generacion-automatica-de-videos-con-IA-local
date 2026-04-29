@@ -1,286 +1,215 @@
-# Shorts Factory v2
+# Pipeline de Generación Automática de Videos con IA Local
 
-Generador automático de YouTube Shorts de crypto/finanzas.
-**100% local — $0 en APIs de pago.**
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-black?logo=ollama)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Last Commit](https://img.shields.io/badge/último_commit-Abril_2026-blue)
+
+> Pipeline end-to-end para generar y publicar YouTube Shorts sobre criptomonedas y finanzas de forma completamente automatizada — sin depender de ninguna API de pago. Todo corre en tu propia máquina.
+
+---
+
+## ✨ Características
+
+- **⚙️ Pipeline 100% local** — LLM, TTS, generación de imágenes y renderizado corren en tu hardware. Costo de APIs: $0.
+- **🤖 Guión generado por LLM** — Ollama produce el contenido del video en base a temas configurables (cripto, finanzas, tecnología).
+- **🗣️ Narración con TTS** — Voz sintética generada localmente, sin servicios externos.
+- **🎨 Imágenes con Stable Diffusion** — Cada escena tiene su imagen generada por SD, con fallback automático a CPU si no hay GPU disponible.
+- **🎬 Renderizado con FFmpeg** — Las escenas se combinan en un video final listo para subir.
+- **📅 Scheduler integrado** — Publicación automática en horarios configurables directamente desde la config.
+- **🔧 Temas configurables** — El pipeline adapta el contenido al nicho que definas en `.env`.
+- **🪟 Compatible con Windows** — Incluye instrucciones de troubleshooting para PATH de FFmpeg y dependencias TTS.
+
+---
+
+## 🏗️ Arquitectura del Pipeline
 
 ```
-Ollama (LLM) → pyttsx3 (TTS) → Stable Diffusion (imágenes) → moviepy (video) → Selenium (YouTube)
+┌─────────────────────────────────────────────────────────────────┐
+│                     PIPELINE PRINCIPAL                          │
+└─────────────────────────────────────────────────────────────────┘
+
+  [config.py / .env]
+        │
+        ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────────────┐
+│   Ollama     │────▶│  TTS Local   │────▶│  Stable Diffusion    │
+│  (LLM local) │     │  (narración) │     │  (imágenes / escena) │
+│              │     │              │     │                      │
+│ Genera guión │     │ Genera audio │     │  GPU  →  ~30s/img    │
+│  por escena  │     │   .wav/.mp3  │     │  CPU  →  ~2-5 min    │
+└──────────────┘     └──────────────┘     └──────────────────────┘
+        │                   │                        │
+        └───────────────────┴────────────────────────┘
+                                │
+                                ▼
+                     ┌──────────────────┐
+                     │     FFmpeg       │
+                     │  (renderizado)   │
+                     │                  │
+                     │ audio + imágenes │
+                     │  → video final   │
+                     └────────┬─────────┘
+                              │
+                              ▼
+                     ┌──────────────────┐
+                     │  YouTube Upload  │
+                     │   (scheduler)    │
+                     │                  │
+                     │ Publica en los   │
+                     │ horarios config. │
+                     └──────────────────┘
 ```
 
 ---
 
-## Requisitos de hardware
+## 🛠️ Tech Stack
 
-Para correr todo el pipeline 100% local necesitas una laptop/PC con al menos:
+| Componente | Tecnología | Rol |
+|---|---|---|
+| **Lenguaje** | Python 3.10+ | Orquestación del pipeline |
+| **LLM** | Ollama (local) | Generación de guiones |
+| **Síntesis de voz** | TTS local | Narración del video |
+| **Generación de imágenes** | Stable Diffusion | Imágenes por escena |
+| **Renderizado** | FFmpeg | Composición del video final |
+| **Publicación** | YouTube API / automatización | Upload y scheduling |
+| **Configuración** | `.env` + `config.py` | Variables de entorno y parámetros |
+
+---
+
+## 💻 Requisitos del Sistema
 
 | Componente | Mínimo | Recomendado |
-|------------|--------|-------------|
-| **RAM** | 16 GB | 32 GB |
-| **GPU VRAM** | 4 GB (Stable Diffusion CPU fallback funciona sin GPU) | 8 GB NVIDIA (RTX 3060 / 4060 o superior) |
-| **CPU** | Intel i5 / Ryzen 5 (cualquier generación reciente) | Intel i7 / Ryzen 7 |
-| **Almacenamiento** | 20 GB libres (modelos de IA pesan bastante) | 50 GB SSD |
-| **SO** | Windows 10/11 64-bit | Windows 11 |
+|---|---|---|
+| **RAM** | 8 GB | 16 GB o más |
+| **GPU** | No requerida (CPU fallback) | NVIDIA con soporte CUDA |
+| **CPU** | Cualquier moderno | Multi-core para generación SD |
+| **Almacenamiento** | ~10 GB libres | 20+ GB (modelos SD + Ollama) |
+| **Python** | 3.10+ | 3.11+ |
+| **FFmpeg** | En PATH del sistema | Ídem |
+| **SO** | Linux / macOS / Windows | Linux para mejor rendimiento GPU |
 
-### ¿Qué hace cada componente?
-
-- **RAM** — Ollama carga el modelo LLM en memoria (llama3.2 ocupa ~4 GB). Con 16 GB funciona bien.
-- **GPU VRAM** — Stable Diffusion genera las imágenes. Con 4 GB genera en ~30s por imagen. Sin GPU usa la CPU (más lento, ~2-5 min por imagen).
-- **CPU** — Procesa el audio TTS y el ensamblado del video con FFmpeg (rápido en cualquier CPU moderno).
-- **SSD** — Los modelos de IA y los videos temporales se generan mucho más rápido en SSD vs HDD.
-
-
-> **Nota:** El pipeline funciona incluso sin GPU dedicada. En ese caso las imágenes se generan con gradientes de color (PIL fallback) en vez de Stable Diffusion. Todo lo demás (LLM, TTS, video) corre normal en CPU.
+> **Nota sobre tiempos de generación:** con GPU NVIDIA la generación de imágenes toma ~30 segundos por imagen. Sin GPU, el fallback a CPU toma entre 2 y 5 minutos por imagen.
 
 ---
 
-## Prerequisitos
+## 🚀 Instalación
 
-### 1. Ollama (LLM local)
+### 1. Prerrequisitos
+
+Instalá los servicios locales necesarios antes de continuar:
+
+- **Ollama** → [ollama.com](https://ollama.com) — descargá un modelo compatible (ej: `llama3`, `mistral`)
+- **Stable Diffusion** → servidor local corriendo y accesible via HTTP
+- **FFmpeg** → instalado y disponible en el `PATH` del sistema
+
+> En Windows: si FFmpeg no se reconoce en terminal, agregá la ruta de `ffmpeg/bin` a las variables de entorno del sistema y reiniciá la terminal.
+
+### 2. Clonar el repositorio
 
 ```bash
-# Instalar Ollama
-# https://ollama.ai → descargar para Windows
-
-# Iniciar el servidor
-ollama serve
-
-# En otra terminal, descargar un modelo (elegir uno):
-ollama pull llama3       # recomendado — mejor JSON
-ollama pull mistral      # más rápido
-ollama pull gemma2       # balance velocidad/calidad
-ollama pull phi3         # para PCs con poca RAM
+git clone https://github.com/mequito3/Pipeline-de-generacion-automatica-de-videos-con-IA-local.git
+cd Pipeline-de-generacion-automatica-de-videos-con-IA-local
 ```
 
-### 2. Stable Diffusion (imágenes locales)
-
-**Opción A — Automatic1111:**
-```bash
-# Desde el directorio de A1111:
-python webui.py --api --listen
-
-# La API queda en http://localhost:7860
-```
-
-**Opción B — ComfyUI:**
-```bash
-# Desde el directorio de ComfyUI:
-python main.py
-
-# La API queda en http://localhost:8188
-```
-
-> Sin SD, el sistema funciona igual usando imágenes de color degradado como fallback.
-
-### 3. ffmpeg
+### 3. Crear entorno virtual e instalar dependencias
 
 ```bash
-winget install ffmpeg
-# Reiniciar terminal después de instalar
-```
+python -m venv venv
 
-Verificar:
-```bash
-ffmpeg -version
-```
+# Linux / macOS
+source venv/bin/activate
 
-### 4. Python 3.10+
+# Windows
+venv\Scripts\activate
 
-```bash
-python --version   # debe ser 3.10 o superior
-```
-
-### 5. Chrome
-
-Descargar desde google.com/chrome si no lo tienes instalado.
-
----
-
-## Instalación
-
-```bash
-# 1. Clonar / descargar el proyecto
-cd crypto_shorts_factory
-
-# 2. Instalar dependencias Python
 pip install -r requirements.txt
-
-# 3. Configurar credenciales
-copy .env.example .env
-# Editar .env con tu email y contraseña de YouTube
 ```
+
+### 4. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+```
+
+Editá `.env` con tus credenciales y URLs (ver sección [Configuración](#-configuración)).
+
+### 5. Verificar la instalación de TTS
+
+Si el módulo de voz no se instala automáticamente con `requirements.txt`, seguí las instrucciones de instalación manual incluidas en la documentación del proyecto para tu sistema operativo.
 
 ---
 
-## Configuración
+## ⚙️ Configuración
 
-Editar el archivo `.env`:
+Copiá `.env.example` como `.env` y completá los valores:
 
 ```env
-YOUTUBE_EMAIL=tucorreo@gmail.com
-YOUTUBE_PASSWORD=tu_password_aqui
+# Credenciales de YouTube
+YOUTUBE_EMAIL=tu_email@gmail.com
+YOUTUBE_PASSWORD=tu_contraseña
+CHANNEL_NAME=NombreDeTuCanal
 
-OLLAMA_MODEL=llama3        # o mistral, gemma2, phi3
-SD_BACKEND=auto            # auto | a1111 | comfyui
-SD_STEPS=20                # 15=rápido, 20=balance, 30=calidad
+# URLs de servicios locales
+OLLAMA_URL=http://localhost:11434
+STABLE_DIFFUSION_URL=http://localhost:7860
+
+# Tema del contenido generado
+# Opciones: cripto, finanzas, tecnologia, etc.
+CONTENT_TOPIC=cripto
 ```
 
-Ajustes avanzados en `config.py`.
+> **IMPORTANTE:** Nunca subas el archivo `.env` a git. Ya está incluido en `.gitignore`.
+
+Los parámetros adicionales del pipeline (modelo Ollama a usar, resolución de video, horarios del scheduler, etc.) se configuran en `config.py`.
 
 ---
 
-## Uso
+## 📖 Uso
 
-### Generar un video ahora mismo
-```bash
-python main.py --now
-```
+### Ejecutar el pipeline manualmente
 
-### Generar con tema específico
-```bash
-python main.py --now --topic "Solana price prediction 2025"
-```
-
-### Scheduler automático (cada 8 horas)
 ```bash
 python main.py
 ```
 
-### Probar cada módulo individualmente
-```bash
-python main.py --test
-```
+### Scheduler automático
+
+El scheduler está configurado en `config.py`. Una vez activo, el pipeline se ejecuta y publica en los horarios definidos sin intervención manual.
 
 ---
 
-## Estructura de archivos
+## 🗺️ Roadmap
 
-```
-crypto_shorts_factory/
-├── main.py                 # Orquestador + scheduler
-├── config.py               # Configuración central
-├── .env                    # Credenciales (NO subir a git)
-├── modules/
-│   ├── script_generator.py # Guión con Ollama
-│   ├── tts_engine.py       # Voz con pyttsx3
-│   ├── image_generator.py  # Imágenes con SD (A1111/ComfyUI)
-│   ├── video_assembler.py  # Video con moviepy
-│   └── youtube_uploader.py # Upload con Selenium
-├── assets/
-│   ├── fonts/              # Fuentes TTF para subtítulos (opcional)
-│   └── music/              # Música de fondo (opcional, no implementada aún)
-├── output/
-│   └── run_YYYYMMDD_HHMMSS/
-│       └── final_video.mp4
-└── logs/
-    └── run_YYYYMMDD_HHMMSS.log
-```
+- [x] Generación de guión con LLM local (Ollama)
+- [x] Narración con TTS local
+- [x] Generación de imágenes con Stable Diffusion
+- [x] Fallback automático CPU cuando no hay GPU
+- [x] Renderizado y composición con FFmpeg
+- [x] Upload automático a YouTube
+- [x] Scheduler con horarios configurables
+- [ ] **Música de fondo** — mezcla de audio ambiente sobre la narración *(en desarrollo)*
+- [ ] Soporte multi-idioma en TTS
+- [ ] Panel de estadísticas de videos publicados
 
 ---
 
-## Troubleshooting en Windows
+## 📝 Estado
 
-### ffmpeg no encontrado
-```bash
-# Opción 1: winget
-winget install ffmpeg
-
-# Opción 2: manual
-# Descargar de https://www.gyan.dev/ffmpeg/builds/
-# Extraer y agregar la carpeta bin\ al PATH del sistema
-# Panel de control → Sistema → Variables de entorno → Path
-```
-
-### pyttsx3 sin voces / voz en inglés en vez de español
-```
-Settings → Time & Language → Speech → Add voices
-Instalar "Spanish (Mexico)" o "Spanish (Spain)"
-```
-
-### Ollama responde lento
-```bash
-# Usar modelo más pequeño
-ollama pull phi3
-# En .env cambiar:
-OLLAMA_MODEL=phi3
-```
-
-### Ollama devuelve JSON inválido
-El sistema reintenta automáticamente 3 veces. Si persiste:
-```bash
-# Modelos más confiables para JSON estructurado:
-ollama pull mistral    # muy bueno con JSON
-ollama pull gemma2     # también consistente
-```
-
-### Stable Diffusion tarda mucho
-```env
-# En .env reducir pasos:
-SD_STEPS=15
-```
-
-### Selenium / Chrome no inicia
-```bash
-# Actualizar undetected-chromedriver
-pip install --upgrade undetected-chromedriver
-
-# Verificar que Chrome está actualizado
-```
-
-### YouTube pide verificación / CAPTCHA
-El perfil de Chrome se guarda en `chrome_profile/`.
-La primera vez puede pedir verificación manual. Después usa las cookies guardadas.
-
-### moviepy error al exportar
-```
-RuntimeError: ...
-```
-Verificar que ffmpeg está en el PATH:
-```bash
-where ffmpeg
-```
+🔧 **En desarrollo activo** — Pipeline funcional. La funcionalidad de música de fondo está pendiente de implementación.
 
 ---
 
-## Modelos de Ollama recomendados para crypto scripts
+## 📄 Licencia
 
-| Modelo | Calidad JSON | Velocidad | VRAM requerida |
-|--------|-------------|-----------|----------------|
-| `llama3` | ⭐⭐⭐⭐⭐ | Lento | 8GB |
-| `mistral` | ⭐⭐⭐⭐ | Rápido | 4GB |
-| `gemma2` | ⭐⭐⭐⭐ | Medio | 5GB |
-| `phi3` | ⭐⭐⭐ | Muy rápido | 2GB |
-| `llama3:8b` | ⭐⭐⭐⭐ | Medio | 5GB |
-
-**Recomendación:** `mistral` para el mejor balance entre velocidad y calidad de JSON.
+Distribuido bajo licencia MIT. Ver `LICENSE` para más información.
 
 ---
 
-## Configuración recomendada de SD para crypto visuals
+## 👤 Autor
 
-```env
-# A1111 — configuración óptima para crypto:
-SD_STEPS=20
-SD_CFG_SCALE=7.0
-# Sampler: DPM++ 2M Karras (configurado en config.py)
+**Américo Álvarez** — Desarrollador Full-Stack & Especialista en Automatizaciones con IA
 
-# Modelos de SD recomendados para estilo crypto/fintech:
-# - Realistic Vision v5 → fotorrealista, ideal para personajes/escenarios
-# - DreamShaper → dramático, buen contraste
-# - Juggernaut XL → alta calidad, requiere SDXL
-```
-
-Los prompts se generan automáticamente por Ollama con estilo:
-*"cinematic, 8k, photorealistic, dramatic lighting, dark background"*
-
----
-
-## Costos
-
-| Servicio | Costo |
-|----------|-------|
-| Ollama (LLM) | $0 — local |
-| Stable Diffusion (imágenes) | $0 — local |
-| pyttsx3 (TTS) | $0 — local |
-| moviepy (video) | $0 — local |
-| Selenium (YouTube) | $0 — local |
-| **TOTAL** | **$0** |
+- GitHub: [@mequito3](https://github.com/mequito3)
+- Email: americooficial23@gmail.com
+- Ubicación: Bolivia
