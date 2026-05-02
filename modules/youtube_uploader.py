@@ -586,65 +586,21 @@ async def _session_warmup(browser) -> None:
             except Exception:
                 pass
 
-        # Ver 1-2 videos de forma realista — ver <15s es señal de bot
-        n_videos = random.choices([1, 2], weights=[0.45, 0.55])[0]
-        for video_num in range(n_videos):
+        # Ver 1 video brevemente (10-20s) — suficiente para account health sin bloquear el upload
+        if random.random() < 0.60:   # 60% de las veces
             try:
-                video_links = await page.select_all("a#video-title", timeout=6)
-                if not video_links:
-                    break
-                pick = random.choice(video_links[:10])
-                await _human_click(page, pick)
-                await _delay(2.0, 4.0)
-
-                # Ver el video 35-85s (equivalente a ver 1-2 Shorts completos)
-                watch_secs = random.triangular(35.0, 85.0, 52.0)
-                logger.info(f"Warm-up: viendo video {video_num+1}/{n_videos} ~{watch_secs:.0f}s")
-
-                end_at = time.time() + watch_secs
-                while time.time() < end_at:
-                    remaining = end_at - time.time()
-                    if remaining <= 1.5:
-                        break
-                    if random.random() < 0.20:
-                        await _random_mouse_wander(page)
-                    # Scroll a comentarios ocasionalmente (comportamiento humano real)
-                    if random.random() < 0.15 and remaining > 15:
-                        await _scroll(page, random.randint(250, 500))
-                        await asyncio.sleep(random.uniform(4.0, 9.0))
-                        await _scroll(page, -random.randint(150, 300))
-                    await asyncio.sleep(random.uniform(4.0, 12.0))
-
-                # Dar like ocasionalmente (12%) — como un usuario normal
-                if random.random() < 0.12:
-                    try:
-                        for _like_sel in [
-                            "button[title*='Me gusta' i]",
-                            "button[aria-label*='like this video' i]",
-                            "#like-button button",
-                        ]:
-                            _like = await page.select(_like_sel, timeout=3)
-                            if _like:
-                                await _human_click(page, _like)
-                                await asyncio.sleep(random.uniform(0.5, 1.5))
-                                break
-                    except Exception:
-                        pass
-
-                if video_num < n_videos - 1:
-                    page = await browser.get("https://www.youtube.com")
-                    await _delay(2.5, 5.0)
-                    await _scroll(page, random.randint(150, 350))
-                    await _delay(1.0, 2.5)
-
-            except Exception as e:
-                logger.debug(f"Warm-up video {video_num+1}: {e}")
-                try:
-                    page = await browser.get("https://www.youtube.com")
+                video_links = await asyncio.wait_for(
+                    page.select_all("a#video-title"), timeout=6
+                )
+                if video_links:
+                    pick = random.choice(video_links[:10])
+                    await _human_click(page, pick)
                     await _delay(2.0, 4.0)
-                except Exception:
-                    pass
-                break
+                    watch_secs = random.uniform(10.0, 20.0)
+                    logger.info(f"Warm-up: viendo video ~{watch_secs:.0f}s")
+                    await asyncio.sleep(watch_secs)
+            except Exception as e:
+                logger.debug(f"Warm-up video: {e}")
 
         # Volver a home si quedamos en un video
         try:
@@ -1115,18 +1071,18 @@ def _cleanup_chrome_profile(profile_dir: Path) -> None:
             )
             if result.returncode == 0:
                 logger.info("Chrome anterior terminado para liberar el perfil")
-                time.sleep(2.0)
+                time.sleep(5.0)   # 5s: Windows necesita tiempo para liberar handles del perfil
         except Exception:
             pass
     else:
         try:
             subprocess.run(["pkill", "-f", "chrome"], capture_output=True, timeout=5)
-            time.sleep(1.5)
+            time.sleep(3.0)
         except Exception:
             pass
 
     # Eliminar archivos de bloqueo que Chrome deja si no cierra bien
-    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket", "DevToolsActivePort"]:
         try:
             (profile_dir / lock).unlink(missing_ok=True)
         except Exception:
@@ -1241,7 +1197,9 @@ async def _upload_async(
             "[aria-label*='Create']",
         ]:
             try:
-                create_btn = await page.select(selector, timeout=8)
+                create_btn = await asyncio.wait_for(
+                    page.select(selector), timeout=8
+                )
                 if create_btn:
                     break
             except Exception:
@@ -1249,7 +1207,9 @@ async def _upload_async(
 
         if not create_btn:
             try:
-                create_btn = await page.find("Crear", timeout=10)
+                create_btn = await asyncio.wait_for(
+                    page.find("Crear"), timeout=10
+                )
             except Exception:
                 pass
 
