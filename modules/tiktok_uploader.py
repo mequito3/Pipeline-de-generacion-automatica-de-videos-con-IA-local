@@ -236,7 +236,7 @@ async def _upload_async(
             "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
             "--window-size=1920,1080",
-            "--window-position=-2000,0",
+            "--window-position=0,0",
             "--disable-dev-shm-usage",
         ],
         headless=False,

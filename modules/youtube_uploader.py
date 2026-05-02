@@ -1162,7 +1162,7 @@ async def _upload_async(
             browser_executable_path=chrome_bin or None,
             browser_args=[
                 "--window-size=1920,1080",
-                "--window-position=-2000,0",
+                "--window-position=0,0",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
