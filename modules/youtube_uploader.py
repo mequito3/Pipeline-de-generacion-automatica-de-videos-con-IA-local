@@ -1083,6 +1083,22 @@ async def _post_pinned_comment(browser, youtube_url: str, comment_text: str) -> 
 
 # ─── Pipeline principal ───────────────────────────────────────────────────────
 
+def _win_foreground(process_name: str = "chrome") -> None:
+    """Trae la ventana de Chrome al primer plano en Windows usando WScript.Shell.AppActivate."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import subprocess as _sp
+        # AppActivate busca cualquier ventana cuyo título contenga el string
+        _sp.run(
+            ["powershell", "-WindowStyle", "Hidden", "-Command",
+             f"(New-Object -ComObject WScript.Shell).AppActivate('{process_name}')"],
+            timeout=3, capture_output=True,
+        )
+    except Exception:
+        pass
+
+
 def _cleanup_chrome_profile(profile_dir: Path) -> None:
     """
     Mata Chrome y limpia locks del perfil para evitar
@@ -1113,6 +1129,24 @@ def _cleanup_chrome_profile(profile_dir: Path) -> None:
     for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
         try:
             (profile_dir / lock).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Resetear posición de ventana guardada en Preferences (Chrome la restaura aunque
+    # se pase --window-position en los args si el perfil tiene una posición guardada)
+    prefs_path = profile_dir / "Default" / "Preferences"
+    if prefs_path.exists():
+        try:
+            import json as _json
+            prefs = _json.loads(prefs_path.read_text(encoding="utf-8"))
+            browser_prefs = prefs.get("browser", {})
+            window_placement = browser_prefs.get("window_placement", {})
+            if window_placement.get("left", 0) < -100 or window_placement.get("top", 0) < -100:
+                window_placement.update({"left": 0, "top": 0, "right": 1920, "bottom": 1080})
+                browser_prefs["window_placement"] = window_placement
+                prefs["browser"] = browser_prefs
+                prefs_path.write_text(_json.dumps(prefs), encoding="utf-8")
+                logger.info("Chrome Preferences: posición de ventana reseteada a (0,0)")
         except Exception:
             pass
 
@@ -1161,8 +1195,7 @@ async def _upload_async(
             user_data_dir=str(profile_dir),
             browser_executable_path=chrome_bin or None,
             browser_args=[
-                "--window-size=1920,1080",
-                "--window-position=0,0",
+                "--start-maximized",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
@@ -1177,6 +1210,8 @@ async def _upload_async(
 
         # Ahora ir a Studio
         page = await browser.get(config.YOUTUBE_STUDIO_URL)
+        await page.activate()
+        _win_foreground("YouTube Studio")   # trae Chrome al primer plano del OS
         await _delay(5.0, 10.0)
 
         current_url = page.url or ""
@@ -1260,8 +1295,9 @@ async def _upload_async(
         await _delay(8.0, 12.0)
 
         # ── Título ───────────────────────────────────────────────────────────
+        _win_foreground("YouTube Studio")   # asegurar foreground antes de escribir
         logger.info("Escribiendo título...")
-        title_input = await page.select("#title-textarea #textbox", timeout=30)
+        title_input = await page.select("#title-textarea #textbox", timeout=60)
         await _think()
         await _human_click(page, title_input)
         await _delay(2.0, 4.0)
