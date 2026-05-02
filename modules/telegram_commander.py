@@ -1,4 +1,4 @@
-"""
+﻿"""
 telegram_commander.py — CEO Dashboard + Agente conversacional via Telegram
 
 Doble rol:
@@ -10,7 +10,9 @@ Comandos disponibles:
   /status   → estado del sistema
   /stats    → metricas del canal (ultimo snapshot)
   /report   → CEO report inmediato
-  /generate → lanza el pipeline ahora (genera + publica un video)
+  /generate → genera un video, pide aprobacion y lo encola para el proximo slot
+  /next     → cuando se publica el proximo video
+  /queue    → muestra el video en cola (si hay alguno)
   /help     → lista de comandos
   Texto libre → responde como asistente del factory con IA
 """
@@ -24,46 +26,24 @@ from typing import Optional
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from modules import llm_service
 
 logger = logging.getLogger(__name__)
 
 _API_BASE     = "https://api.telegram.org/bot{token}/{method}"
-_POLL_TIMEOUT = 30
+_POLL_TIMEOUT = 5   # Poll corto: el notifier puede tomar control rápido al aprobar
 _PARSE_MODE   = "HTML"
 
 _bot_thread: Optional[threading.Thread] = None
 _bot_running = False
 
-# ─── Estado de aprobación (compartido con telegram_notifier) ──────────────────
-_approval_lock   = threading.Lock()
-_approval_event: Optional[threading.Event] = None
-_approval_result: Optional[str]            = None
-_approval_msg_id: Optional[int]            = None
-
-
-def register_approval(msg_id: int) -> threading.Event:
-    """Registra una aprobación pendiente. Retorna el Event que se activa cuando el CEO responde."""
-    global _approval_event, _approval_result, _approval_msg_id
-    with _approval_lock:
-        _approval_event  = threading.Event()
-        _approval_result = None
-        _approval_msg_id = msg_id
-    return _approval_event
-
-
-def get_approval_result() -> Optional[str]:
-    """Retorna 'approve', 'reject', o None."""
-    return _approval_result
-
-
-def clear_approval() -> None:
-    global _approval_event, _approval_result, _approval_msg_id
-    with _approval_lock:
-        _approval_event  = None
-        _approval_result = None
-        _approval_msg_id = None
+# ─── Pausa durante aprobación ─────────────────────────────────────────────────
+# Cuando telegram_notifier espera un click de aprobación, hace su propio polling.
+# Si el commander también está polling al mismo tiempo, hay race condition:
+# el commander consume el callback antes que el notifier y la aprobación falla.
+# _approval_in_progress.set() pausa el commander para ceder el polling al notifier.
+_approval_in_progress: threading.Event = threading.Event()
 
 
 # ─── API base ──────────────────────────────────────────────────────────────────
@@ -92,16 +72,39 @@ def _creds_ok() -> bool:
 
 # ─── Notificaciones outbound ───────────────────────────────────────────────────
 
+_last_notify_ts: float = 0.0
+_MIN_NOTIFY_INTERVAL = 1.2  # Telegram limita a ~1 msg/s por chat; 1.2s da margen
+
+
 def notify(text: str, parse_mode: str = _PARSE_MODE) -> bool:
-    """Envia notificacion al CEO. Silencioso si no hay credenciales."""
+    """Envia notificacion al CEO. Silencioso si no hay credenciales.
+    Rate-limited a 1 msg/s para evitar 429 de Telegram."""
+    global _last_notify_ts
     if not _creds_ok():
         return False
+    # Respetar rate limit de Telegram: mínimo 1.2s entre mensajes al mismo chat
+    gap = time.time() - _last_notify_ts
+    if gap < _MIN_NOTIFY_INTERVAL:
+        time.sleep(_MIN_NOTIFY_INTERVAL - gap)
+    _last_notify_ts = time.time()
     result = _api("sendMessage", json={
         "chat_id":                  _chat_id(),
         "text":                     text[:4096],
         "parse_mode":               parse_mode,
         "disable_web_page_preview": True,
     })
+    if not result.get("ok"):
+        # Si Telegram devuelve 429, esperar retry_after y reintentar una vez
+        err = str(result)
+        if "429" in err or "retry" in err.lower():
+            logger.warning("Telegram 429 — esperando 3s y reintentando...")
+            time.sleep(3)
+            result = _api("sendMessage", json={
+                "chat_id":                  _chat_id(),
+                "text":                     text[:4096],
+                "parse_mode":               parse_mode,
+                "disable_web_page_preview": True,
+            })
     return result.get("ok", False)
 
 
@@ -175,7 +178,10 @@ _COMMANDS_HELP = {
     "/stats":    "Metricas del canal (ultimo snapshot de analytics)",
     "/report":   "Genera y envia CEO Report ahora",
     "/weekly":   "Reporte semanal de tendencias (que funciona mejor)",
-    "/generate": "Lanza el pipeline: genera y publica un video",
+    "/generate": "Genera un video, espera tu aprobacion y lo encola para el proximo slot",
+    "/queue":    "Muestra el video en cola y cuando se publicara",
+    "/next":     "Cuando se publicara el proximo video (segun el scheduler)",
+    "/music":    "Descarga musica CC0 desde la Biblioteca de audio de YouTube Studio",
     "/help":     "Esta lista de comandos",
 }
 
@@ -276,12 +282,90 @@ def _handle_command(text: str) -> str:
         def _run_pipeline():
             try:
                 import main as _main
-                _main._safe_run_factory()
+                _main._safe_run_factory(skip_publish=True)
             except Exception as e:
                 notify_error("/generate", str(e))
 
         threading.Thread(target=_run_pipeline, daemon=True).start()
-        return "🚀 Pipeline iniciado. Recibiras notificaciones de cada etapa."
+        return (
+            "🎬 Pipeline iniciado.\n"
+            "Cuando el video este listo recibiras la preview para aprobar. "
+            "Si lo apruebas, quedara en cola y se publicara en el proximo slot programado.\n"
+            "Usa <code>python main.py --now</code> para publicar inmediatamente."
+        )
+
+    if cmd == "/next":
+        try:
+            import main as _main
+            from datetime import datetime as _dt
+            slot = _main._next_slot
+            if slot is None:
+                return "⏳ Scheduler aun calculando los slots de hoy..."
+            now  = _dt.now()
+            if slot <= now:
+                return "🎬 El slot ya llego — pipeline en proceso ahora mismo."
+            diff  = slot - now
+            mins  = int(diff.total_seconds() // 60)
+            horas = mins // 60
+            resto = mins % 60
+            tiempo = f"{horas}h {resto}min" if horas else f"{resto} min"
+            return (
+                f"⏰ Proximo video: <b>{slot.strftime('%d/%m/%Y a las %H:%M')}</b>\n"
+                f"   Faltan: {tiempo}"
+            )
+        except Exception as e:
+            return f"❌ Error: {e}"
+
+    if cmd == "/music":
+        def _run_music():
+            try:
+                from modules.youtube_audio_library import download_music_tracks, purge_content_id_files
+                removed = purge_content_id_files()
+                if removed:
+                    notify(f"🗑 Eliminados {len(removed)} archivo(s) con Content ID: {', '.join(removed)}")
+                notify("🎵 Descargando música desde la Biblioteca de audio de YouTube Studio...")
+                tracks = download_music_tracks(n_tracks=5)
+                if tracks:
+                    lines = [f"✅ <b>{len(tracks)} tracks descargados:</b>"]
+                    for t in tracks:
+                        lines.append(f"  • {t}")
+                    notify("\n".join(lines))
+                else:
+                    notify(
+                        "⚠️ No se pudo descargar música automáticamente.\n"
+                        "Descárgala manualmente desde <b>YouTube Studio → Biblioteca de audio</b> "
+                        "y guarda los MP3 en <code>assets/music/</code>."
+                    )
+            except Exception as e:
+                notify_error("/music", str(e))
+
+        threading.Thread(target=_run_music, daemon=True).start()
+        return (
+            "🎵 Iniciando descarga de música CC0...\n"
+            "Abrirá YouTube Studio con tu sesión activa y descargará tracks "
+            "<b>Dramatic / Emotional</b> sin atribución requerida.\n"
+            "Te aviso cuando termine."
+        )
+
+    if cmd == "/queue":
+        try:
+            import main as _main
+            items = _main._queue_load()
+            if not items:
+                return "📭 Cola vacia — no hay videos pendientes de publicar."
+            lines = [f"📋 <b>{len(items)} video(s) en cola:</b>\n"]
+            for i, item in enumerate(items, 1):
+                title     = item.get("script", {}).get("title", "Sin título")[:60]
+                sched_raw = item.get("scheduled_for", "")
+                try:
+                    from datetime import datetime as _dt
+                    sched = _dt.fromisoformat(sched_raw).strftime("%d/%m/%Y a las %H:%M")
+                except Exception:
+                    sched = sched_raw
+                lines.append(f"{i}. <b>{title}</b>\n   ⏰ Publicacion: {sched}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error leyendo cola: {e}"
 
     return (
         f"❓ Comando no reconocido: <code>{cmd}</code>\n"
@@ -291,10 +375,6 @@ def _handle_command(text: str) -> str:
 
 def _ask_groq(user_text: str) -> str:
     """Responde preguntas libres con Groq + contexto del canal."""
-    api_key = getattr(config, "GROQ_API_KEY", "")
-    if not api_key:
-        return "❌ Groq no configurado (GROQ_API_KEY vacio en .env)."
-
     extra = ""
     try:
         from modules.analytics_agent import get_latest_snapshot
@@ -309,28 +389,10 @@ def _ask_groq(user_text: str) -> str:
     except Exception:
         pass
 
-    channel = getattr(config, "CHANNEL_NAME", "GATA CURIOSA")
+    channel = config.CHANNEL_NAME
     system  = _SYSTEM_PROMPT_TPL.format(channel=channel) + extra
-
-    try:
-        r = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model":       getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                "messages":    [
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": user_text},
-                ],
-                "max_tokens":  500,
-                "temperature": 0.7,
-            },
-            timeout=25,
-        )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"❌ Error consultando el agente: {e}"
+    result  = llm_service.call_llm(user_text, system=system, max_tokens=500, temperature=0.7)
+    return result or "❌ No pude procesar tu pregunta (LLMs no disponibles)."
 
 
 # ─── Polling loop ──────────────────────────────────────────────────────────────
@@ -362,11 +424,15 @@ def start_bot(on_start_notify: bool = True) -> None:
     logger.info("Telegram Commander: escuchando mensajes del CEO...")
 
     while _bot_running:
+        # Ceder el polling a telegram_notifier mientras hay una aprobación pendiente
+        if _approval_in_progress.is_set():
+            time.sleep(2)
+            continue
         try:
             resp = _api("getUpdates", json={
                 "offset":          last_update_id + 1,
                 "timeout":         _POLL_TIMEOUT,
-                "allowed_updates": ["message", "callback_query"],
+                "allowed_updates": ["message"],
             })
             if not resp.get("ok"):
                 time.sleep(5)
@@ -374,29 +440,6 @@ def start_bot(on_start_notify: bool = True) -> None:
 
             for update in resp.get("result", []):
                 last_update_id = max(last_update_id, update.get("update_id", 0))
-
-                # ── Callback de botones inline (aprobación de video) ──────────
-                cb = update.get("callback_query")
-                if cb:
-                    cb_msg_id = (cb.get("message") or {}).get("message_id")
-                    cb_data   = cb.get("data", "")
-                    cb_id     = cb.get("id", "")
-                    with _approval_lock:
-                        if _approval_event and not _approval_event.is_set():
-                            if _approval_msg_id is None or cb_msg_id == _approval_msg_id:
-                                _approval_result = cb_data
-                                _api("answerCallbackQuery", json={"callback_query_id": cb_id})
-                                if _approval_msg_id:
-                                    _api("editMessageReplyMarkup", json={
-                                        "chat_id":      _chat_id(),
-                                        "message_id":   _approval_msg_id,
-                                        "reply_markup": '{"inline_keyboard":[]}',
-                                    })
-                                label = "APROBADO" if cb_data == "approve" else "RECHAZADO"
-                                notify(f"{'✅' if cb_data == 'approve' else '❌'} {label} — procesando...")
-                                _approval_event.set()
-                                logger.info(f"Telegram: aprobación {label}")
-                    continue
 
                 # ── Mensaje de texto del CEO ──────────────────────────────────
                 msg  = update.get("message", {})
@@ -426,6 +469,3 @@ def start_bot_background() -> None:
     logger.info("Telegram Commander: bot iniciado en background")
 
 
-def stop_bot() -> None:
-    global _bot_running
-    _bot_running = False

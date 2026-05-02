@@ -1,18 +1,43 @@
-# ─── Credenciales — NUNCA subir ──────────────────────────────────────────────
+# ─── CREDENCIALES — NUNCA SUBIR A GIT ───────────────────────────────────────
 .env
 *.env.local
-export_session_output.txt       # contiene cookies de YouTube en base64
+
+# Google OAuth / YouTube API
+client_secret*.json
+youtube_client_secrets.json
+youtube_token.json
+*credentials*.json
+*token*.json
+service_account*.json
+
+# Sesiones exportadas (contienen cookies de YouTube en base64)
+export_session_output.txt
+export_session.py
+
+# ─── Estado interno del bot (datos operacionales, no código) ─────────────────
+agent_memory.json
+used_posts.json
+used_posts_channel.json
+analytics_log.json
+growth_log.json
+channel_id_cache.txt
+topics_index.json
+trends_cache.json
 
 # ─── Output generado ─────────────────────────────────────────────────────────
 output/
 logs/
 
-# ─── Perfiles Chrome (contienen cookies/sesión) ─────────────────────────────
+# ─── Perfiles Chrome (contienen cookies/sesión de Google) ────────────────────
 chrome_profile/
 chrome_profile_tiktok/
 
-# ─── Estado del scheduler ────────────────────────────────────────────────────
-topics_index.json
+# ─── Caché de Pexels (videos descargados, pueden ser cientos de MB) ──────────
+assets/pexels_cache/
+
+# ─── Scripts de diagnóstico temporales ───────────────────────────────────────
+check_bsod*.ps1
+test_*.py
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
@@ -35,6 +60,7 @@ ENV/
 # ─── IDEs ─────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
@@ -45,7 +71,7 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# ─── Archivos temporales de moviepy ───────────────────────────────────────────
+# ─── Archivos temporales de video/audio ──────────────────────────────────────
 temp_audio.m4a
 *.temp.*
 

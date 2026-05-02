@@ -1,4 +1,4 @@
-"""
+﻿"""
 tiktok_growth_agent.py — Agente de crecimiento en TikTok
 
 Estrategias:
@@ -23,11 +23,11 @@ import random
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from modules import llm_service
 
 from modules.youtube_uploader import (
     _cursor,
@@ -43,14 +43,14 @@ from modules.youtube_uploader import (
 
 logger = logging.getLogger(__name__)
 
-# ─── Límites diarios (TikTok es más estricto que YouTube) ────────────────────
-DAILY_COMMENT_LIMIT = 5
-DAILY_LIKE_LIMIT    = 20
-DAILY_FOLLOW_LIMIT  = 3
-TT_LOG_FILE         = Path(__file__).parent.parent / "tiktok_growth_log.json"
+# ─── Límites diarios — configurables vía .env ────────────────────────────────
+LIMITE_COMENTARIOS = config.TIKTOK_DAILY_COMMENT_LIMIT
+LIMITE_LIKES       = config.TIKTOK_DAILY_LIKE_LIMIT
+LIMITE_FOLLOWS     = config.TIKTOK_DAILY_FOLLOW_LIMIT
+ARCHIVO_LOG         = config.TIKTOK_GROWTH_LOG_FILE
 
 # ─── Búsquedas del nicho en TikTok ───────────────────────────────────────────
-TT_SEARCHES = [
+BUSQUEDAS_NICHO = [
     "historia real traición",
     "me engañó y no lo sabía",
     "secreto familiar impactante",
@@ -65,7 +65,7 @@ TT_SEARCHES = [
     "me mintió durante años",
 ]
 
-# ─── Mapa de topics ganadores → términos en TT_SEARCHES ─────────────────────
+# ─── Mapa de topics ganadores → términos en BUSQUEDAS_NICHO ─────────────────────
 _TT_TOPIC_KEYWORDS: dict[str, list[str]] = {
     "traicion":   ["traición", "engañó", "infiel", "doble vida"],
     "secreto":    ["secreto", "verdad", "descubrí"],
@@ -76,14 +76,14 @@ _TT_TOPIC_KEYWORDS: dict[str, list[str]] = {
 
 
 def _tt_memory_boosted_searches() -> list[str]:
-    """Devuelve TT_SEARCHES con los topics ganadores de analytics al frente."""
+    """Devuelve BUSQUEDAS_NICHO con los topics ganadores de analytics al frente."""
     try:
         from modules import agent_memory as _am
         top_topics = _am.get_topic_bias()
         if not top_topics:
-            return list(TT_SEARCHES)
+            return list(BUSQUEDAS_NICHO)
         priority, rest = [], []
-        for s in TT_SEARCHES:
+        for s in BUSQUEDAS_NICHO:
             sl = s.lower()
             boosted = any(
                 kw in sl
@@ -93,7 +93,7 @@ def _tt_memory_boosted_searches() -> list[str]:
             (priority if boosted else rest).append(s)
         return priority + rest
     except Exception:
-        return list(TT_SEARCHES)
+        return list(BUSQUEDAS_NICHO)
 
 
 # ─── Templates de comentarios TikTok (más cortos y directos que YouTube) ─────
@@ -114,9 +114,9 @@ TT_COMMENT_TEMPLATES = [
 # ─── Log helpers ──────────────────────────────────────────────────────────────
 
 def _tt_load_log() -> dict:
-    if TT_LOG_FILE.exists():
+    if ARCHIVO_LOG.exists():
         try:
-            return json.loads(TT_LOG_FILE.read_text(encoding="utf-8"))
+            return json.loads(ARCHIVO_LOG.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
@@ -124,7 +124,7 @@ def _tt_load_log() -> dict:
 
 def _tt_save_log(log: dict) -> None:
     try:
-        TT_LOG_FILE.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+        ARCHIVO_LOG.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -147,12 +147,6 @@ def _tt_inc(log: dict, key: str) -> None:
 async def _generate_tt_comment(video_desc: str) -> str:
     """Genera un comentario para TikTok — longitud variable para parecer humano."""
     try:
-        import httpx
-        groq_key = getattr(config, "GROQ_API_KEY", "")
-        if not groq_key:
-            return random.choice(TT_COMMENT_TEMPLATES)
-
-        # Variar el tipo de comentario: reacción corta, media o larga
         style = random.choices(
             ["corto", "medio", "largo"],
             weights=[40, 40, 20], k=1
@@ -162,26 +156,15 @@ async def _generate_tt_comment(video_desc: str) -> str:
             "medio": "entre 8 y 15 palabras, natural y emotivo",
             "largo": "entre 15 y 25 palabras, como si contaras tu propia experiencia",
         }[style]
-
         prompt = (
             f"Eres alguien que acaba de ver este TikTok: '{video_desc[:100]}'\n"
             f"Escribe UN comentario en español latino, {length_hint}. "
             f"Sin hashtags. Solo el comentario, sin comillas."
         )
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 40,
-                    "temperature": 0.9,
-                },
-            )
-            if resp.status_code == 200:
-                text = resp.json()["choices"][0]["message"]["content"].strip().strip('"')
-                return text[:100] if len(text) > 5 else random.choice(TT_COMMENT_TEMPLATES)
+        text = await llm_service.call_llm_async(prompt, max_tokens=40, temperature=0.9)
+        text = text.strip('"')
+        if len(text) > 5:
+            return text[:100]
     except Exception:
         pass
     return random.choice(TT_COMMENT_TEMPLATES)
@@ -256,7 +239,7 @@ async def _engage_tiktok_video(browser, video: dict, log: dict) -> dict:
         await _random_mouse_wander(page)
 
         # Like (60% probabilidad si no se alcanzó el límite)
-        if random.random() < 0.60 and _tt_daily(log, "likes") < DAILY_LIKE_LIMIT:
+        if random.random() < 0.60 and _tt_daily(log, "likes") < LIMITE_LIKES:
             try:
                 like_btn = None
                 for sel in ['button[data-e2e="like-icon"]', 'span[data-e2e="like-count"]',
@@ -280,7 +263,7 @@ async def _engage_tiktok_video(browser, video: dict, log: dict) -> dict:
         await _delay(1.0, 2.5)
 
         # Comentar (30% probabilidad si no se alcanzó el límite)
-        if random.random() < 0.30 and _tt_daily(log, "comments") < DAILY_COMMENT_LIMIT:
+        if random.random() < 0.30 and _tt_daily(log, "comments") < LIMITE_COMENTARIOS:
             try:
                 comment_text = await _generate_tt_comment(video.get("desc", ""))
                 await _delay(0.5, 1.5)
@@ -473,9 +456,9 @@ async def _tiktok_growth_session_async() -> dict:
             user_data_dir=str(profile_dir),
             browser_args=[
                 "--window-size=1920,1080",
-                "--window-position=-2000,0",   # off-screen — no visible para el usuario
-                "--no-sandbox",
+                "--window-position=-2000,0",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
             ],
         )
 
@@ -520,8 +503,8 @@ async def _tiktok_growth_session_async() -> dict:
             keywords = []  # skip búsqueda externa
 
         for keyword in keywords:
-            if (_tt_daily(log, "likes") >= DAILY_LIKE_LIMIT and
-                    _tt_daily(log, "comments") >= DAILY_COMMENT_LIMIT):
+            if (_tt_daily(log, "likes") >= LIMITE_LIKES and
+                    _tt_daily(log, "comments") >= LIMITE_COMENTARIOS):
                 break
 
             videos = await _search_tiktok_niche(browser, keyword)
@@ -587,3 +570,5 @@ def run_tiktok_growth() -> dict:
                 pass
     else:
         return asyncio.run(_tiktok_growth_session_async())
+
+

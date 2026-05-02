@@ -1,8 +1,8 @@
-"""
-ceo_report.py — Reporte ejecutivo diario por WhatsApp
+﻿"""
+ceo_report.py — Reporte ejecutivo diario por Telegram
 
 Lee el snapshot más reciente de analytics_log.json, genera un resumen
-ejecutivo con Groq y lo envía por WhatsApp via Twilio.
+ejecutivo con Groq y lo envía por Telegram.
 
 El reporte incluye:
   - Métricas del canal (vistas 28d, watch time, suscriptores) con deltas
@@ -10,6 +10,7 @@ El reporte incluye:
   - Insight principal: qué tipo de contenido funciona mejor
   - Acción recomendada para los próximos videos
   - Alertas: caídas de CTR, retención baja, o crecimiento estancado
+  - Datos reales de YouTube Analytics API (CTR, fuentes de tráfico) si está configurado
 
 Uso:
   python main.py --report          → enviar reporte ahora
@@ -23,15 +24,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import httpx
-
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from modules import llm_service
 
 from modules.analytics_agent import (
     ChannelSnapshot,
-    VideoStats,
     get_latest_snapshot,
     get_previous_snapshot,
 )
@@ -71,10 +69,6 @@ async def _generate_report_groq(
     Genera el cuerpo del reporte ejecutivo usando Groq.
     Si Groq no está disponible, usa el template de fallback.
     """
-    api_key = getattr(config, "GROQ_API_KEY", "")
-    if not api_key:
-        return _build_fallback_report(snap, prev)
-
     # Preparar datos para el prompt
     top_videos_text = ""
     for i, v in enumerate(snap.videos[:5], 1):
@@ -104,6 +98,45 @@ async def _generate_report_groq(
     except Exception:
         pass
 
+    # Métricas reales de YouTube Analytics (si está configurado)
+    analytics_premium_text = ""
+    try:
+        from modules import youtube_analytics as _ya
+        if _ya.is_configured():
+            overview = _ya.get_channel_overview(days=28)
+            if overview:
+                analytics_premium_text = (
+                    f"\nANALYTICS REALES (28d):\n"
+                    f"- Retención promedio canal: {overview.get('avg_view_pct', 0):.1f}%\n"
+                    f"- Duración promedio vista: {overview.get('avg_view_duration_s', 0):.0f}s\n"
+                )
+                if overview.get("estimated_revenue_usd", 0) > 0:
+                    analytics_premium_text += (
+                        f"- Ingresos estimados: ${overview['estimated_revenue_usd']:.2f} USD\n"
+                        f"- CPM: ${overview.get('cpm', 0):.2f} | RPM: ${overview.get('rpm', 0):.2f}\n"
+                    )
+            videos_analy = _ya.get_videos_analytics(max_results=5)
+            if videos_analy:
+                analytics_premium_text += "\nCTR Y RETENCIÓN POR VIDEO:\n"
+                for v in videos_analy[:4]:
+                    ctr = v.get("ctr_pct", 0)
+                    ret = v.get("avg_view_pct", 0)
+                    analytics_premium_text += (
+                        f'  • "{v.get("title","?")[:45]}": '
+                        f'CTR {ctr:.1f}% | Retención {ret:.0f}%\n'
+                    )
+            sources = _ya.get_traffic_sources(days=28)
+            if sources:
+                top_src = sources[:3]
+                src_str = " | ".join(f"{s['source']} {s['pct']}%" for s in top_src)
+                analytics_premium_text += f"\nFUENTES DE TRÁFICO: {src_str}\n"
+            countries = _ya.get_top_countries(days=28, limit=3)
+            if countries:
+                cty_str = " | ".join(f"{c['country']} {c['views']:,}" for c in countries)
+                analytics_premium_text += f"TOP PAÍSES: {cty_str}\n"
+    except Exception as _e:
+        logger.debug(f"YouTube Analytics premium: {_e}")
+
     prompt = f"""Eres el analista de un canal de YouTube Shorts en español llamado "{getattr(config, 'CHANNEL_NAME', 'GATA CURIOSA')}" (nicho: confesiones y dramas reales).
 
 Fecha del reporte: {snap.timestamp[:10]}
@@ -117,7 +150,7 @@ MÉTRICAS DEL CANAL:
 
 RENDIMIENTO POR VIDEO (recientes):
 {top_videos_text if top_videos_text else "  Sin datos de videos"}
-{errors_text}{expansion_text}
+{analytics_premium_text}{errors_text}{expansion_text}
 
 INSTRUCCIONES:
 Escribe un reporte ejecutivo para WhatsApp (máximo 400 palabras, nunca superar 1800 caracteres totales).
@@ -146,25 +179,14 @@ Termina siempre con la firma: _Reporte automático — Shorts Factory_
 Responde SOLO con el texto del mensaje WhatsApp, sin explicaciones adicionales."""
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model":       getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "messages":    [{"role": "user", "content": prompt}],
-                    "max_tokens":  600,
-                    "temperature": 0.7,
-                },
-            )
-            r.raise_for_status()
-            report = r.json()["choices"][0]["message"]["content"].strip()
-            # Limitar a 1500 chars para WhatsApp
-            if len(report) > 1500:
-                report = report[:1490].rsplit("\n", 1)[0] + "\n_..._"
-            return report
+        report = await llm_service.call_llm_async(prompt, max_tokens=600, temperature=0.7)
+        if not report:
+            return _build_fallback_report(snap, prev)
+        if len(report) > 1500:
+            report = report[:1490].rsplit("\n", 1)[0] + "\n_..._"
+        return report
     except Exception as e:
-        logger.warning(f"  Groq report falló: {e} — usando fallback")
+        logger.warning(f"  CEO report LLM falló: {e} — usando fallback")
         return _build_fallback_report(snap, prev)
 
 
@@ -205,48 +227,39 @@ def _build_fallback_report(
 _Reporte automático — Shorts Factory_"""
 
 
-# ─── Envío WhatsApp ───────────────────────────────────────────────────────────
+# ─── Envío Telegram ───────────────────────────────────────────────────────────
 
-def _send_whatsapp(body: str) -> bool:
-    """Envía mensaje WhatsApp via Twilio. Retorna True si se envió."""
-    sid   = getattr(config, "TWILIO_ACCOUNT_SID", "")
-    token = getattr(config, "TWILIO_AUTH_TOKEN", "")
-    frm   = getattr(config, "TWILIO_WHATSAPP_FROM", "")
-    to    = getattr(config, "WHATSAPP_TO", "")
-
-    if not all([sid, token, frm, to]):
+def _send_telegram(body: str) -> bool:
+    """Envía el reporte por Telegram. Retorna True si se envió."""
+    from modules.telegram_notifier import send_message
+    token   = getattr(config, "TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(config, "TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
         logger.warning(
-            "  WhatsApp no configurado — faltan TWILIO_ACCOUNT_SID / "
-            "TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM / WHATSAPP_TO en .env"
+            "  Telegram no configurado — faltan TELEGRAM_BOT_TOKEN / "
+            "TELEGRAM_CHAT_ID en .env"
         )
         return False
+    import re as _re
+    html = _re.sub(r"\*([^*]+)\*", r"<b>\1</b>", body)
+    html = _re.sub(r"_([^_]+)_",   r"<i>\1</i>", html)
 
-    try:
-        from twilio.rest import Client
-        client = Client(sid, token)
-        msg = client.messages.create(
-            from_=f"whatsapp:{frm}",
-            to=f"whatsapp:{to}",
-            body=body,
-        )
-        logger.info(f"  WhatsApp enviado — SID: {msg.sid} | Estado: {msg.status}")
-        return True
-    except ImportError:
-        logger.error("  twilio no instalado — ejecuta: pip install twilio")
-        return False
-    except Exception as e:
-        logger.error(f"  Error enviando WhatsApp: {e}")
-        return False
+    ok = send_message(html)
+    if ok:
+        logger.info("  Reporte enviado por Telegram ✅")
+    else:
+        logger.warning("  Error enviando reporte por Telegram")
+    return ok
 
 
 # ─── API pública ──────────────────────────────────────────────────────────────
 
 def run_ceo_report(send: bool = True) -> str:
     """
-    Genera y opcionalmente envía el reporte ejecutivo del día.
+    Genera y opcionalmente envía el reporte ejecutivo del día por Telegram.
 
     Args:
-        send: Si True, envía por WhatsApp. Si False, solo retorna el texto.
+        send: Si True, envía por Telegram. Si False, solo retorna el texto.
 
     Returns:
         Texto del reporte generado.
@@ -280,8 +293,9 @@ def run_ceo_report(send: bool = True) -> str:
     logger.debug(f"\n{report_text}")
 
     if send:
-        ok = _send_whatsapp(report_text)
+        ok = _send_telegram(report_text)
         if not ok:
-            logger.warning("  El reporte no se pudo enviar por WhatsApp")
+            logger.warning("  El reporte no se pudo enviar por Telegram")
 
     return report_text
+

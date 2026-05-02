@@ -1,4 +1,4 @@
-"""
+﻿"""
 youtube_uploader.py -- Sube videos a YouTube Studio (nodriver, sin WebDriver)
 
 Anti-detección multicapa:
@@ -29,7 +29,6 @@ from pathlib import Path
 
 import nodriver as uc
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 logger = logging.getLogger(__name__)
@@ -556,32 +555,106 @@ async def _inject_stealth(page) -> None:
 async def _session_warmup(browser) -> None:
     """
     Un humano no abre Chrome y va directo a Studio.
-    Visita YouTube home, lee un poco, y opcionalmente abre un video brevemente.
+    Navega YouTube, ve 1-2 videos por 35-85s cada uno (crítico para account health),
+    y opcionalmente busca algo antes — todo antes de ir a Studio.
     """
     try:
         logger.info("Warm-up: visitando YouTube home...")
         page = await browser.get("https://www.youtube.com")
-        await _delay(3.0, 6.0)
-        await _scroll(page, random.randint(150, 350))
+        await _delay(4.0, 8.0)
+        await _scroll(page, random.randint(200, 500))
         await _random_mouse_wander(page)
         await _delay(2.0, 4.5)
 
-        # 40% de las veces: abrir un video recomendado brevemente (más humano)
-        if random.random() < 0.4:
+        # 30% de las veces: buscar algo primero (como haría un usuario real)
+        if random.random() < 0.30:
             try:
-                video_links = await page.select_all("a#video-title", timeout=5)
-                if video_links:
-                    pick = random.choice(video_links[:8])
-                    await _human_click(page, pick)
-                    await _delay(4.0, 9.0)
-                    await _scroll(page, random.randint(80, 200))
-                    await _random_mouse_wander(page)
-                    await browser.get("https://www.youtube.com")
-                    await _delay(1.5, 3.5)
+                _search_terms = [
+                    "historia real pareja", "confesiones amor", "relaciones toxicas",
+                    "drama real", "storytime español", "historia impactante shorts",
+                ]
+                search_box = await page.select("input#search", timeout=5)
+                if search_box:
+                    await _human_click(page, search_box)
+                    await asyncio.sleep(random.uniform(0.8, 1.5))
+                    await _human_type(search_box, random.choice(_search_terms), clear_first=False)
+                    await asyncio.sleep(random.uniform(0.8, 1.8))
+                    await page.keyboard.send("Enter")
+                    await _delay(3.0, 6.0)
+                    await _scroll(page, random.randint(200, 500))
+                    await _delay(1.5, 3.0)
             except Exception:
                 pass
 
-        await _scroll(page, random.randint(-100, -50))
+        # Ver 1-2 videos de forma realista — ver <15s es señal de bot
+        n_videos = random.choices([1, 2], weights=[0.45, 0.55])[0]
+        for video_num in range(n_videos):
+            try:
+                video_links = await page.select_all("a#video-title", timeout=6)
+                if not video_links:
+                    break
+                pick = random.choice(video_links[:10])
+                await _human_click(page, pick)
+                await _delay(2.0, 4.0)
+
+                # Ver el video 35-85s (equivalente a ver 1-2 Shorts completos)
+                watch_secs = random.triangular(35.0, 85.0, 52.0)
+                logger.info(f"Warm-up: viendo video {video_num+1}/{n_videos} ~{watch_secs:.0f}s")
+
+                end_at = time.time() + watch_secs
+                while time.time() < end_at:
+                    remaining = end_at - time.time()
+                    if remaining <= 1.5:
+                        break
+                    if random.random() < 0.20:
+                        await _random_mouse_wander(page)
+                    # Scroll a comentarios ocasionalmente (comportamiento humano real)
+                    if random.random() < 0.15 and remaining > 15:
+                        await _scroll(page, random.randint(250, 500))
+                        await asyncio.sleep(random.uniform(4.0, 9.0))
+                        await _scroll(page, -random.randint(150, 300))
+                    await asyncio.sleep(random.uniform(4.0, 12.0))
+
+                # Dar like ocasionalmente (12%) — como un usuario normal
+                if random.random() < 0.12:
+                    try:
+                        for _like_sel in [
+                            "button[title*='Me gusta' i]",
+                            "button[aria-label*='like this video' i]",
+                            "#like-button button",
+                        ]:
+                            _like = await page.select(_like_sel, timeout=3)
+                            if _like:
+                                await _human_click(page, _like)
+                                await asyncio.sleep(random.uniform(0.5, 1.5))
+                                break
+                    except Exception:
+                        pass
+
+                if video_num < n_videos - 1:
+                    page = await browser.get("https://www.youtube.com")
+                    await _delay(2.5, 5.0)
+                    await _scroll(page, random.randint(150, 350))
+                    await _delay(1.0, 2.5)
+
+            except Exception as e:
+                logger.debug(f"Warm-up video {video_num+1}: {e}")
+                try:
+                    page = await browser.get("https://www.youtube.com")
+                    await _delay(2.0, 4.0)
+                except Exception:
+                    pass
+                break
+
+        # Volver a home si quedamos en un video
+        try:
+            if "watch" in (page.url or "") or "shorts" in (page.url or ""):
+                page = await browser.get("https://www.youtube.com")
+                await _delay(1.5, 3.5)
+        except Exception:
+            pass
+
+        await _scroll(page, random.randint(-80, -30))
         await asyncio.sleep(random.uniform(1.0, 2.5))
         logger.info("Warm-up completado")
     except Exception as e:
@@ -764,6 +837,250 @@ async def _wait_upload_complete(page, timeout: int = 360) -> None:
     logger.warning(f"Timeout esperando upload ({timeout}s) — intentando publicar de todas formas")
 
 
+# ─── Comentario fijado con link de Telegram ──────────────────────────────────
+
+async def _post_pinned_comment(browser, youtube_url: str, comment_text: str) -> bool:
+    """
+    Navega al video recién publicado y posta + fija un comentario con el link de Telegram.
+    Reutiliza la sesión del navegador ya autenticada — no abre Chrome de nuevo.
+    El pin es best-effort: si falla el UI, el comentario queda publicado de todas formas.
+    """
+    if not youtube_url or not comment_text:
+        return False
+    try:
+        # Shorts URL (/shorts/ID) → watch URL (/watch?v=ID)
+        # La página de Shorts no muestra la caja de comentarios estándar.
+        # La página /watch?v= sí la tiene con los selectores normales.
+        import re as _re
+        m = _re.search(r"/shorts/([A-Za-z0-9_-]{8,12})", youtube_url)
+        watch_url = f"https://www.youtube.com/watch?v={m.group(1)}" if m else youtube_url
+
+        logger.info(f"Abriendo video para comentario de Telegram: {watch_url}")
+        vpage = await browser.get(watch_url)
+        await _delay(6.0, 10.0)
+        await _scroll(vpage, 600)
+        await _delay(2.0, 4.0)
+
+        # Activar la caja de comentarios (placeholder visible antes del textarea real)
+        comment_box = None
+        for sel in [
+            "#simplebox-placeholder",
+            "yt-formatted-string#simplebox-placeholder",
+            "[placeholder*='Añad']",
+            "[placeholder*='Add a comment']",
+        ]:
+            try:
+                comment_box = await vpage.select(sel, timeout=6)
+                if comment_box:
+                    break
+            except Exception:
+                pass
+
+        if comment_box is None:
+            await _scroll(vpage, 400)
+            await _delay(2.0, 3.5)
+            for sel in ["#simplebox-placeholder", "[placeholder*='coment']"]:
+                try:
+                    comment_box = await vpage.select(sel, timeout=5)
+                    if comment_box:
+                        break
+                except Exception:
+                    pass
+
+        if comment_box is None:
+            logger.warning("Comentario Telegram: caja de comentarios no encontrada")
+            return False
+
+        await _human_click(vpage, comment_box)
+        await _delay(1.5, 3.0)
+
+        # Textarea real (aparece después del click en el placeholder)
+        text_input = None
+        for sel in [
+            "#contenteditable-root",
+            "div[contenteditable='true']#contenteditable-root",
+            "ytd-comment-simplebox-renderer div[contenteditable]",
+        ]:
+            try:
+                text_input = await vpage.select(sel, timeout=6)
+                if text_input:
+                    break
+            except Exception:
+                pass
+
+        if text_input is None:
+            logger.warning("Comentario Telegram: textarea no encontrado")
+            return False
+
+        await _human_type(text_input, comment_text, clear_first=False)
+        await _delay(1.5, 2.5)
+
+        # Enviar comentario — 3 estrategias en orden
+        submitted = False
+
+        # Estrategia 1: selector CSS
+        submit_btn = None
+        for sel in [
+            "#submit-button",
+            "ytd-button-renderer#submit-button",
+            "yt-button-shape#submit-button",
+            "[aria-label*='Comentar']",
+            "[aria-label*='Comment']",
+            "ytd-comment-simplebox-renderer #submit-button",
+            "#submit-button button",
+        ]:
+            try:
+                submit_btn = await vpage.select(sel, timeout=4)
+                if submit_btn:
+                    break
+            except Exception:
+                pass
+
+        if submit_btn:
+            await _human_click(vpage, submit_btn)
+            submitted = True
+
+        # Estrategia 2: JavaScript — busca el botón por texto/aria en el DOM
+        if not submitted:
+            clicked_js = await vpage.evaluate("""
+                (function() {
+                    // Botón de submit dentro del simplebox
+                    var box = document.querySelector('ytd-comment-simplebox-renderer');
+                    if (box) {
+                        var btn = box.querySelector('#submit-button, [aria-label*="Comentar"], [aria-label*="Comment"]');
+                        if (btn) { btn.click(); return 'simplebox'; }
+                    }
+                    // Fallback: cualquier botón de submit activo (no disabled)
+                    var all = document.querySelectorAll('#submit-button');
+                    for (var b of all) {
+                        if (!b.disabled && b.offsetParent !== null) {
+                            b.click(); return 'fallback';
+                        }
+                    }
+                    return null;
+                })()
+            """)
+            if clicked_js:
+                logger.info(f"Comentario submit via JS ({clicked_js})")
+                submitted = True
+
+        # Estrategia 3: Ctrl+Enter (atajo de teclado de YouTube)
+        if not submitted:
+            try:
+                await text_input.key_down("ctrl")
+                await text_input.key_press("Enter")
+                await text_input.key_up("ctrl")
+                submitted = True
+                logger.info("Comentario submit via Ctrl+Enter")
+            except Exception:
+                pass
+
+        if not submitted:
+            logger.warning("Comentario Telegram: botón submit no encontrado — omitiendo")
+            return False
+
+        await _delay(5.0, 8.0)
+        logger.info("Comentario de Telegram publicado")
+
+        # ── Fijar el comentario (best-effort) ─────────────────────────────────
+        try:
+            # Esperar a que aparezca al menos un comentario (el nuestro)
+            first_thread = None
+            for attempt in range(6):
+                await _delay(2.0, 3.0)
+                try:
+                    first_thread = await vpage.select("ytd-comment-thread-renderer", timeout=5)
+                    if first_thread:
+                        break
+                except Exception:
+                    pass
+                # Scroll suave para que YouTube cargue los comentarios
+                await _scroll(vpage, 200)
+
+            if first_thread is None:
+                logger.debug("Pin: comentario aún no visible después de esperar — omitiendo pin")
+                return True
+
+            # Hover sobre el primer comentario para revelar el menú "..."
+            await _random_mouse_wander(vpage)
+            await _delay(0.5, 1.0)
+
+            # Buscar el botón "..." del primer comentario con varios selectores
+            menu_btn = None
+            for sel in [
+                "ytd-comment-thread-renderer #more",
+                "ytd-comment-thread-renderer yt-icon-button#more",
+                "ytd-comment-thread-renderer [aria-label*='opciones del comentario']",
+                "ytd-comment-thread-renderer [aria-label*='comment actions']",
+                "ytd-comment-thread-renderer [aria-label*='More']",
+                "ytd-comment-thread-renderer ytd-menu-renderer yt-icon-button",
+            ]:
+                try:
+                    menu_btn = await vpage.select(sel, timeout=4)
+                    if menu_btn:
+                        break
+                except Exception:
+                    pass
+
+            if not menu_btn:
+                # Intentar hover sobre el thread para revelar el botón
+                try:
+                    await first_thread.mouse_move()
+                    await _delay(0.5, 1.0)
+                    for sel in ["#more", "yt-icon-button#more", "[aria-label*='opciones']", "[aria-label*='More']"]:
+                        try:
+                            menu_btn = await first_thread.select(sel, timeout=3)
+                            if menu_btn:
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            if not menu_btn:
+                logger.debug("Pin: botón de menú no encontrado — comentario publicado sin fijar")
+                return True
+
+            await _human_click(vpage, menu_btn)
+            await _delay(1.0, 2.0)
+
+            # Buscar opción "Fijar comentario" / "Pin comment" en el menú desplegable
+            pinned = False
+            for pin_text in ["Fijar comentario", "Pin comment", "Fijar", "Pin"]:
+                try:
+                    pin_opt = await vpage.find(pin_text, timeout=4)
+                    if pin_opt:
+                        await _human_click(vpage, pin_opt)
+                        await _delay(1.5, 2.5)
+                        # Confirmar diálogo si aparece ("Fijar" / "Pin" de nuevo)
+                        for cfm_text in ["Fijar", "Pin", "Confirm", "Confirmar"]:
+                            try:
+                                cfm = await vpage.find(cfm_text, timeout=3)
+                                if cfm:
+                                    await _human_click(vpage, cfm)
+                                    await _delay(1.0, 2.0)
+                                    break
+                            except Exception:
+                                pass
+                        logger.info("Comentario de Telegram FIJADO")
+                        pinned = True
+                        break
+                except Exception:
+                    pass
+
+            if not pinned:
+                logger.debug("Pin: opción 'Fijar' no encontrada en el menú")
+
+        except Exception as e_pin:
+            logger.debug(f"Pin del comentario falló (no crítico): {e_pin}")
+
+        return True
+
+    except Exception as e:
+        logger.warning(f"Comentario fijado Telegram falló (no crítico): {e}")
+        return False
+
+
 # ─── Pipeline principal ───────────────────────────────────────────────────────
 
 def _cleanup_chrome_profile(profile_dir: Path) -> None:
@@ -806,6 +1123,7 @@ async def _upload_async(
     description: str,
     tags: list,
     thumbnail_path: str = "",
+    comment: str = "",
 ) -> tuple[bool, str]:
     """Pipeline completo de upload con anti-detección multicapa."""
 
@@ -843,9 +1161,8 @@ async def _upload_async(
             user_data_dir=str(profile_dir),
             browser_executable_path=chrome_bin or None,
             browser_args=[
-                "--start-maximized",
-                f"--window-size={config.VIDEO_WIDTH},{config.VIDEO_HEIGHT}",
-                "--no-sandbox",
+                "--window-size=1920,1080",
+                "--window-position=-2000,0",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
@@ -1122,7 +1439,36 @@ async def _upload_async(
             pass
 
         await _human_click(page, save_btn)
-        await _delay(5.0, 10.0)
+        await _delay(3.0, 5.0)
+
+        # ── Diálogo "Aún estamos comprobando tu contenido" ────────────────────
+        # YouTube muestra este popup en canales nuevos/sin historial. Hay que
+        # hacer clic en "Publicar de todas formas" para que el video se publique.
+        try:
+            confirm_clicked = await page.evaluate("""
+                (function() {
+                    var btns = Array.from(document.querySelectorAll('button, yt-button-renderer, tp-yt-paper-button'));
+                    var keywords = [
+                        'publicar de todas formas', 'publish anyway',
+                        'post anyway', 'publish regardless',
+                    ];
+                    for (var btn of btns) {
+                        var txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        if (keywords.some(k => txt.includes(k))) {
+                            btn.click();
+                            return txt;
+                        }
+                    }
+                    return null;
+                })()
+            """)
+            if confirm_clicked:
+                logger.info(f"Diálogo de revisión detectado — clic en '{confirm_clicked}'")
+                await _delay(3.0, 5.0)
+        except Exception as _dlg_err:
+            logger.debug(f"Check diálogo revisión: {_dlg_err}")
+
+        await _delay(2.0, 4.0)
 
         # ── Capturar URL ──────────────────────────────────────────────────────
         youtube_url = ""
@@ -1159,6 +1505,27 @@ async def _upload_async(
         ts = time.strftime("%Y%m%d_%H%M%S")
         await page.save_screenshot(str(config.LOGS_DIR / f"upload_confirm_{ts}.png"))
         logger.info(f"Video subido: '{title}' — {youtube_url or 'URL no capturada'}")
+
+        # ── Comentario fijado con link de Telegram ────────────────────────────
+        if youtube_url:
+            import random as _rnd
+            # Usar comentario generado por IA (único por historia) o fallback
+            _yt_comment_fallback = [
+                "guardo las historias que youtube me borra en mi canal de telegram 👉 link en mi perfil",
+                "hay cosas que no puedo contar aquí... las subo en telegram. link en mi bio 👆",
+                "tengo historias guardadas que aquí no me dejan subir — están en mi canal de telegram. bio 👆",
+                "si esta te enganchó espérate a las de telegram 😶 link en mi perfil",
+                "las más cochinas las guardo para telegram porque aquí me las borran — link en mi bio",
+                "en telegram subo las que no pasan por aquí. son peores. link en mi bio 👆",
+                "las confesiones que dan más asco están en mi canal de telegram — link en el perfil 👆",
+            ]
+            comment_text = (
+                comment.strip()
+                if comment and len(comment.strip()) > 10
+                else _rnd.choice(_yt_comment_fallback)
+            )
+            await _post_pinned_comment(browser, youtube_url, comment_text)
+
         return True, youtube_url
 
     except Exception as e:
@@ -1187,6 +1554,7 @@ def upload_to_youtube(
     description: str,
     tags: list[str],
     thumbnail_path: str = "",
+    comment: str = "",
 ) -> str | None:
     """
     Sube un video a YouTube Studio con anti-detección multicapa.
@@ -1211,7 +1579,7 @@ def upload_to_youtube(
                 asyncio.set_event_loop(loop)
                 try:
                     ok, youtube_url = loop.run_until_complete(
-                        _upload_async(video_path, title, description, tags, thumbnail_path)
+                        _upload_async(video_path, title, description, tags, thumbnail_path, comment)
                     )
                 finally:
                     try:
@@ -1228,7 +1596,7 @@ def upload_to_youtube(
                     asyncio.set_event_loop(None)
             else:
                 ok, youtube_url = asyncio.run(
-                    _upload_async(video_path, title, description, tags, thumbnail_path)
+                    _upload_async(video_path, title, description, tags, thumbnail_path, comment)
                 )
 
             if ok:
@@ -1247,3 +1615,4 @@ def upload_to_youtube(
 
     logger.error(f"Upload falló tras {config.UPLOAD_MAX_RETRIES} intentos")
     return None
+

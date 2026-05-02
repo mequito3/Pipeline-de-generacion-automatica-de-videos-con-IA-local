@@ -1,4 +1,4 @@
-"""
+﻿"""
 telegram_notifier.py — Notificaciones y aprobación de videos vía Telegram Bot
 
 Reemplaza WhatsApp/Twilio completamente. Sin límites de mensajes, sin costo.
@@ -22,7 +22,6 @@ from typing import Optional
 import httpx
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 logger = logging.getLogger(__name__)
@@ -215,6 +214,7 @@ def _approval_caption(
     title: str, description: str, tags: list,
     duration_s: float, video_size_mb: float,
     narrator_gender: str, timeout_h: int,
+    llm_provider: str = "", tts_backend: str = "",
 ) -> str:
     gender_icon  = "👩" if narrator_gender == "female" else ("👨" if narrator_gender == "male" else "🎙")
     gender_label = "Mujer" if narrator_gender == "female" else ("Hombre" if narrator_gender == "male" else "Auto")
@@ -230,6 +230,12 @@ def _approval_caption(
         "",
         f"⏱ {duration_s:.0f}s   📁 {video_size_mb:.1f} MB   {gender_icon} {gender_label}",
     ]
+    if llm_provider or tts_backend:
+        tech_line = "   ".join(filter(None, [
+            f"🤖 {llm_provider}" if llm_provider else "",
+            f"🎙 {tts_backend}"  if tts_backend  else "",
+        ]))
+        lines += ["", tech_line]
     if desc_prev:
         lines += ["", "📝 <b>DESCRIPCIÓN:</b>", desc_prev]
     if hashtags:
@@ -237,7 +243,7 @@ def _approval_caption(
     lines += [
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"⏳ Timeout: <b>{timeout_h}h</b> sin respuesta = descartado",
+        f"⏳ Responde en menos de <b>{timeout_h}h</b> · Sin respuesta = descartado",
     ]
     return "\n".join(lines)
 
@@ -282,12 +288,13 @@ def send_approval_request(
     description: str = "",
     tags: Optional[list] = None,
     narrator_gender: str = "auto",
+    llm_provider: str = "",
+    tts_backend: str = "",
 ) -> bool:
     """
-    Envía thumbnail con botones inline ✅ Publicar / ❌ Descartar.
-    Espera la respuesta haciendo polling directo de getUpdates para evitar
-    problemas de threading (el método anterior con Event fallaba si el hilo
-    del bot moría silenciosamente o tenía condiciones de carrera).
+    Envía video/thumbnail con botones inline ✅ Publicar / ❌ Descartar.
+    Pausa el commander (evita 409 Conflict) y hace polling exclusivo hasta
+    recibir la respuesta del CEO o alcanzar el timeout.
 
     Returns:
         True  → aprobado → publicar en YouTube
@@ -310,12 +317,23 @@ def send_approval_request(
         title=title, description=description, tags=tags or [],
         duration_s=duration_s, video_size_mb=video_size_mb,
         narrator_gender=narrator_gender, timeout_h=timeout_h,
+        llm_provider=llm_provider, tts_backend=tts_backend,
     )
 
     markup = {"inline_keyboard": [[
         {"text": "✅ Publicar en YouTube", "callback_data": "approve"},
         {"text": "❌ Descartar",           "callback_data": "reject"},
     ]]}
+
+    # ── Capturar baseline de updates ANTES de enviar el mensaje ──────────────
+    # CRÍTICO: el offset debe tomarse ANTES del envío, no después.
+    # Si se toma después de un sleep(7), el usuario puede haber hecho click
+    # durante ese sleep y ese callback queda incluido en el offset baseline →
+    # el polling arranca desde offset+1, salta el click → timeout de 2h sin respuesta.
+    # Con el offset tomado aquí (antes de enviar), cualquier click en nuestro
+    # mensaje tendrá update_id > last_offset y será detectado correctamente.
+    last_offset = _get_current_update_offset(token)
+    logger.info(f"Telegram: baseline offset={last_offset} (capturado antes de enviar)")
 
     # Enviar video + botones → fallback thumbnail → fallback texto
     sent = None
@@ -339,73 +357,89 @@ def send_approval_request(
     logger.info(f"Telegram: esperando respuesta CEO (msg_id={msg_id}, timeout={timeout_h}h)...")
     print(f"\n⏳ Video enviado a Telegram para aprobación. Tienes {timeout_h}h para responder.\n")
 
-    # ── Polling directo de getUpdates — sin depender del hilo del bot ─────────
-    # Avanzamos el offset al update_id más reciente para ignorar updates anteriores.
-    # Así el usuario solo puede aprobar/rechazar EL VIDEO ACTUAL, no uno viejo.
-    deadline   = time.time() + timeout_s
-    last_offset = _get_current_update_offset(token)
+    # ── Pausar el commander para polling exclusivo aquí ───────────────────────
+    # Solución: pausar el commander (evita 409 Conflict) y polling exclusivo aquí.
+    _tc_ref = None
+    try:
+        from modules import telegram_commander as _tc_ref
+        _tc_ref._approval_in_progress.set()
+        logger.info("Telegram: commander pausado — polling exclusivo para aprobación")
+        time.sleep(12)  # deja que el poll activo del commander termine (Telegram timeout=5s + red ~5s)
+    except Exception as e:
+        logger.debug(f"Commander no pausable ({e}) — continuando sin pausa")
 
-    while time.time() < deadline:
-        remaining = int(deadline - time.time())
-        poll_timeout = min(30, remaining)
-        if poll_timeout <= 0:
-            break
+    try:
+        deadline = time.time() + timeout_s
+        logger.info(f"Telegram: polling desde offset={last_offset}, msg_id={msg_id}")
 
-        try:
-            resp = _api("getUpdates", token,
-                        timeout=poll_timeout + 10,
-                        json={
-                            "offset":          last_offset + 1,
-                            "timeout":         poll_timeout,
-                            "allowed_updates": ["callback_query"],
-                        })
-        except Exception as e:
-            logger.debug(f"getUpdates error: {e}")
-            time.sleep(3)
-            continue
+        while time.time() < deadline:
+            remaining    = int(deadline - time.time())
+            poll_timeout = min(30, remaining)
+            if poll_timeout <= 0:
+                break
 
-        if not resp.get("ok"):
-            time.sleep(3)
-            continue
-
-        for update in resp.get("result", []):
-            last_offset = max(last_offset, update.get("update_id", 0))
-            cb = update.get("callback_query")
-            if not cb:
+            try:
+                resp = _api("getUpdates", token,
+                            timeout=poll_timeout + 10,
+                            json={
+                                "offset":          last_offset + 1,
+                                "timeout":         poll_timeout,
+                                "allowed_updates": ["callback_query"],
+                            })
+            except Exception as e:
+                logger.debug(f"getUpdates error: {e}")
+                time.sleep(3)
                 continue
 
-            cb_msg_id = (cb.get("message") or {}).get("message_id")
-            cb_data   = cb.get("data", "")
-            cb_id     = cb.get("id", "")
+            if not resp.get("ok"):
+                time.sleep(3)
+                continue
 
-            # Solo aceptar el callback del mensaje correcto
-            if cb_msg_id != msg_id:
-                # Ignorar callbacks de otros mensajes pero responder para quitar spinner
+            for update in resp.get("result", []):
+                last_offset = max(last_offset, update.get("update_id", 0))
+                cb = update.get("callback_query")
+                if not cb:
+                    continue
+
+                cb_msg_id = (cb.get("message") or {}).get("message_id")
+                cb_data   = cb.get("data", "")
+                cb_id     = cb.get("id", "")
+
+                # Ignorar clicks en mensajes que no son el de aprobación actual
+                if cb_msg_id != msg_id:
+                    logger.debug(f"Telegram: callback ignorado (msg {cb_msg_id} != {msg_id})")
+                    _api("answerCallbackQuery", token, json={"callback_query_id": cb_id})
+                    continue
+
+                logger.info(f"Telegram: callback recibido — data='{cb_data}' msg_id={cb_msg_id}")
                 _api("answerCallbackQuery", token, json={"callback_query_id": cb_id})
-                continue
+                _api("editMessageReplyMarkup", token, json={
+                    "chat_id":      chat_id,
+                    "message_id":   msg_id,
+                    "reply_markup": json.dumps({"inline_keyboard": []}),
+                })
 
-            # Responder al callback (quita el spinner de carga en el cliente)
-            _api("answerCallbackQuery", token, json={"callback_query_id": cb_id})
+                if cb_data == "approve":
+                    logger.info("Telegram: ✅ APROBADO por el CEO — publicando en YouTube")
+                    send_message("✅ <b>APROBADO</b> — subiendo a YouTube...")
+                    return True
+                else:
+                    logger.info("Telegram: ❌ RECHAZADO por el CEO — descartando video")
+                    send_message("❌ <b>RECHAZADO</b> — generando un video nuevo...")
+                    return False
 
-            # Quitar los botones del mensaje para evitar doble-clic
-            _api("editMessageReplyMarkup", token, json={
-                "chat_id":      chat_id,
-                "message_id":   msg_id,
-                "reply_markup": json.dumps({"inline_keyboard": []}),
-            })
+        logger.warning(f"Telegram: timeout {timeout_h}h sin respuesta — video descartado")
+        send_message(f"⏰ <b>Timeout:</b> {timeout_h}h sin respuesta. Video descartado.")
+        return False
 
-            if cb_data == "approve":
-                logger.info("Telegram: ✅ APROBADO por el CEO — publicando en YouTube")
-                send_message("✅ <b>APROBADO</b> — subiendo a YouTube...")
-                return True
-            else:
-                logger.info("Telegram: ❌ RECHAZADO por el CEO — descartando video")
-                send_message("❌ <b>RECHAZADO</b> — generando un video nuevo...")
-                return False
-
-    logger.warning(f"Telegram: timeout {timeout_h}h sin respuesta — video descartado")
-    send_message(f"⏰ <b>Timeout:</b> {timeout_h}h sin respuesta. Video descartado.")
-    return False
+    finally:
+        # Siempre reanudar el commander al salir (aprobado, rechazado o timeout)
+        if _tc_ref:
+            try:
+                _tc_ref._approval_in_progress.clear()
+                logger.info("Telegram: commander reanudado")
+            except Exception:
+                pass
 
 
 def _get_current_update_offset(token: str) -> int:
@@ -457,3 +491,4 @@ def send_upload_confirmation(
         send_message(caption)
 
     logger.info("Telegram: confirmación de upload enviada")
+

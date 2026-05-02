@@ -13,33 +13,82 @@ Ejemplo de uso:
 
 import asyncio
 import logging
+import os
 import random
-import sys
 import tempfile
 import time
 from pathlib import Path
 
 import config
 
+# ══════════════════════════════════════════════════════════════════════════════
+# BSOD PROTECTION — LEER ANTES DE MODIFICAR ESTE BLOQUE
+# ══════════════════════════════════════════════════════════════════════════════
+# VoiceBox (servidor TTS en http://127.0.0.1:17493) corre en la GPU y mantiene
+# su modelo Qwen/XTTS cargado en VRAM permanentemente mientras está activo.
+#
+# PROBLEMA: Cuando Python importa stable_whisper o faster_whisper, PyTorch
+# inicializa el runtime CUDA *aunque device="cpu"*, reservando 500MB–1GB de VRAM
+# adicional. En laptops con GPU modesta, la suma agota la VRAM disponible →
+# el driver NVIDIA crashea → BSOD con "your device ran into a problem".
+#
+# SOLUCIÓN: Ocultar todos los dispositivos CUDA a este proceso Python antes de
+# que cualquier biblioteca ML sea importada. VoiceBox NO se ve afectado porque
+# es un proceso separado que ya estaba corriendo con su propio entorno.
+#
+# REGLA: Solo omitir si WHISPER_DEVICE=cuda está explícitamente configurado en
+# .env (cuando tienes VRAM de sobra, >=8GB libres con VoiceBox activo).
+#
+# NOTA PARA FUTUROS AGENTES: NO eliminar ni mover este bloque.
+# Documentado en: memory/project_voicebox.md
+# ══════════════════════════════════════════════════════════════════════════════
+_whisper_device_cfg = os.getenv("WHISPER_DEVICE", "cpu").lower()
+if _whisper_device_cfg == "cpu":
+    # Siempre forzar — no verificar si ya existe. NVIDIA tools u otras libs pueden
+    # haber seteado CUDA_VISIBLE_DEVICES=0 antes de llegar aquí, lo que anulaba
+    # la protección. Override incondicional garantiza que torch/CTranslate2 no toque la GPU.
+    # IMPORTANTE: usar "-1" (NO "") — en Windows, string vacío no deshabilita CUDA;
+    # "-1" es el valor documentado para ocultar todos los dispositivos en Linux y Windows.
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # fuerza evaluación consistente
+    # Limitar threads de CPU para Whisper/PyTorch — evita CLOCK_WATCHDOG_TIMEOUT.
+    # Sin este límite, faster-whisper satura todos los núcleos al 100%
+    # durante la alineación, lo que activa el watchdog timer del SO y produce BSOD.
+    # Override incondicional — si el sistema tenía OMP_NUM_THREADS=8, el límite
+    # no se aplicaba antes (condición "not in os.environ" fallaba silenciosamente).
+    # WHISPER_CPU_THREADS=1 por defecto — seguro en laptops. Sube a 2 solo si tienes buena refrigeración.
+    _wt = os.getenv("WHISPER_CPU_THREADS", "1")
+    for _tenv in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[_tenv] = _wt
+
 logger = logging.getLogger(__name__)
+
+# Último backend TTS realmente usado — leído por company.py para la notificación
+_last_tts_backend: str = "desconocido"
+
+
+def get_last_tts_backend() -> str:
+    """Devuelve el backend TTS realmente usado en la última llamada."""
+    return _last_tts_backend
+
 
 # Voces neurales de Edge TTS — separadas por género
 EDGE_VOICES_FEMALE = [
-    "es-MX-DaliaNeural",  # Mujer, México — natural y dramática
-    "es-AR-ElenaNeural",  # Mujer, Argentina
-    "es-US-PalomaNeural",  # Mujer, español neutro
-    "es-ES-ElviraNeural",  # Mujer, España (fallback)
+    "es-MX-DaliaNeural",    # Mujer, México — natural y dramática (la mejor)
+    "es-MX-NuriaNeural",    # Mujer, México — conversacional, joven
+    "es-MX-CarlotaNeural",  # Mujer, México — expresiva
+    "es-MX-MarinaNeural",   # Mujer, México — cálida
+    "es-AR-ElenaNeural",    # Mujer, Argentina
+    "es-US-PalomaNeural",   # Fallback neutro
 ]
 
 EDGE_VOICES_MALE = [
-    "es-MX-JorgeNeural",  # Hombre, México — voz grave y dramática
+    "es-MX-JorgeNeural",    # Hombre, México — grave y dramático (el mejor)
+    "es-MX-GerardoNeural",  # Hombre, México — conversacional
+    "es-MX-LucianoNeural",  # Hombre, México — natural
     "es-CO-GonzaloNeural",  # Hombre, Colombia
-    "es-US-AlonsoNeural",  # Hombre, español neutro
-    "es-ES-AlvaroNeural",  # Hombre, España (fallback)
+    "es-US-AlonsoNeural",   # Fallback neutro
 ]
-
-# Lista completa como fallback
-EDGE_VOICES_ES_LATAM = EDGE_VOICES_FEMALE + EDGE_VOICES_MALE
 
 # ─── Paletas de subtítulos por emoción ───────────────────────────────────────
 # Formato ASS: &H00BBGGRR& (Alpha=00 = completamente opaco)
@@ -860,63 +909,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     output_path.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-# ─── stable-ts: timestamps exactos con forced alignment ─────────────────────
-
-
-_stable_ts_model = None  # caché: no recargar en cada llamada
-
-
-def _get_stable_ts_word_timestamps(audio_path: Path, language: str = "es") -> list:
-    """
-    Extrae timestamps exactos por palabra usando stable-ts (transcripción).
-
-    Usa model.transcribe() — NO model.align() — porque align() requiere el texto
-    original como segundo argumento obligatorio. transcribe() funciona directo
-    sobre el audio y devuelve timestamps por palabra igual de precisos.
-
-    Returns:
-        Lista de (word, start_sec, duration_sec) — vacía si falla o no instalado.
-    """
-    global _stable_ts_model
-    try:
-        import stable_whisper
-
-        if _stable_ts_model is None:
-            # Forzar CPU para no competir por VRAM con VoiceBox u otros modelos activos
-            whisper_device = getattr(config, "WHISPER_DEVICE", "cpu")
-            logger.info(f"stable-ts: cargando modelo base en {whisper_device} (primera vez)...")
-            _stable_ts_model = stable_whisper.load_model("base", device=whisper_device)
-
-        logger.info("stable-ts: transcribiendo para timestamps exactos...")
-        result = _stable_ts_model.transcribe(
-            str(audio_path),
-            language=language,
-            word_timestamps=True,
-            verbose=False,
-            ignore_compatibility=True,  # suprime warning de versión de openai-whisper
-        )
-
-        timed_words = []
-        for seg in result.segments:
-            for w in seg.words:
-                clean = w.word.strip()
-                if clean:
-                    timed_words.append((clean, float(w.start), float(w.end - w.start)))
-
-        if timed_words:
-            logger.info(f"stable-ts: {len(timed_words)} palabras sincronizadas")
-            for i, (word, start, dur) in enumerate(timed_words[:5]):
-                logger.debug(f"  [{i}] '{word}' @ {start:.2f}s ({dur:.2f}s)")
-        else:
-            logger.warning("stable-ts: sin palabras detectadas")
-
-        return timed_words
-    except ImportError:
-        logger.warning("stable-ts no instalado — pip install stable-ts")
-        return []
-    except Exception as e:
-        logger.warning(f"stable-ts falló ({type(e).__name__}: {e}) — usando fallback")
-        return []
+# stable-ts / torch ELIMINADOS: importaban torch que causaba BSOD en Windows
+# (driver NVIDIA crash al inicializar CUDA mientras VoiceBox usa la GPU).
+# Reemplazado por faster-whisper (CTranslate2, sin PyTorch) en ambos flujos.
 
 
 # ─── faster-whisper: timestamps exactos por palabra ──────────────────────────
@@ -949,14 +944,19 @@ def _get_whisper_word_timestamps(audio_path: Path, language: str = "es") -> list
             logger.info(
                 f"faster-whisper: cargando modelo '{model_size}' en {device} (primera vez)..."
             )
-            _faster_whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            cpu_threads = int(os.getenv("WHISPER_CPU_THREADS", "1"))
+            _faster_whisper_model = WhisperModel(
+                model_size, device=device, compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                num_workers=1,
+            )
 
         logger.info("faster-whisper: transcribiendo para timestamps exactos...")
         segments, _ = _faster_whisper_model.transcribe(
             str(audio_path),
             language=language,
             word_timestamps=True,
-            beam_size=5,
+            beam_size=1,        # reducido de 5 → 1 para bajar carga de CPU (evita BSOD)
             vad_filter=False,   # TTS es audio limpio — VAD causa drift en subtítulos
             condition_on_previous_text=False,  # cada segmento independiente
         )
@@ -986,93 +986,47 @@ def _get_whisper_word_timestamps(audio_path: Path, language: str = "es") -> list
         return []
 
 
-def _cuda_available() -> bool:
-    """Detecta si CUDA está disponible para aceleración GPU."""
-    try:
-        import torch
-
-        return torch.cuda.is_available()
-    except ImportError:
-        return False
-    except Exception as e:
-        logger.warning(f"faster-whisper falló ({e}) — usando fallback")
-        return False
-
 
 # ─── Backend edge-tts ─────────────────────────────────────────────────────────
 
 
 def _add_dramatic_pauses(text: str) -> str:
     """
-    Preprocesa el texto para maximizar la expresividad de edge-tts sin SSML.
+    Preprocesa el texto antes de enviarlo a edge-tts.
 
-    edge-tts responde a señales de puntuación:
-      '...' → pausa larga (~500ms)   — suspenso antes de revelar algo
-      ','   → pausa corta (~150ms)   — respiración natural
-      '.'   → pausa media (~300ms)   — cierre de idea
-      '!'   → energía alta           — impacto emocional
-      '?'   → entonación ascendente  — pregunta retórica
-      CAPS  → acento/énfasis         — palabra clave subrayada
+    Filosofía: mínima intervención. El LLM ya estructura el texto con su
+    propia puntuación. Solo corregimos los "..." que generan silencio excesivo
+    y aplicamos énfasis en pocas palabras clave.
     """
     import re
 
-    # ── Normalizar ────────────────────────────────────────────────────────────
     text = re.sub(r'  +', ' ', text.strip())
-    text = re.sub(r'\.{4,}', '...', text)     # elipsis: máximo 3 puntos
-    text = re.sub(r'\.{2}(?!\.)', '...', text) # ".." → "..." (edge-tts ignora 2 puntos)
 
-    # ── CAPITALIZAR palabras de alto impacto emocional ────────────────────────
-    # edge-tts acentúa las palabras en mayúsculas → énfasis natural
+    # ── Convertir "..." a coma (pausa corta 150ms) ───────────────────────────
+    # "..." → 500ms de silencio. El narrador de drama no se calla medio segundo
+    # entre frase y frase — eso quiebra el ritmo. Todo "..." se convierte en ","
+    # (150ms) para mantener la urgencia sin pausas incoherentes.
+    text = re.sub(r'\.{2,}\s*', ', ', text)  # cualquier "..." o ".." → coma
+
+    # ── Énfasis en palabras clave de alto impacto (pocas = énfasis real) ─────
     CAPS_WORDS = {
         r'\bnunca\b':    'NUNCA',
         r'\bjamás\b':    'JAMÁS',
-        r'\bnada\b':     'NADA',
         r'\bmentira\b':  'MENTIRA',
-        r'\bmentiras\b': 'MENTIRAS',
         r'\btraición\b': 'TRAICIÓN',
-        r'\bsiempre\b':  'SIEMPRE',
-        r'\bdos años\b': 'DOS AÑOS',
-        r'\btres años\b': 'TRES AÑOS',
     }
     for pattern, replacement in CAPS_WORDS.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-    # ── Pausa larga "..." antes de conectores de revelación ───────────────────
-    # Solo si no hay ya puntuación justo antes
-    REVELATION_CONNECTORS = [
-        r'pero entonces', r'pero resulta que',
-        r'de repente', r'fue entonces cuando', r'fue cuando',
-        r'lo que no sabía', r'hasta que',
-        r'en ese momento', r'y entonces',
-    ]
-    for phrase in REVELATION_CONNECTORS:
-        text = re.sub(
-            rf'(?<![.!?\.]{1})\s+({phrase})\b',
-            r'... \1',
-            text,
-            flags=re.IGNORECASE,
-        )
-
-    # ── Coma después de muletillas emocionales ────────────────────────────────
-    INTERJECTIONS = [
-        r'\bo sea\b(?!,)', r'\bliteral\b(?!,)', r'\bla neta\b(?!,)',
-        r'\bte juro\b(?!,)', r'\bde verdad\b(?!,)',
-    ]
-    for phrase in INTERJECTIONS:
-        text = re.sub(phrase, lambda m: m.group(0) + ',', text, flags=re.IGNORECASE)
-
-    # ── Punto antes de mayúscula si no hay puntuación ─────────────────────────
-    text = re.sub(r'([a-záéíóúüñ])\s+([A-ZÁÉÍÓÚÜÑ])', r'\1. \2', text)
-
-    # ── Limpiar duplicados ─────────────────────────────────────────────────────
-    text = re.sub(r'\.{4,}', '...', text)
-    text = re.sub(r'(\.\.\.\s*){2,}', '... ', text)
+    # ── Limpiar puntuación duplicada que pueda haber quedado ─────────────────
+    text = re.sub(r',\s*,+', ',', text)
+    text = re.sub(r'\.\s*\.+', '.', text)
     text = re.sub(r'  +', ' ', text)
 
     return text.strip()
 
 
-async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str = "+3%", pitch: str = "-4Hz") -> None:
+async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str = "+12%", pitch: str = "-2Hz") -> None:
     """
     Genera audio con edge-tts y construye el archivo ASS de subtítulos.
 
@@ -1138,19 +1092,16 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str 
         if _fade_tmp.exists():
             _fade_tmp.unlink(missing_ok=True)
 
-    # ── Timestamps exactos con stable-ts (fuente primaria — forced alignment) ──
-    timed_words = _get_stable_ts_word_timestamps(output_mp3)
+    # ── Timestamps exactos con faster-whisper (CTranslate2, sin PyTorch) ────────
+    # stable-ts eliminado: importaba torch que causaba BSOD en Windows.
+    timed_words = _get_whisper_word_timestamps(output_mp3)
 
-    # ── Fallback 1: faster-whisper ────────────────────────────────────────────
-    if not timed_words:
-        timed_words = _get_whisper_word_timestamps(output_mp3)
-
-    # ── Fallback 2: WordBoundary de edge-tts (voces EN) ───────────────────────
+    # ── Fallback 1: WordBoundary de edge-tts (voces EN) ───────────────────────
     if not timed_words and word_events:
         timed_words = word_events
         logger.info("Usando WordBoundary de edge-tts")
 
-    # ── Fallback 3: SentenceBoundary proporcional por caracteres (voces ES) ───
+    # ── Fallback 2: SentenceBoundary proporcional por caracteres (voces ES) ───
     if not timed_words and sentence_events:
         for sent_text, sent_start, sent_dur in sentence_events:
             sent_words = sent_text.split()
@@ -1164,7 +1115,7 @@ async def _edge_tts_generate(text: str, output_mp3: Path, voice: str, rate: str 
                 offset += w_dur
         logger.info("Usando SentenceBoundary proporcional")
 
-    # ── Fallback 4: distribución uniforme por duración real del audio ─────────
+    # ── Fallback 3: distribución uniforme por duración real del audio ─────────
     if not timed_words:
         try:
             from pydub import AudioSegment
@@ -1221,7 +1172,8 @@ def _prepare_text_for_voicebox(text: str) -> str:
     import re
 
     # ── 1. Eliminar emojis y símbolos no verbalizables ────────────────────────
-    text = re.sub(r"[^\w\s.,!?;:\-'\"áéíóúüñÁÉÍÓÚÜÑ]", " ", text)
+    # \w incluye guión bajo (_) — usar clase explícita sin _ para que VoiceBox no lo lea
+    text = re.sub(r"[^a-zA-Z0-9\s.,!?;:\-'\"áéíóúüñÁÉÍÓÚÜÑ]", " ", text)
 
     # ── 2. Normalizar números frecuentes a palabras ───────────────────────────
     _NUM_MAP = {
@@ -1236,30 +1188,14 @@ def _prepare_text_for_voicebox(text: str) -> str:
     for pattern, word in _NUM_MAP.items():
         text = re.sub(pattern, word, text)
 
-    # ── 3. Pausas largas antes de conectores de revelación ────────────────────
-    _REVEAL = [
-        r"pero entonces", r"de repente", r"fue entonces cuando",
-        r"hasta que", r"en ese momento", r"y entonces",
-        r"lo que no sabía", r"fue cuando",
-    ]
-    for phrase in _REVEAL:
-        text = re.sub(
-            rf"(?<![.!?,])\s+({phrase})\b",
-            r", \1",
-            text, flags=re.IGNORECASE,
-        )
-
-    # ── 4. Coma tras interjecciones emocionales (respiración natural) ─────────
-    for phrase in [r"o sea", r"la neta", r"te juro", r"de verdad", r"literal"]:
-        text = re.sub(
-            rf"\b({phrase})\b(?!\s*,)", r"\1,", text, flags=re.IGNORECASE
-        )
-
-    # ── 5. Normalizar puntuación ──────────────────────────────────────────────
-    text = re.sub(r"\.{4,}", "...", text)       # más de 3 puntos → 3
-    text = re.sub(r"!{2,}", "!", text)           # múltiples ! → uno
-    text = re.sub(r"\?{2,}", "?", text)          # múltiples ? → uno
-    text = re.sub(r"\s{2,}", " ", text)          # espacios dobles
+    # ── 3. Normalizar puntuación ──────────────────────────────────────────────
+    # VoiceBox clona prosodia natural — no necesita comas forzadas extra.
+    # Solo convertimos "..." a "," para evitar los 800ms de silencio que genera.
+    text = re.sub(r"\.{2,}", ",", text)   # "..." / ".." → coma
+    text = re.sub(r"!{2,}", "!", text)
+    text = re.sub(r"\?{2,}", "?", text)
+    text = re.sub(r",\s*,+", ",", text)   # doble coma → una
+    text = re.sub(r"\s{2,}", " ", text)
 
     return text.strip()
 
@@ -1281,25 +1217,48 @@ _VOICEBOX_PROFILE_FEMALE = "a4b1d4a5-2074-451b-9c71-9d95100a3c94"  # voz mujer d
 # Si suena "metálico" o "robótico" después del filtro → subir nf (ej: nf=-20)
 # Si la voz sigue suave → subir VOICE_VOLUME_FEMALE / VOICE_VOLUME_MALE en .env
 _VOICEBOX_DENOISE_FEMALE = (
-    "afade=t=in:ss=0:d=0.12,"        # fade-in suave — evita inicio abrupto
+    "atrim=start=0.9,asetpts=PTS-STARTPTS,"  # corta 900ms — warmup '... ' + arranque de Qwen (ver warmup_text)
+    "afade=t=in:ss=0:d=0.15,"               # fade-in suave para entrada limpia
     "volume={vol_f},"
     "highpass=f=80,"
     "afftdn=nf=-25:nr=70,"
     "loudnorm=I=-10:TP=-1.5:LRA=11"
 )
 _VOICEBOX_DENOISE_MALE = (
-    "afade=t=in:ss=0:d=0.12,"        # fade-in suave — el hombre sonaba muy de golpe
+    "atrim=start=0.9,asetpts=PTS-STARTPTS,"  # corta 900ms — warmup '... ' + arranque de Qwen (ver warmup_text)
+    "afade=t=in:ss=0:d=0.15,"
     "volume={vol_m},"
     "highpass=f=80,"
-    "afftdn=nf=-30:nr=80,"           # nr=80 (antes 85) — menos agresivo, preserva más la voz
-    "loudnorm=I=-10:TP=-1.5:LRA=11" # -10 LUFS (igual que femenina — se oía más bajo antes)
+    "afftdn=nf=-30:nr=80,"
+    "loudnorm=I=-10:TP=-1.5:LRA=11"
 )
+
+
+def _voicebox_purge_stuck_jobs(req_module) -> int:
+    """Elimina jobs en estado 'generating' que quedaron del run anterior. Devuelve cantidad borrada."""
+    try:
+        r = req_module.get(f"{_VOICEBOX_URL}/history", timeout=10)
+        if r.status_code != 200:
+            return 0
+        items = r.json().get("items", [])
+        deleted = 0
+        for item in items:
+            if item.get("status") == "generating":
+                job_id = item.get("id", "")
+                dr = req_module.delete(f"{_VOICEBOX_URL}/history/{job_id}", timeout=10)
+                if dr.status_code == 200:
+                    logger.info(f"VoiceBox: job stuck eliminado ({job_id[:8]})")
+                    deleted += 1
+        return deleted
+    except Exception as e:
+        logger.debug(f"VoiceBox purge error (ignorado): {e}")
+        return 0
 
 
 def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") -> str:
     """
     Genera audio con la voz clonada via VoiceBox (http://127.0.0.1:17493).
-    Flujo: POST /generate → poll /history/{id} → GET /audio/{id} → WAV → MP3 → ASS
+    Flujo: purge stuck → POST /generate → poll /history/{id} → GET /audio/{id} → WAV → MP3 → ASS
     """
     import requests as _req
     import subprocess
@@ -1312,15 +1271,29 @@ def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") 
     gender_label = "MASCULINO" if gender == "male" else "FEMENINO"
     logger.info(f"VoiceBox: narrador {gender_label} | perfil {profile_id[:8]}...")
 
+    # 0. Limpiar jobs stuck de runs anteriores para no bloquear la cola
+    purged = _voicebox_purge_stuck_jobs(_req)
+    if purged:
+        logger.warning(f"VoiceBox: se purgaron {purged} jobs stuck — cola limpia")
+
     # Preprocesar texto: limpia emojis, normaliza números, agrega pausas naturales
     clean_text = _prepare_text_for_voicebox(text)
-    logger.debug(f"VoiceBox texto preprocesado: {len(clean_text)} chars")
+    # Prefijo de calentamiento: "... " genera una pausa silenciosa (~700-900ms) antes del
+    # contenido real. El modelo Qwen no vocaliza los 3 puntos como palabras (a diferencia
+    # del "." simple que a veces pronunciaba "punto" en español, dejando artefactos).
+    # El atrim=0.9s corta esa pausa completa antes de llegar al texto real.
+    # NO reducir a menos de 3 puntos ni bajar el trim — ver project_voicebox.md en memoria.
+    warmup_text = "... " + clean_text
+    logger.debug(f"VoiceBox texto preprocesado: {len(warmup_text)} chars (con warmup prefix)")
+
+    # Velocidad: 0.92 — ligeramente más lento que defecto para narración dramática clara
+    vb_speed = float(getattr(config, "VOICEBOX_SPEED", 0.92))
 
     # 1. Lanzar generación asíncrona
     try:
         r = _req.post(
             f"{_VOICEBOX_URL}/generate",
-            json={"profile_id": profile_id, "text": clean_text, "language": "es"},
+            json={"profile_id": profile_id, "text": warmup_text, "language": "es", "speed": vb_speed},
             timeout=30,
         )
         r.raise_for_status()
@@ -1330,8 +1303,9 @@ def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") 
     gen_id = r.json()["id"]
     logger.info(f"VoiceBox: generando (id={gen_id[:8]}…)")
 
-    # 2. Polling hasta completar — timeout 2 horas, reintentos ante reconexiones
-    deadline      = _time.time() + 7200
+    # 2. Polling hasta completar — timeout configurable, reintentos ante reconexiones
+    timeout_secs  = int(getattr(config, "VOICEBOX_TIMEOUT_SECS", 1500))
+    deadline      = _time.time() + timeout_secs
     poll_errors   = 0
     poll_count    = 0
     last_status   = ""
@@ -1368,7 +1342,10 @@ def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") 
                 )
             continue
     else:
-        raise TimeoutError("VoiceBox: timeout de 30 min — el modelo tardó demasiado")
+        raise TimeoutError(
+            f"VoiceBox: timeout de {timeout_secs // 60} min — servidor atascado. "
+            "Reinicia VoiceBox y vuelve a intentar."
+        )
 
     # 3. Descargar WAV
     audio_r = _req.get(f"{_VOICEBOX_URL}/audio/{gen_id}", timeout=60)
@@ -1396,10 +1373,10 @@ def _generate_with_voicebox(text: str, output_path: Path, gender: str = "auto") 
     if ffmpeg_r.returncode != 0 or not output_path.exists():
         raise RuntimeError(f"ffmpeg limpieza+MP3 falló: {ffmpeg_r.stderr.decode()[:300]}")
 
-    # 5. Subtítulos ASS — misma cascada que edge-tts
-    timed_words = _get_stable_ts_word_timestamps(output_path)
-    if not timed_words:
-        timed_words = _get_whisper_word_timestamps(output_path)
+    # 5. Subtítulos ASS — solo faster-whisper (CTranslate2, sin PyTorch → sin BSOD).
+    # stable_whisper fue eliminado de este flujo: usaba torch que competía con VoiceBox
+    # por VRAM y causaba CLOCK_WATCHDOG_TIMEOUT en laptops.
+    timed_words = _get_whisper_word_timestamps(output_path)
     if not timed_words:
         total_dur = get_audio_duration(output_path)
         words     = text.split()
@@ -1455,12 +1432,17 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     random.shuffle(front)
     ordered = front + ordered[pool_end:]
 
-    # Rate más lento = narración más dramática y expresiva
-    # Pitch más bajo = voz más grave/intensa (ideal para confesiones)
-    rate_pct = random.choice([-10, -8, -5, -3, 0])
-    pitch_hz = random.choice([-12, -10, -8, -6, -4])
+    # Rate positivo = más rápido = suena a persona contando un chisme, no a locutor
+    # Pitch natural = voz más cercana, más real
+    # Configurable via EDGE_TTS_RATE_OPTIONS y EDGE_TTS_PITCH_OPTIONS en .env
+    # Default: 0-8% más rápido que neutral → ritmo natural de conversación
+    # sin sonar apresurado. Ajustable desde .env: EDGE_TTS_RATE_OPTIONS=2,4,6,8,10
+    _rate_opts  = [int(x) for x in os.getenv("EDGE_TTS_RATE_OPTIONS",  "0,2,4,6,8").split(",")]
+    _pitch_opts = [int(x) for x in os.getenv("EDGE_TTS_PITCH_OPTIONS", "-2,0,0,0,2").split(",")]
+    rate_pct = random.choice(_rate_opts)
+    pitch_hz = random.choice(_pitch_opts)
     rate  = f"+{rate_pct}%" if rate_pct >= 0 else f"{rate_pct}%"
-    pitch = f"{pitch_hz}Hz" if pitch_hz < 0 else f"+{pitch_hz}Hz"
+    pitch = f"+{pitch_hz}Hz" if pitch_hz >= 0 else f"{pitch_hz}Hz"
 
     gender_label = "MASCULINO" if gender == "male" else "FEMENINO"
     logger.info(
@@ -1472,7 +1454,19 @@ def _generate_with_edge_tts(text: str, output_path: Path, gender: str = "auto") 
     for voice in ordered:
         try:
             logger.info(f"edge-tts: probando '{voice}'...")
-            asyncio.run(_edge_tts_generate(text, output_path, voice, rate=rate, pitch=pitch))
+            # Si ya hay un event loop activo (p.ej. llamado desde growth_agent async),
+            # asyncio.run() lanzaría RuntimeError. En ese caso corremos en hilo propio.
+            try:
+                asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                    _pool.submit(
+                        lambda: asyncio.run(
+                            _edge_tts_generate(text, output_path, voice, rate=rate, pitch=pitch)
+                        )
+                    ).result(timeout=120)
+            except RuntimeError:
+                asyncio.run(_edge_tts_generate(text, output_path, voice, rate=rate, pitch=pitch))
             if output_path.exists() and output_path.stat().st_size > 0:
                 logger.info(f"edge-tts: audio OK con voz '{voice}'")
                 return str(output_path)
@@ -1623,21 +1617,109 @@ def get_audio_duration(audio_path: Path) -> float:
     return len(seg) / 1000.0
 
 
-def list_voices() -> list[dict]:
-    """Lista voces SAPI disponibles (útil para diagnóstico)."""
-    import pyttsx3
+def _smooth_tts_rhythm(text: str) -> str:
+    """
+    Convierte puntos entre fragmentos cortos en comas para ritmo TTS fluido.
 
-    engine = pyttsx3.init()
-    voices = engine.getProperty("voices")
-    engine.stop()
-    return [
-        {"id": v.id, "name": v.name, "languages": v.languages} for v in (voices or [])
-    ]
+    El LLM genera frases cortas separadas por puntos siguiendo el prompt:
+      "Vi el mensaje. Me quedé helada. Era ella. Dos años."
+    En TTS cada '.' = 300ms de pausa → ritmo entrecortado e incoherente.
+
+    Fragmentos de ≤4 palabras seguidos de otro fragmento se unen con ','
+    (150ms) en lugar de '.' (300ms). Fragmentos más largos conservan su punto.
+
+    "Vi el mensaje. Me quedé helada. Era ella." → "Vi el mensaje, me quedé helada, era ella."
+    "Llevábamos cuatro años juntos. Fue entonces cuando lo descubrí todo." → sin cambio
+    """
+    import re
+
+    # Separar SOLO en '. ' (punto + espacio) — preserva ! ? y el punto final
+    parts = re.split(r'\.\s+', text)
+    if len(parts) <= 1:
+        return text
+
+    ends_with_period = text.rstrip().endswith('.')
+    out = []
+
+    for i, part in enumerate(parts):
+        part = part.strip()
+        if not part:
+            continue
+
+        is_last = (i == len(parts) - 1)
+        wc = len(part.split())
+
+        if is_last:
+            out.append(part)
+            if ends_with_period and not part[-1:] in '.!?':
+                out.append('.')
+        elif wc <= 4:
+            # Fragmento corto → coma, siguiente en minúscula (ya es mid-sentence)
+            out.append(part)
+            out.append(', ')
+            nxt = parts[i + 1].strip()
+            if nxt and nxt[0].isupper():
+                parts[i + 1] = nxt[0].lower() + nxt[1:]
+        else:
+            out.append(part)
+            out.append('. ')
+
+    return ''.join(out).strip()
+
+
+def _strip_llm_header(text: str) -> str:
+    """
+    Elimina artefactos de encabezado que el LLM inserta en el texto del guion.
+
+    Patrones que el TTS vocaliza como ruido:
+      inicio: "_ expandido"  → "guión bajo expandido"
+      inicio: "Guion Expandido:" → "guion expandido"
+      MEDIO:  "GUION EXPANDIDO:" entre el texto original y el expandido
+              (ocurre cuando el LLM refleja la etiqueta "GUION ACTUAL:" del prompt)
+
+    Estrategia en 4 pasos:
+      1. Quitar _*# al inicio
+      2. Quitar header LLM al inicio (sin exigir \\n)
+      3. Quitar líneas que son SOLO un header LLM en cualquier parte del texto
+         (usa MULTILINE para que ^ y $ sean límites de línea)
+      4. Limpiar _*# residuales y líneas en blanco extra
+    """
+    import re
+
+    # Paso 1: quitar markdown/underscore al inicio
+    text = re.sub(r"^[\s*#_]+", "", text).strip()
+
+    # Patrón compartido de palabras de encabezado LLM
+    _HDR = (
+        r"guion[_ ]?(?:expandido|actualizado|actual|nuevo|revisado|completo|final)?|"
+        r"guión[_ ]?(?:expandido|actualizado|actual|nuevo|revisado|completo|final)?|"
+        r"script[_ ]?(?:expandido|completo)?|"
+        r"expandido"
+    )
+
+    # Paso 2: quitar header al inicio (sin exigir newline al final)
+    text = re.sub(
+        rf"(?i)^[#*_\s]*({_HDR})[\s:#*_]*",
+        "", text,
+    ).strip()
+
+    # Paso 3: quitar líneas que son SOLO un header (en medio del texto)
+    # (?im) → case-insensitive + MULTILINE (^ y $ por línea)
+    # $ al final garantiza que no borramos líneas con contenido real
+    text = re.sub(
+        rf"(?im)^[#*_\s]*({_HDR})[\s:#*_]*$",
+        "", text,
+    )
+
+    # Paso 4: colapsar líneas en blanco múltiples y limpiar residuos
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"^[\s*#_]+", "", text).strip()
+
+    return text
 
 
 def generate_audio(
     text: str, output_path: str | None = None, gender: str = "auto",
-    narrator_hint: str = "",
 ) -> str:
     """
     Convierte texto en español a audio MP3 con voz acorde al género del narrador.
@@ -1650,11 +1732,20 @@ def generate_audio(
         text:          Texto en español a narrar
         output_path:   Ruta de salida .mp3. Si es None, genera en output/
         gender:        "female" | "male" | "auto"
-        narrator_hint: Descripción del narrador para elegir perfil de voz
-                       ej: "joven llorando", "niño feliz", "adulto triste"
     """
     if not text or not text.strip():
         raise ValueError("El texto TTS no puede estar vacío")
+
+    # Eliminar encabezados LLM antes de cualquier backend (VoiceBox, edge-tts, pyttsx3)
+    original_len = len(text.split())
+    text = _strip_llm_header(text)
+    stripped_len = len(text.split())
+    if stripped_len < original_len:
+        logger.info(f"Header LLM eliminado: {original_len} → {stripped_len} palabras")
+
+    # Suavizar ritmo: fragmentos cortos (≤4 palabras) usan ',' en vez de '.'
+    # Convierte "Vi el mensaje. Me quedé helada. Era ella." en flujo continuo
+    text = _smooth_tts_rhythm(text)
 
     if output_path is None:
         ts = time.strftime("%Y%m%d_%H%M%S")
@@ -1662,6 +1753,7 @@ def generate_audio(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    global _last_tts_backend
     backend = getattr(config, "TTS_BACKEND", "voicebox").lower()
     word_count = len(text.split())
     logger.info(
@@ -1669,11 +1761,22 @@ def generate_audio(
     )
 
     if backend == "voicebox":
-        result = _generate_with_voicebox(text, output_path, gender=gender)
+        try:
+            result = _generate_with_voicebox(text, output_path, gender=gender)
+            _last_tts_backend = "VoiceBox"
+        except (TimeoutError, RuntimeError) as vb_err:
+            logger.warning(
+                f"VoiceBox falló ({vb_err.__class__.__name__}: {vb_err}) — "
+                "usando edge-tts como fallback automático"
+            )
+            result = _generate_with_edge_tts(text, output_path, gender=gender)
+            _last_tts_backend = "edge-tts (fallback)"
     elif backend == "edge":
         result = _generate_with_edge_tts(text, output_path, gender=gender)
+        _last_tts_backend = "edge-tts"
     else:
         result = _generate_with_pyttsx3(text, output_path)
+        _last_tts_backend = "pyttsx3"
         ass_path = output_path.with_suffix(".ass")
         if output_path.exists():
             dur = get_audio_duration(output_path)

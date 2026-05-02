@@ -37,6 +37,38 @@ _BLOCKED_KEYWORDS = [
     "terrorism", "bomb", "shooting",
 ]
 
+# Indicadores de que la historia es protagonizada por menores / contenido infantil.
+# Se evalúan en el TÍTULO + primeras 300 palabras del texto.
+_CHILD_PROTAGONIST_MARKERS = [
+    # Acciones claramente infantiles
+    "jugaba con mi hermanit", "jugar con mi hermano", "jugar con mi hermana",
+    "mi hermanito y yo jugábamos", "mi hermana y yo jugábamos",
+    "éramos niños", "cuando era niño", "cuando era niña",
+    "de pequeño", "de pequeña", "en mi infancia",
+    "tenía 5 años", "tenía 6 años", "tenía 7 años", "tenía 8 años",
+    "tenía 9 años", "tenía 10 años",
+    "tenía cinco años", "tenía seis años", "tenía siete años",
+    "tenia 5 años", "tenia 6 años", "tenia 7 años", "tenia 8 años",
+    "tenia 9 años", "tenia 10 años",
+    # Contextos exclusivamente infantiles
+    "mi juguete", "nuestros juguetes", "guardería", "preescolar",
+    "i was 5", "i was 6", "i was 7", "i was 8", "i was 9", "i was 10",
+    "when i was a child", "as a child", "as kids we",
+    "my little brother and i played", "my little sister and i played",
+]
+
+# Palabras que confirman adultos como protagonistas — si falta al menos UNA
+# en historias de Wattpad adulto, se descarta.
+_ADULT_DRAMA_MARKERS = [
+    "pareja", "novio", "novia", "marido", "esposo", "esposa",
+    "amante", "ex ", "infidelidad", "engaño", "traición",
+    "trabajo", "jefe", "oficina", "alcohol", "bar ", "hotel",
+    "celos", "mentira", "secreto", "relación", "beso", "deseo",
+    "seduccion", "seducción", "intimidad", "sexo", "pasión",
+    "boyfriend", "girlfriend", "husband", "wife", "affair",
+    "cheated", "cheating", "boss", "coworker",
+]
+
 
 # ─── Gestion de posts ya usados ───────────────────────────────────────────────
 
@@ -61,16 +93,31 @@ def mark_as_used(post_id: str) -> None:
     )
 
 
-# Alias privado para compatibilidad interna
-_mark_as_used = mark_as_used
-
 
 # ─── Filtros de contenido ─────────────────────────────────────────────────────
 
 def _is_clean(text: str) -> bool:
     """Retorna False si el texto contiene contenido que no podemos publicar."""
     text_lower = text.lower()
-    return not any(kw in text_lower for kw in _BLOCKED_KEYWORDS)
+    if any(kw in text_lower for kw in _BLOCKED_KEYWORDS):
+        return False
+    # Rechazar historias cuyo protagonista es claramente un menor
+    sample = text_lower[:1500]  # título + primeras ~300 palabras
+    if any(marker in sample for marker in _CHILD_PROTAGONIST_MARKERS):
+        return False
+    return True
+
+
+def _has_adult_drama(title: str, text: str) -> bool:
+    """True si la historia tiene al menos un marcador de drama adulto."""
+    combined = (title + " " + text[:800]).lower()
+    return any(m in combined for m in _ADULT_DRAMA_MARKERS)
+
+
+def _is_fanfic(title: str, description: str, tags_str: str, text: str = "") -> bool:
+    """True si la historia es fanfic, fantasía o isekai — debe descartarse."""
+    combined = f"{title} {description} {tags_str} {text[:600]}".lower()
+    return any(kw in combined for kw in _FANFIC_KEYWORDS)
 
 
 def _clean_text(text: str) -> str:
@@ -214,37 +261,6 @@ def _fetch_grouphug() -> list[dict]:
         logger.info(f"grouphug.us: {len(results)} confesiones obtenidas")
     return results
 
-
-def _fetch_postsecret_blog() -> list[dict]:
-    """
-    Obtiene los textos de PostSecret (blog público de Frank Warren).
-    Los posts son breves pero muy emocionales — buenos para historias cortas.
-    """
-    import re as _re
-    results = []
-    url = "https://postsecret.com/"
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp = requests.get(url, headers=headers, timeout=config.SCRAPER_TIMEOUT)
-        if resp.status_code == 200:
-            # Extraer fragmentos de texto de los posts (alt text de imágenes + captions)
-            alts = _re.findall(r'<img[^>]*alt="([^"]{50,})"', resp.text)
-            captions = _re.findall(r'<figcaption[^>]*>(.*?)</figcaption>', resp.text, _re.DOTALL)
-            texts = alts + [_re.sub(r'<[^>]+>', '', c).strip() for c in captions]
-            for i, t in enumerate(texts):
-                if len(t) >= config.STORY_MIN_CHARS:
-                    results.append({
-                        "id": f"postsecret_{i}",
-                        "title": t[:80],
-                        "selftext": t,
-                        "score": 150,
-                        "num_comments": 0,
-                        "is_self": True,
-                        "_source": "postsecret.com",
-                    })
-    except Exception as e:
-        logger.debug(f"postsecret.com: {e}")
-    return results
 
 
 def _fetch_confesiones_anonimas() -> list[dict]:
@@ -428,15 +444,23 @@ _WATTPAD_HEADERS = {
     "Referer":         "https://www.wattpad.com/",
 }
 
-# Búsquedas dramáticas genéricas
+# Búsquedas dramáticas — priorizan morbo, escándalo y confesiones reales
 _WATTPAD_QUERIES = [
     "confesion traicion drama",
     "secreto familiar oscuro",
     "descubrí engaño pareja",
     "infidelidad verdad revelacion",
-    "historia real drama romance",
-    "traicion amor secreto",
-    "mentira familia drama",
+    "lo que nadie sabe de mi",
+    "amante secreto prohibido confesion",
+    "mentira doble vida descubrimiento",
+    "venganza traicion revelacion",
+    "lo que hice y me arrepiento",
+    "noche que cambió todo secreto",
+    "historia real drama vergüenza",
+    "celos obsesion ruptura drama",
+    "descubri la verdad y me destruyo",
+    "lo peor que me ha pasado confesion",
+    "engaño descarado descubrimiento",
 ]
 
 # Búsquedas para historias eróticas/adultas de vida real — canal premium Stars
@@ -489,10 +513,96 @@ _FANFIC_KEYWORDS = {
     # Marcadores de fanfic
     "fanfic", "fanfiction", "au ", "universo alterno", "wattpad original",
     "x reader", "x lector",
+    # Isekai / reencarnación / otro mundo
+    "isekai", "reencarn", "otro mundo", "mundo paralelo", "mundo de naruto",
+    "mundo de magia", "sistema de magia", "sistema de habilidades",
+    "nivel ", "nivel de poder", "stats", "habilidad especial", "clase de héroe",
+    "dungeon", "mazmorra", "aventurero", "gremio de aventureros",
+    "transmigr", "regres", "segunda vida", "segunda oportunidad en otro",
+    "portal mágico", "portal magico", "caí en otro mundo", "cai en otro mundo",
+    "desperté con poderes", "desperte con poderes", "dios me dijo",
     # Listas / recopilaciones — no son historias
     "lecturas de wattpad", "recomendaciones", "lista de", "mis lecturas",
     "libros recomendados", "mejores historias", "top wattpad",
 }
+
+
+def _extract_dramatic_fragment(text: str, max_chars: int = 1400) -> str:
+    """
+    De un texto largo extrae el fragmento más dramático/explosivo.
+    Usa ventana deslizante de ~max_chars chars, puntúa cada ventana por
+    densidad de keywords sensacionalistas y devuelve la que más puntúa.
+    Si el texto ya es corto, lo devuelve entero.
+    """
+    if len(text) <= max_chars:
+        return text
+
+    _DRAMA_SCORE = {
+        # traición / engaño
+        "traicionó": 8, "traicion": 7, "engaño": 7, "engañó": 8, "infiel": 7,
+        "mentira": 6, "mintió": 7, "descubrí": 8, "encontré": 7, "vi que": 6,
+        "doble vida": 9, "otra persona": 6, "con otro": 7, "con otra": 7,
+        # revelación / giro
+        "la verdad": 6, "me dijo que": 5, "fue cuando": 7, "en ese momento": 6,
+        "no podía creer": 8, "me quedé": 6, "no lo esperaba": 7, "jamás pensé": 7,
+        "nunca imaginé": 7, "me destrozó": 8, "me partió": 8,
+        # tensión sexual / prohibido
+        "nos besamos": 8, "lo besé": 7, "me tocó": 7, "pasó algo": 6,
+        "no debía": 7, "prohibido": 7, "no pude resistir": 8, "nos quedamos solos": 8,
+        "tension": 5, "deseo": 6, "lo que siento": 6,
+        # emoción intensa
+        "lloré": 6, "llore": 6, "llorando": 6, "grité": 7, "me temblaba": 7,
+        "corazón": 5, "se me heló": 8, "no podía respirar": 8, "pánico": 7,
+        "vergüenza": 6, "humillación": 7, "me arrepiento": 7,
+        # clímax narrativo
+        "fue entonces": 8, "en ese instante": 7, "ahí fue cuando": 9,
+        "lo peor": 7, "lo mejor": 5, "nunca olvidaré": 8, "siempre recordaré": 7,
+    }
+
+    # Dividir en oraciones para respetar puntuación
+    import re as _re
+    sentences = _re.split(r'(?<=[.!?¡¿])\s+', text)
+
+    best_score = -1.0
+    best_start = 0
+
+    i = 0
+    current_chars = 0
+    while i < len(sentences):
+        # Acumular oraciones hasta alcanzar max_chars
+        window_sentences = []
+        window_chars = 0
+        j = i
+        while j < len(sentences) and window_chars < max_chars:
+            window_sentences.append(sentences[j])
+            window_chars += len(sentences[j]) + 1
+            j += 1
+
+        window_text = " ".join(window_sentences)
+        window_lower = window_text.lower()
+
+        # Puntuar ventana
+        score = sum(v for kw, v in _DRAMA_SCORE.items() if kw in window_lower)
+        # Bonus: si la ventana contiene diálogo (señal de momento activo)
+        score += window_text.count('"') * 0.5 + window_text.count('—') * 0.5
+
+        if score > best_score:
+            best_score = score
+            best_start = i
+
+        # Avanzar ventana en ~3 oraciones
+        i += max(1, len(window_sentences) // 3)
+
+    # Reconstruir el fragmento ganador
+    fragment_sentences = []
+    fragment_chars = 0
+    for s in sentences[best_start:]:
+        if fragment_chars + len(s) > max_chars and fragment_sentences:
+            break
+        fragment_sentences.append(s)
+        fragment_chars += len(s) + 1
+
+    return " ".join(fragment_sentences).strip()
 
 
 def _wattpad_part_text(part_id: int) -> str:
@@ -577,6 +687,9 @@ def _fetch_wattpad() -> list[dict]:
                 if not first_part_id:
                     continue
 
+                tags_raw  = story.get("tags", [])
+                tags_str  = " ".join(t if isinstance(t, str) else t.get("name", "") for t in tags_raw)
+
                 text = _wattpad_part_text(first_part_id)
 
                 # Si el capítulo está vacío o es muy corto, usar la descripción
@@ -587,8 +700,15 @@ def _fetch_wattpad() -> list[dict]:
 
                 # Limpiar etiquetas HTML residuales
                 text = _re.sub(r"<[^>]+>", "", text).strip()
-                if len(text) > config.STORY_MAX_CHARS:
-                    text = text[:config.STORY_MAX_CHARS]
+
+                # Bloquear SOLO contenido peligroso (menores, violencia extrema)
+                # — el fanfic/isekai NO se descarta: el LLM lo adapta a drama real
+                if not _is_clean(title + " " + text[:600]):
+                    logger.debug(f"Wattpad: contenido no limpio '{title[:40]}'")
+                    continue
+
+                # Extraer solo el fragmento más dramático (no el capítulo completo)
+                text = _extract_dramatic_fragment(text, max_chars=1400)
 
                 # Score proporcional a popularidad en la plataforma
                 pop_score = min(votes // 5 + reads // 500, 800)
@@ -670,13 +790,8 @@ def _fetch_wattpad_adult() -> list[dict]:
                     logger.debug(f"Wattpad adult: pocas lecturas ({reads}) '{title[:40]}'")
                     continue
 
-                # Filtrar fanfic/fantasía
                 tags_raw   = story.get("tags", [])
                 tags_str   = " ".join(t if isinstance(t, str) else t.get("name", "") for t in tags_raw)
-                combined   = f"{title} {desc} {tags_str}".lower()
-                if any(kw in combined for kw in _FANFIC_KEYWORDS):
-                    logger.debug(f"Wattpad adult: fanfic descartado '{title[:40]}'")
-                    continue
 
                 # Intentar hasta 3 partes para encontrar texto suficiente
                 text = ""
@@ -697,8 +812,15 @@ def _fetch_wattpad_adult() -> list[dict]:
                     continue
 
                 text = _re.sub(r"<[^>]+>", "", text).strip()
-                if len(text) > config.STORY_MAX_CHARS:
-                    text = text[:config.STORY_MAX_CHARS]
+
+                # Bloquear solo contenido peligroso (menores, violencia extrema)
+                # — el fanfic/isekai NO se descarta: el LLM lo adapta a drama adulto real
+                if not _has_adult_drama(title, text) or not _is_clean(title + " " + text[:600]):
+                    logger.debug(f"Wattpad adult: sin drama adulto / contenido infantil '{title[:40]}'")
+                    continue
+
+                # Extraer solo el fragmento más explosivo
+                text = _extract_dramatic_fragment(text, max_chars=1400)
 
                 # Score real: lecturas pesan más que votos
                 pop_score = reads // 1000 + votes // 10
@@ -855,19 +977,19 @@ def get_story() -> dict | None:
     used_ids = _load_used_ids()
 
     # Seleccion de fuente primaria con pesos
-    #   40% Reddit (señal social real — upvotes = validación humana)
-    #   25% confesionesanonimas.org (hispanohablante, dramático)
-    #   25% Wattpad (ficción dramática en español, historias largas y bien escritas)
-    #   10% grouphug.us (confesiones cortas, fallback)
+    #   25% Reddit          — validación social real (upvotes)
+    #   20% confesionesanonimas.org — hispanohablante, confesiones reales
+    #   45% Wattpad         — historias más dramáticas/morbosas (incluye adulto)
+    #   10% grouphug.us     — fallback
     fuente_rand = random.random()
-    if fuente_rand < 0.40:
-        orden_fuentes = ["reddit", "confesionesanonimas", "wattpad", "grouphug"]
-    elif fuente_rand < 0.65:
+    if fuente_rand < 0.25:
+        orden_fuentes = ["reddit", "wattpad", "confesionesanonimas", "grouphug"]
+    elif fuente_rand < 0.45:
         orden_fuentes = ["confesionesanonimas", "wattpad", "reddit", "grouphug"]
     elif fuente_rand < 0.90:
         orden_fuentes = ["wattpad", "confesionesanonimas", "reddit", "grouphug"]
     else:
-        orden_fuentes = ["grouphug", "reddit", "confesionesanonimas", "wattpad"]
+        orden_fuentes = ["grouphug", "wattpad", "reddit", "confesionesanonimas"]
 
     logger.info(f"Orden de fuentes para esta ejecucion: {orden_fuentes}")
 
@@ -930,8 +1052,18 @@ def get_story() -> dict | None:
 
         # ── Wattpad ───────────────────────────────────────────────────────────
         elif fuente == "wattpad":
-            logger.info("Intentando Wattpad...")
-            wp_posts = _fetch_wattpad()
+            # 60% historias adultas/picantes, 40% drama general
+            use_adult = random.random() < 0.60
+            if use_adult:
+                logger.info("Intentando Wattpad (historias morbosas/adultas)...")
+                wp_posts = _fetch_wattpad_adult()
+                if not wp_posts:
+                    logger.info("Wattpad adult vacío — usando drama general...")
+                    wp_posts = _fetch_wattpad()
+            else:
+                logger.info("Intentando Wattpad (drama general)...")
+                wp_posts = _fetch_wattpad()
+
             wp_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
             top_wp = wp_posts[:5]
             random.shuffle(top_wp)

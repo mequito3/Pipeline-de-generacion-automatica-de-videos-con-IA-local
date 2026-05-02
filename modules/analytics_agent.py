@@ -1,12 +1,12 @@
-"""
+﻿"""
 analytics_agent.py — Analista de canal YouTube
 
-Extrae métricas completas del canal y de cada video desde tres fuentes:
-  1. YouTube Studio Analytics (nodriver) — vistas 28d, watch time, subs ganados,
-     CTR e impresiones para los top N videos
-  2. Canal público de YouTube (nodriver) — lista de videos con vistas públicas,
-     likes, comentarios, fecha de publicación
-  3. YouTube Data API v3 (opcional, si YOUTUBE_API_KEY en .env) — stats exactas
+Dos rutas de ejecución (automática):
+  1. YouTube Analytics API v2 + Data API v3 (OAuth) — preferida.
+     Requiere youtube_token.json generado con: python setup_youtube_analytics.py
+     Obtiene CTR real, retención, fuentes de tráfico, ingresos.
+  2. nodriver (Selenium) — fallback si la API OAuth no está configurada.
+     Scraping de YouTube Studio y canal público.
 
 Guarda historial en analytics_log.json y calcula deltas entre snapshots.
 """
@@ -27,7 +27,6 @@ from typing import Optional
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 from modules.youtube_uploader import (
@@ -39,14 +38,14 @@ from modules.youtube_uploader import (
     _random_mouse_wander,
     _scroll,
 )
-from modules.growth_agent import _dismiss_consent, _get_channel_id
+from modules.growth_agent import dismiss_consent, get_channel_id
 
 logger = logging.getLogger(__name__)
 
-ANALYTICS_LOG_FILE  = Path(__file__).parent.parent / "analytics_log.json"
-_CHANNEL_ID_CACHE   = Path(__file__).parent.parent / "channel_id_cache.txt"
-MAX_SNAPSHOTS       = 60   # ~2 meses de historial diario
-TOP_VIDEOS_DETAIL   = 3    # cuántos videos con CTR/retención desde Studio
+ANALYTICS_LOG_FILE  = config.ANALYTICS_LOG_FILE
+_CHANNEL_ID_CACHE   = config.CHANNEL_ID_CACHE_FILE
+MAX_SNAPSHOTS       = getattr(config, "ANALYTICS_MAX_SNAPSHOTS", 60)
+TOP_VIDEOS_DETAIL   = getattr(config, "ANALYTICS_TOP_VIDEOS_DETAIL", 3)
 
 
 def _load_channel_id_cache() -> str:
@@ -400,7 +399,7 @@ async def _scrape_public_channel_dom(browser, channel_id: str) -> list[dict]:
                 f"https://www.youtube.com/channel/{channel_id}/{tab}"
             )
             await _delay(3.0, 5.0)
-            await _dismiss_consent(page)
+            await dismiss_consent(page)
             await _scroll(page, random.randint(400, 600))
             await _delay(2.0, 3.0)
 
@@ -777,9 +776,8 @@ async def _analytics_session_async() -> ChannelSnapshot:
             user_data_dir=str(profile_dir),
             browser_executable_path=chrome_bin or None,
             browser_args=[
-                "--start-maximized",
                 "--window-size=1920,1080",
-                "--no-sandbox",
+                "--window-position=-2000,0",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
@@ -794,7 +792,7 @@ async def _analytics_session_async() -> ChannelSnapshot:
             logger.info(f"  Channel ID (caché): {channel_id}")
         else:
             logger.info("  Obteniendo channel ID desde Studio...")
-            channel_id = await _get_channel_id(browser) or ""
+            channel_id = await get_channel_id(browser) or ""
             if not channel_id:
                 errors.append("No se pudo obtener channel ID — sesión no activa")
                 return ChannelSnapshot(timestamp=timestamp, channel_id="", errors=errors)
@@ -805,7 +803,7 @@ async def _analytics_session_async() -> ChannelSnapshot:
         # ── Warm-up natural ────────────────────────────────────────────────────
         p = await browser.get("https://www.youtube.com")
         await _delay(3.0, 5.0)
-        await _dismiss_consent(p)
+        await dismiss_consent(p)
 
         # ── 1. YouTube Data API (si está configurada) ──────────────────────────
         api_channel = await _api_channel_stats(channel_id)
@@ -921,15 +919,115 @@ async def _analytics_session_async() -> ChannelSnapshot:
                 pass
 
 
+# ─── Ruta rápida: YouTube Analytics API (OAuth) ───────────────────────────────
+
+def _run_analytics_api() -> Optional[ChannelSnapshot]:
+    """
+    Construye ChannelSnapshot directo desde YouTube Analytics API sin Selenium.
+    Retorna None si el módulo no está configurado (token OAuth ausente).
+    """
+    try:
+        from modules import youtube_analytics as _ya
+    except ImportError:
+        return None
+
+    if not _ya.is_configured():
+        return None
+
+    logger.info("  Usando YouTube Analytics API (OAuth)...")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    errors: list[str] = []
+
+    try:
+        overview = _ya.get_channel_overview(days=28)
+        if not overview:
+            logger.warning("  Analytics API: get_channel_overview retornó None")
+            return None
+
+        channel_id = overview.get("channel_id", "")
+        _save_channel_id_cache(channel_id)
+
+        api_videos = _ya.get_videos_analytics(max_results=10)
+        merged_videos: list[VideoStats] = []
+        for v in api_videos:
+            vs = VideoStats(
+                video_id     = v.get("video_id", ""),
+                title        = v.get("title", ""),
+                published_at = v.get("published", ""),
+                views        = v.get("views", 0),
+                likes        = v.get("likes", 0),
+                comments     = v.get("comments", 0),
+                ctr_pct      = round(float(v.get("ctr_pct", 0.0)), 2),
+                avg_view_pct = round(float(v.get("avg_view_pct", 0.0)), 1),
+                watch_time_h = round(float(v.get("watch_time_min", 0.0)) / 60, 2),
+                is_short     = True,
+            )
+            merged_videos.append(vs)
+
+        merged_videos.sort(key=lambda x: x.views, reverse=True)
+        top = merged_videos[0] if merged_videos else None
+
+        snapshot = ChannelSnapshot(
+            timestamp        = timestamp,
+            channel_id       = channel_id,
+            subscribers      = int(overview.get("subscribers", 0)),
+            views_28d        = int(overview.get("views", 0)),
+            watch_time_h_28d = round(float(overview.get("watch_time_hours", 0.0)), 1),
+            subs_gained_28d  = int(overview.get("subscribers_gained", 0)),
+            videos           = merged_videos,
+            top_video_id     = top.video_id if top else "",
+            top_video_title  = top.title    if top else "",
+            top_video_views  = top.views    if top else 0,
+            top_video_ctr    = top.ctr_pct  if top else 0.0,
+            errors           = errors,
+        )
+
+        previous = get_latest_snapshot()
+        if previous:
+            snapshot.views_delta_pct = _delta_pct(snapshot.views_28d, previous.views_28d)
+            snapshot.subs_delta_pct  = _delta_pct(snapshot.subscribers, previous.subscribers)
+            prev_by_id = {v.video_id: v for v in previous.videos}
+            for vs in snapshot.videos:
+                prev_vs = prev_by_id.get(vs.video_id)
+                if prev_vs and prev_vs.views > 0:
+                    vs.views_delta_pct = _delta_pct(vs.views, prev_vs.views)
+
+        _save_snapshot(snapshot)
+
+        try:
+            from modules import agent_memory
+            agent_memory.update_from_analytics(snapshot)
+        except Exception as e_mem:
+            logger.debug(f"agent_memory update: {e_mem}")
+
+        logger.info(
+            f"  Analytics API — {len(merged_videos)} videos | "
+            f"subs: {snapshot.subscribers} | vistas 28d: {snapshot.views_28d} | "
+            f"watch time: {snapshot.watch_time_h_28d}h"
+        )
+        return snapshot
+
+    except Exception as e:
+        logger.error(f"  Analytics API error: {e}", exc_info=True)
+        errors.append(str(e))
+        return None
+
+
 # ─── API pública ──────────────────────────────────────────────────────────────
 
 def run_analytics_session() -> ChannelSnapshot:
     """
     Ejecuta una sesión completa de analítica.
-    Llamado desde main.py --analytics o desde el scheduler diario.
+    Intenta primero YouTube Analytics API (OAuth); si no está configurado,
+    recurre al scraping via nodriver.
     """
     logger.info("=== ANALYTICS AGENT — inicio ===")
 
+    snap = _run_analytics_api()
+    if snap:
+        return snap
+
+    logger.info("  Analytics API no configurada — usando nodriver (Selenium)...")
     if platform.system() == "Windows":
         loop = asyncio.ProactorEventLoop()
         asyncio.set_event_loop(loop)
@@ -944,3 +1042,4 @@ def run_analytics_session() -> ChannelSnapshot:
             asyncio.set_event_loop(None)
     else:
         return asyncio.run(_analytics_session_async())
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 growth_agent.py — Agente de crecimiento de canal
 
 Estrategias implementadas:
@@ -31,11 +31,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import httpx
 import nodriver as uc
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
+from modules import llm_service
 
 from modules.youtube_uploader import (
     _cleanup_chrome_profile,
@@ -47,7 +46,6 @@ from modules.youtube_uploader import (
     _organic_pause,
     _random_mouse_wander,
     _scroll,
-    _simulate_reading,
     _think,
 )
 
@@ -58,7 +56,7 @@ logger = logging.getLogger(__name__)
 DAILY_EXTERNAL_LIMIT  = getattr(config, "GROWTH_DAILY_EXTERNAL_LIMIT", 5)
 DAILY_OWN_LIMIT       = getattr(config, "GROWTH_DAILY_OWN_LIMIT", 2)
 SESSION_EXTERNAL_CAP  = getattr(config, "GROWTH_SESSION_EXTERNAL_CAP", 2)
-GROWTH_LOG_FILE      = Path(__file__).parent.parent / "growth_log.json"
+GROWTH_LOG_FILE      = config.GROWTH_LOG_FILE
 
 # ─── Keywords para buscar videos del nicho ────────────────────────────────────
 
@@ -283,334 +281,8 @@ def _memory_boosted_searches() -> list[str]:
         return list(NICHE_SEARCHES)
 
 
-# ─── Generadores dinámicos de texto vía Groq ─────────────────────────────────
+# ─── Generadores dinámicos de texto vía LLM ──────────────────────────────────
 
-_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-# Mantenemos esto solo como referencia de personalidades para el prompt — no se usa como fallback
-_COMMENT_PERSONAS = {
-    "impactado": [
-        # — shock corto —
-        "no no no esto no puede ser real te lo juro",
-        "dios mío qué fuerte",
-        "bro no",
-        "me dejó helada de verdad",
-        "no puedo creerlo",
-        "qué locura hermano",
-        "esto no debería existir pero existe",
-        "me quedé sin palabras literal",
-        "no manches",
-        "ay dios no",
-        "qué asco de persona",
-        "me abrió la boca",
-        "esto es demasiado",
-        "no puede ser",
-        "me traumó",
-        # — shock medio —
-        "me cayó el veinte con lo de {kw} literalmente",
-        "qué traición tan grande dios mío 😶",
-        "esto está al nivel de película pero es REAL",
-        "bro qué fuerte nunca me lo esperaba así",
-        "me dejó sin palabras de verdad",
-        "eso es lo más fuerte q vi en mucho tiempo",
-        "no puedo con esto q acabo de ver",
-        "lo de {kw} me partió el alma",
-        "qué clase de persona hace eso dios mío",
-        "esto me revolvió el estómago",
-        "me cae q no lo hubiera creído si no lo veo",
-        "maldita sea qué historia tan fuerte",
-        "no esperaba eso pa nada",
-        "me cayó como balde de agua fría",
-        "literalmente me pusieron los pelos de punta",
-        "esto me sacudió de verdad",
-        "vi el título y dije no puede ser y era peor",
-        "qué golpe tan bajo",
-        "eso duele leerlo imagínate vivirlo",
-        "se me fue el aliento con esa parte",
-        "no me entra en la cabeza cómo alguien puede hacer eso",
-        "qué historia tan heavy de verdad",
-        "me movió algo por dentro que no sé explicar",
-        "estaba tranquila y me mandaron esto",
-        "fui a ver un video y me arruinaron el día jaja pero en serio qué fuerte",
-        "hay personas q no merecen lo q tienen y esta es una",
-        "lo de {kw} no lo procesa ni el cerebro más frío",
-        "no sé cómo se sigue después de algo así",
-        "esto me quitó las ganas de confiar en alguien",
-        "acabé de ver esto y todavía estoy procesando",
-        "me cayó el piso con esa parte final",
-        "¿cómo se sobrevive a algo así? de verdad",
-        "me dejó la historia pegada en el cerebro",
-        "sentí que me lo estaba contando a mí directamente",
-        "qué traición tan calculada eso es lo q más duele",
-        "no hay palabras pa describir lo q acabo de ver",
-        "me puse en el lugar de esa persona y se me aguaron los ojos",
-        "hay historias q te recuerdan pa qué sirve el bloqueo",
-        "esto es de esas cosas q no te dejan dormir tranquilo",
-        "no entiendo cómo la gente puede ser tan cruel en serio",
-        "leí el título y pensé exageran, nope no exageran para nada",
-        "me acabo de enterar q el mundo puede ser muy muy feo",
-        # — shock largo —
-        "juro que en algún momento pensé que era ficción y no",
-        "hay historias que te recuerdan por qué hay que tener cuidado con quien confías",
-        "esto me lo mandaron y no sé si darle las gracias o el reclamo",
-        "me puse a ver esto pensando que era corto y me dejó así",
-        "vi el thumbnail y pensé 'otro drama exagerado' y no era para nada exagerado",
-        "no sé q es peor si lo que hizo o el tiempo q tardó en salir la verdad",
-        "me quedo con la parte de {kw} q eso sí no me lo esperaba",
-        "esto me lo recomendó alguien y ahora tengo muchas preguntas sobre mi vida",
-        "necesito una pausa después de esto en serio",
-        "me costó terminar de ver porque se me iba la sangre",
-    ],
-    "identificado": [
-        # — muy corto —
-        "ay esto me tocó",
-        "demasiado cercano esto",
-        "me vi reflejada",
-        "esto lo viví",
-        "ay hermana/o",
-        "me llegó profundo",
-        "demasiado real",
-        "esto lo conozco bien",
-        "exactamente lo mismo",
-        "me dolió porque lo entiendo",
-        # — medio —
-        "me pasó algo calcado y todavía duele te lo juro",
-        "eso mismo viví yo y nunca lo superé del todo",
-        "demasiado real esto me tocó el corazón de verdad",
-        "esto es más común de lo q la gente cree",
-        "no sabía q alguien más había vivido algo así",
-        "me recuerda tanto a lo q yo viví hace unos años",
-        "yo pasé por algo muy parecido y sé lo q se siente",
-        "esto lo viví y te juro q el dolor no se describe",
-        "hermano/a no estás solo/a con esto, yo también lo viví",
-        "me paralicé en esa parte porque me pasó igual",
-        "palabra por palabra me estaba describiendo mi historia",
-        "esto que muestran es más normal de lo q parece y eso da miedo",
-        "me tocó algo muy adentro q hacía tiempo no sentía",
-        "yo viví algo así y lo que más duele es lo q nadie ve por fuera",
-        "hay cosas q uno carga solo y ver esto hace sentir que no era el único",
-        "me fui a los comentarios a ver si alguien más lo había vivido",
-        "no sé si reír o llorar porque me identifico demasiado",
-        "tardé años en hablar de eso y verlo acá me sacudió",
-        "oye este video lo tendría q ver alguien q conozco",
-        "me recuerda una época q prefería no recordar pero es verdad q pasa",
-        "exactamente esto es lo q pasé hace 3 años y todavía lo proceso",
-        "no esperaba que un video me fuera a pegar tan fuerte hoy",
-        "me quedé pensando en alguien específico mientras veía esto",
-        "qué incómodo se siente reconocerse en una historia así",
-        "esto le debería llegar a más personas porque es más real de lo q parece",
-        "yo también guardé ese secreto durante años y entiendo perfectamente",
-        "hay algo en {kw} q me dolió de una forma muy específica",
-        "me pasó algo calcado pero nunca lo hubiera contado así de bien",
-        "uno pensaba q era el único y resulta q no",
-        "me vino un recuerdo muy específico con esta historia",
-        # — largo —
-        "pasé algo parecido y te juro q lo q más duele no es el hecho sino enterarte de cómo te veían mientras tanto",
-        "lo q más me llegó es esa sensación de sentirte tonto/a cuando descubres todo",
-        "viví algo muy similar y lo más raro es q uno termina sintiéndose culpable aunque no lo sea",
-        "esto lo conté en privado a muy pocas personas porque da vergüenza admitirlo pero sí, pasa",
-        "me alegra q alguien lo cuente porque mucha gente vive esto en silencio y se siente sola",
-        "lo q más me resonó es que uno sigue adelante y hace su vida pero eso no se olvida nunca del todo",
-        "hay momentos en esta historia q reconozco sin necesidad de que me los expliquen",
-        "yo no lo hubiera dicho con estas palabras pero es exactamente lo q sentí",
-        "me sorprende cuánta gente ha pasado por algo parecido y ninguno lo habla",
-        "lo de {kw} me hizo acordar de una situación q creía superada y evidentemente no",
-    ],
-    "escéptico": [
-        # — muy corto —
-        "no sé no sé",
-        "algo no cierra ahí",
-        "mmm no del todo",
-        "qué raro eso",
-        "hay algo raro",
-        "no me convence",
-        "algo falta",
-        "eso no suena bien",
-        # — medio —
-        "algo no me cuadra pero bueno puede ser",
-        "¿y por qué aguantó tanto? eso no me cierra",
-        "hay cosas q no encajan del todo en la historia",
-        "no sé si creerle del todo pero si es real qué fuerte",
-        "me cuesta creer q nadie se diera cuenta antes",
-        "¿en serio nadie le dijo nada? raro eso",
-        "no digo q mienta pero hay partes q no me cuadran",
-        "a ver... ¿nadie más vio señales antes? eso me parece difícil",
-        "la historia tiene lógica pero hay puntos q no terminan de cerrar",
-        "puede ser verdad pero falta contexto para juzgar bien",
-        "hay algo en el tono que me hace pensar que falta parte de la historia",
-        "no sé, me genera dudas la parte de {kw}",
-        "¿y por qué justo ahí? eso no lo entiendo bien",
-        "puede ser pero también pudo haberlo resuelto antes",
-        "me llama la atención que nadie más sepa nada de esto",
-        "algo en esta historia no encaja y no sé bien qué es",
-        "lo creo pero me parece q hay más detrás q no se dice",
-        "¿en serio así fue exactamente? parece mucho pero bueno",
-        "la gente no suele actuar así de limpio... hay algo más",
-        "no dudo q haya pasado algo pero no todo como se cuenta",
-        "¿nadie preguntó nada antes? eso me parece raro la verdad",
-        "entiendo la historia pero hay cosas q no suenan del todo honestas",
-        "mhm puede ser. igual hay detalles q me parecen convenientes",
-        "me quedo con la duda de qué contaría la otra parte",
-        "no es que no lo crea, es q hay piezas q no encajan perfectamente",
-        # — largo —
-        "a ver sin juzgar pero hay algo en cómo está contado q me genera preguntas",
-        "puede q todo sea verdad pero me parece q hay contexto q no se da y q cambia la lectura",
-        "lo que más me llama la atención es por qué esperar tanto para contarlo",
-        "no digo q sea mentira, digo q cuando hay una sola versión siempre falta algo",
-        "hay historias q te cuentan de una manera y cuando escuchas la otra parte resulta diferente",
-        "me quedé pensando en la parte de {kw} porque eso no cierra del todo con lo anterior",
-        "puede ser que todo pasara exactamente así pero hay algo q no termina de convencerme",
-        "sin ánim de ofender pero hay detalles que solo se recuerdan cuando convienen",
-        "no pongo en duda lo q vivió pero tampoco toda historia tiene un solo culpable claro",
-        "esto levanta preguntas que la historia no responde y eso me hace pensar",
-    ],
-    "curioso": [
-        # — muy corto —
-        "y después qué",
-        "parte 2 porfavor",
-        "¿cómo terminó?",
-        "necesito más",
-        "¿y luego?",
-        "espera y qué pasó",
-        "¿hablaron después?",
-        "¿cómo quedaron?",
-        # — medio —
-        "necesito saber q pasó con {kw} después",
-        "parte 2 ya esto no puede quedar así",
-        "me quedé con ganas de saber el final de verdad",
-        "¿volvieron a hablar o fue el final definitivo?",
-        "¿y la otra persona qué dijo cuando se supo todo?",
-        "quiero saber cómo terminó esto en serio",
-        "¿y después de eso qué pasó con {kw}?",
-        "¿hay continuación? necesito saber el final",
-        "me quedé colgado/a con esa última parte",
-        "¿y cómo está ahora esa persona?",
-        "espera ¿y eso cómo terminó?",
-        "¿alguien más preguntó algo o todos se hicieron los que no sabían?",
-        "¿y la familia qué dijo cuando se enteró?",
-        "¿volvieron a verse? porque eso me quedó pendiente",
-        "¿y {kw} nunca dio explicaciones o quedó todo en el aire?",
-        "qué pasó después no me queda claro",
-        "me dejaron con el cliffhanger más innecesario de mi vida",
-        "¿y cómo sigue viviendo con eso? de verdad necesito saber",
-        "no puedo quedarme sin saber el final de esto",
-        "¿hay segunda parte o la dejaron ahí?",
-        "¿alguien tiene más info sobre cómo terminó?",
-        "me quedé con la duda de {kw} alguien sabe?",
-        "¿eso fue lo último que se supo o hubo más cosas después?",
-        "oye ¿se reconciliaron o fue definitivo?",
-        "¿y los demás? ¿nadie dijo nada más después?",
-        # — largo —
-        "lo que más quiero saber es qué pasó con {kw} porque la historia queda incompleta sin eso",
-        "me gustaría saber cómo está esa persona hoy porque lo que vivió no es poca cosa",
-        "¿hay algún update? porque eso no puede quedar así y ya",
-        "la parte q más me dejó con duda es q pasó después de {kw} eso no quedó claro",
-        "me gustaría escuchar la historia completa porque siento q falta bastante",
-        "¿alguien que vio esto sabe si hay más contexto en algún lado?",
-        "necesito saber si al final hubo algún tipo de justicia o todo quedó igual",
-        "lo que más me genera curiosidad es si esa persona supo alguna vez lo que causó",
-        "¿y los que estaban alrededor? ¿cómo reaccionaron cuando salió todo a la luz?",
-        "quiero saber si con el tiempo las cosas se resolvieron o todavía están igual de rotas",
-    ],
-    "opinador": [
-        # — muy corto —
-        "eso no se perdona",
-        "error garrafal",
-        "se lo buscó",
-        "no hay excusa",
-        "clarísimo desde el principio",
-        "debió irse antes",
-        "no hay vuelta",
-        "eso tiene nombre",
-        # — medio —
-        "desde el primer momento esa persona mostraba quien era",
-        "no se perdona eso, punto",
-        "el error fue perdonarla la primera vez honestamente",
-        "hay cosas q no tienen vuelta y esta es una de ellas",
-        "yo hubiera tomado la misma decisión sin dudar",
-        "lo que hizo no tiene justificación ninguna",
-        "uno tiene q saber cuándo retirarse y punto",
-        "eso se llama falta de carácter y ya",
-        "la persona que hace eso no merece ni explicación",
-        "lo perdonaron una vez y ahí fue el error",
-        "hay señales desde el inicio pero uno no las ve hasta después",
-        "eso no fue un error fue una decisión",
-        "quien hace eso sabe exactamente lo que está haciendo",
-        "no hay forma de justificar eso ni intentándolo mucho",
-        "en mi opinión lo correcto era irse mucho antes",
-        "eso se llama egoísmo puro y duro",
-        "uno a veces se aferra a lo q quiere ver y no a lo q es",
-        "eso tiene consecuencias y está bien q las tenga",
-        "a veces el problema no es el otro sino que uno lo permite",
-        "si ya lo hizo una vez lo iba a volver a hacer, así funciona",
-        "hay gente q solo aprende cuando ya no te tiene",
-        "no es sadismo es justicia que se sepa la verdad",
-        "la gente así siempre encuentra a quien culpar menos a sí misma",
-        "desde q dijo lo de {kw} ya se sabía cómo iba a terminar esto",
-        "lo q hizo no tiene nombre bonito llámenlo por lo que es",
-        # — largo —
-        "mi opinión es q hubo muchas señales que se ignoraron y eso no es casualidad",
-        "creo que el problema de fondo es que se confundió amor con necesidad",
-        "esto es un ejemplo claro de que algunas personas solo cambian cuando les conviene",
-        "lo que más me molesta es que ese tipo de personas siempre encuentra cómo quedar bien con todos",
-        "no juzgo las decisiones pero hay una parte donde claramente se pudo actuar antes",
-        "hay gente que hace daño sin remordimiento y lo peor es que les funciona durante mucho tiempo",
-        "eso que hizo no fue un error de juicio fue una elección consciente y punto",
-        "lo más triste es q probablemente esa persona ni siquiera entiende el daño q causó",
-        "cuando alguien muestra su verdadero carácter hay q creerle aunque duela",
-        "mi consejo siempre es el mismo: la primera vez que alguien te falla así es la última",
-    ],
-    "solidario": [
-        # — muy corto —
-        "fuerza 🙏",
-        "qué difícil",
-        "mucho ánimo",
-        "ay qué dolor",
-        "lo siento mucho",
-        "cuánto dolor",
-        "uno no merece eso",
-        "ojalá esté bien",
-        "ánimo de verdad",
-        "te mando buena energía",
-        # — medio —
-        "fuerza para quien vivió algo así de verdad 🙏",
-        "hay cosas de las q uno no se recupera fácil",
-        "lo importante es q ya salió de ahí",
-        "cuánto dolor dios mío q difícil todo eso",
-        "uno nunca está listo pa recibir algo así",
-        "ojalá esté bien quien vivió esto de verdad",
-        "nadie debería pasar por algo así",
-        "ojalá hoy esté en un lugar mejor q antes",
-        "esa persona es más fuerte de lo que cree",
-        "es de admirar q puedan contarlo, no es fácil",
-        "eso deja marca, ojalá encuentre paz con el tiempo",
-        "te mando toda la fuerza desde acá de verdad",
-        "no me imagino cómo se habrá sentido en ese momento",
-        "lo que más me mueve es el nivel de traición que vivió",
-        "que alguien lo cuente ya es un paso enorme",
-        "hay cosas q uno procesa de a poco y está bien así",
-        "ojalá quien lo vivió tenga personas cerca que lo apoyen",
-        "no es fácil salir de algo así pero se puede",
-        "qué difícil tomar esa decisión en ese momento",
-        "a veces uno carga solo lo q debería cargar acompañado",
-        "uno no merece ese tipo de cosas viniendo de quien confía",
-        "el dolor de esa traición no se explica, se siente",
-        "que pueda contarlo ya muestra q va sanando aunque duela",
-        "la vida después de algo así no es la misma pero sigue",
-        "ojalá hoy ese dolor sea un poco más chico q ayer",
-        # — largo —
-        "me duele que haya gente que pase por esto sola sin poder contarlo",
-        "hay una valentía enorme en poder hablar de algo así aunque haya pasado tiempo",
-        "ojalá quien vivió esto sepa que hay gente que lo escucha y lo entiende desde acá",
-        "lo que más me llega es pensar en cómo se habrá sentido en ese momento sin nadie que supiera",
-        "hay heridas que no se ven pero que cargan más peso que las que sí se ven",
-        "eso que vivió no era normal aunque en su momento lo pareciera, ojalá lo sepa hoy",
-        "la gente que pasa por cosas así merece mucho más reconocimiento del que recibe",
-        "me alegra q cuenten estas historias porque mucha gente se siente sola con lo mismo",
-        "hay procesos que llevan tiempo y está bien, lo importante es seguir",
-        "uno aprende a vivir con esas cicatrices aunque nunca desaparezcan del todo",
-    ],
-}
 
 
 
@@ -698,57 +370,9 @@ def _mark_commented(log: dict, video_id: str, title: str) -> None:
 # ─── Generadores 100% dinámicos vía Groq ─────────────────────────────────────
 
 async def _groq_call(prompt: str, max_tokens: int) -> str | None:
-    """Groq primero, OpenAI como fallback de emergencia. None si ambos fallan."""
-    # ── Groq (gratuito) ───────────────────────────────────────────────────────
-    groq_key = getattr(config, "GROQ_API_KEY", "")
-    if groq_key:
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    r = await client.post(
-                        _GROQ_URL,
-                        headers={"Authorization": f"Bearer {groq_key}"},
-                        json={
-                            "model": getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile"),
-                            "messages": [{"role": "user", "content": prompt}],
-                            "max_tokens": max_tokens,
-                            "temperature": 0.95,
-                        },
-                    )
-                    r.raise_for_status()
-                    text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
-                    if text:
-                        return text
-            except Exception as e:
-                logger.debug(f"Groq intento {attempt + 1}/3: {e}")
-                if attempt < 2:
-                    await asyncio.sleep(3)
-        logger.warning("Growth: Groq falló 3 veces — intentando OpenAI")
-
-    # ── OpenAI (emergencia) ───────────────────────────────────────────────────
-    openai_key = getattr(config, "OPENAI_API_KEY", "")
-    if openai_key:
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                r = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {openai_key}"},
-                    json={
-                        "model": getattr(config, "OPENAI_MODEL", "gpt-4o-mini"),
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.95,
-                    },
-                )
-                r.raise_for_status()
-                text = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'")
-                if text:
-                    logger.info("Growth: usando OpenAI como fallback")
-                    return text
-        except Exception as e:
-            logger.warning(f"Growth: OpenAI también falló: {e}")
-
-    return None
+    """Groq → OpenAI. None si ambos fallan."""
+    text = await llm_service.call_llm_async(prompt, max_tokens=max_tokens, temperature=0.95)
+    return text.strip('"').strip("'") or None
 
 
 async def _generate_comment(video_title: str) -> str | None:
@@ -888,7 +512,7 @@ async def _search_niche_videos(browser, keyword: str, log: dict) -> list[dict]:
     try:
         page = await browser.get(search_url)
         await _delay(3.0, 6.0)
-        await _dismiss_consent(page)
+        await dismiss_consent(page)
         await _scroll(page, random.randint(200, 500))
         await _random_mouse_wander(page)
         await _delay(1.5, 3.0)
@@ -1143,7 +767,7 @@ async def _comment_on_video(browser, video: dict) -> bool:
 
 # ─── Obtener channel ID ───────────────────────────────────────────────────────
 
-async def _get_channel_id(browser) -> str | None:
+async def get_channel_id(browser) -> str | None:
     """
     Extrae el channel ID (UCxxx) del canal logueado.
     Navega a studio.youtube.com y prueba 5 métodos distintos.
@@ -1158,11 +782,12 @@ async def _get_channel_id(browser) -> str | None:
         logger.info(f"  Studio URL: {current_url[:90]}")
 
         if "accounts.google.com" in current_url or "signin" in current_url.lower():
+            growth_profile = getattr(config, "CHROME_PROFILE_GROWTH_DIR", str(config.BASE_DIR / "chrome_profile_growth"))
             logger.warning(
-                "  Sesión no activa. FIX: Abre Chrome con este perfil, loguea en\n"
-                f"  studio.youtube.com y cierra Chrome:\n"
+                "  Growth agent: sesión no activa en chrome_profile_growth.\n"
+                "  Abre Chrome con este perfil, inicia sesión en YouTube y ciérralo:\n"
                 f"  \"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\" "
-                f"--user-data-dir=\"{config.CHROME_PROFILE_DIR}\""
+                f"--user-data-dir=\"{growth_profile}\""
             )
             return None
 
@@ -1193,7 +818,7 @@ async def _get_channel_id(browser) -> str | None:
         return None
 
     except Exception as e:
-        logger.warning(f"  Error en _get_channel_id: {e}", exc_info=True)
+        logger.warning(f"  Error en get_channel_id: {e}", exc_info=True)
         return None
 
 
@@ -1216,7 +841,7 @@ async def _engage_own_channel(browser, log: dict, own_video_url: str = "") -> in
                 logger.info(f"  Video objetivo (URL directa): {video_url}")
         else:
             # Fallback: obtener channel ID y scraping del canal
-            channel_id = await _get_channel_id(browser)
+            channel_id = await get_channel_id(browser)
             if not channel_id:
                 logger.warning("  No se pudo obtener el channel ID — ¿sesión iniciada?")
                 return 0
@@ -1581,7 +1206,7 @@ async def _browse_casually(browser) -> None:
         ]
         page = await browser.get(random.choice(destinations))
         await _delay(3.0, 6.0)
-        await _dismiss_consent(page)
+        await dismiss_consent(page)
 
         # Scroll orgánico por el feed
         for _ in range(random.randint(2, 4)):
@@ -1617,7 +1242,7 @@ async def _browse_casually(browser) -> None:
         await asyncio.sleep(random.uniform(60.0, 120.0))
 
 
-async def _dismiss_consent(page) -> None:
+async def dismiss_consent(page) -> None:
     """Descarta el dialog de consentimiento de cookies de Google si aparece."""
     try:
         for text in ["Aceptar todo", "Accept all", "Reject all", "Rechazar todo"]:
@@ -1738,7 +1363,7 @@ async def _post_to_community(browser, log: dict) -> bool:
 
         page = await browser.get("https://studio.youtube.com")
         await _delay(4.0, 7.0)
-        await _dismiss_consent(page)
+        await dismiss_consent(page)
         await _delay(2.0, 4.0)
 
         # Ir a pestaña Comunidad
@@ -1818,7 +1443,7 @@ async def _watch_own_video(browser, video_url: str) -> None:
         logger.info(f"  👀 Viendo propio video {vid_id} (warm-up de watch time)...")
         page = await browser.get(watch_url)
         await _delay(3.0, 5.0)
-        await _dismiss_consent(page)
+        await dismiss_consent(page)
 
         # Simular comportamiento de viewer real: scroll, mover mouse, esperar
         watch_secs = random.triangular(25.0, 55.0, 38.0)
@@ -2013,7 +1638,7 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
         if session_mode == "browse_only":
             ext_count = DAILY_EXTERNAL_LIMIT  # fuerza skip del paso 5
 
-    profile_dir = Path(config.CHROME_PROFILE_DIR)
+    profile_dir = Path(getattr(config, "CHROME_PROFILE_GROWTH_DIR", str(config.BASE_DIR / "chrome_profile_growth")))
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     if platform.system() == "Linux" and not os.environ.get("DISPLAY"):
@@ -2043,8 +1668,7 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
             browser_executable_path=chrome_bin or None,
             browser_args=[
                 "--window-size=1920,1080",
-                "--window-position=-2000,0",   # off-screen — no visible para el usuario
-                "--no-sandbox",
+                "--window-position=-2000,0",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
@@ -2058,7 +1682,7 @@ async def _growth_session_async(do_own: bool = True, own_video_url: str = "") ->
         await _delay(3.0, 6.0)
 
         # Descartar consent dialog de Google/YouTube si aparece
-        await _dismiss_consent(page)
+        await dismiss_consent(page)
 
         await _scroll(page, random.randint(150, 350))
         await _random_mouse_wander(page)
@@ -2221,3 +1845,4 @@ def run_growth_session(do_own: bool = True, own_video_url: str = "") -> dict:
             asyncio.set_event_loop(None)
     else:
         return asyncio.run(_growth_session_async(do_own=do_own, own_video_url=own_video_url))
+

@@ -1,0 +1,54 @@
+services:
+  - type: web
+    name: shorts-factory
+    env: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    plan: starter          # free solo tiene 512 MB — Chrome+ffmpeg necesita ~1 GB
+    healthCheckPath: /health
+    envVars:
+      # ── LLM (Groq cloud — no Ollama en servidor) ──────────────────────────
+      - key: GROQ_API_KEY
+        sync: false        # pegar en Render dashboard
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+
+      # ── Pexels (clips de stock) ───────────────────────────────────────────
+      - key: PEXELS_API_KEY
+        sync: false
+
+      # ── YouTube ───────────────────────────────────────────────────────────
+      - key: YOUTUBE_UPLOAD_ENABLED
+        value: "true"
+      - key: YOUTUBE_EMAIL
+        sync: false
+      - key: YOUTUBE_PASSWORD
+        sync: false
+
+      # ── Sesión Chrome (exportar con export_session.py) ───────────────────
+      - key: CHROME_SESSION_B64
+        sync: false        # pegar valor de export_session_output.txt
+
+      # ── WhatsApp (false = sube automáticamente sin aprobación manual) ─────
+      - key: WHATSAPP_APPROVAL_ENABLED
+        value: "false"
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: WHATSAPP_TO
+        sync: false
+
+      # ── Canal ─────────────────────────────────────────────────────────────
+      - key: CHANNEL_NAME
+        value: GATA CURIOSA
+      - key: VIDEOS_PER_DAY
+        value: "3"
+
+      # ── Misc ──────────────────────────────────────────────────────────────
+      - key: LOG_LEVEL
+        value: INFO
+      - key: TTS_BACKEND
+        value: edge

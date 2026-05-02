@@ -96,18 +96,59 @@ class ChannelManagerBot(BaseAgent):
         except Exception as e:
             self.log(f"No se pudo guardar stats: {e}")
 
-    def _record_post(self, content_type: str, hook: str) -> None:
+    def _record_post(self, content_type: str, hook: str,
+                     message_ids: list[int] | None = None) -> None:
         stats = self._load_stats()
         stats["posts"].append({
-            "type": content_type,
-            "hook": hook[:100],
-            "ts": int(time.time()),
+            "type":        content_type,
+            "hook":        hook[:100],
+            "ts":          int(time.time()),
+            "message_ids": message_ids or [],
         })
         stats["hooks_used"].append(hook[:80])
         # Mantener solo los últimos 200
         stats["posts"]      = stats["posts"][-200:]
         stats["hooks_used"] = stats["hooks_used"][-200:]
         self._save_stats(stats)
+
+    def cleanup_old_channel_posts(self, max_age_hours: int | None = None) -> int:
+        """
+        Borra del canal los mensajes con más de max_age_hours horas.
+        Retorna el número de mensajes eliminados.
+        """
+        if max_age_hours is None:
+            max_age_hours = int(getattr(config, "TELEGRAM_CHANNEL_TTL_HOURS", 48))
+        if not self._ok() or max_age_hours <= 0:
+            return 0
+
+        stats   = self._load_stats()
+        cutoff  = time.time() - max_age_hours * 3600
+        deleted = 0
+        keep    = []
+
+        for post in stats.get("posts", []):
+            if post.get("ts", 0) < cutoff:
+                for mid in post.get("message_ids", []):
+                    if not mid:
+                        continue
+                    try:
+                        r = self._api("deleteMessage", json={
+                            "chat_id":    self._channel(),
+                            "message_id": mid,
+                        })
+                        if r.get("ok"):
+                            deleted += 1
+                        time.sleep(0.3)
+                    except Exception:
+                        pass
+            else:
+                keep.append(post)
+
+        stats["posts"] = keep
+        self._save_stats(stats)
+        if deleted:
+            self.log(f"limpieza: {deleted} mensaje(s) eliminado(s) del canal")
+        return deleted
 
     # ── Mix de contenido ───────────────────────────────────────────────────────
 
@@ -143,227 +184,162 @@ class ChannelManagerBot(BaseAgent):
         """
         import re
 
+        def _is_fictional(text: str) -> bool:
+            """Pregunta al LLM si el texto tiene personajes/mundos de ficción."""
+            try:
+                resp = self._llm_call(
+                    "El siguiente texto, ¿contiene personajes de ficcion (anime, series, "
+                    "videojuegos, libros, peliculas), mundos imaginarios, magia, poderes "
+                    "sobrenaturales, reencarnacion en otro mundo, o cualquier elemento "
+                    "que no pueda ocurrir en la vida real cotidiana?\n"
+                    "Responde UNICAMENTE con SI o NO.\n\n"
+                    f"TEXTO:\n{text[:600]}",
+                    max_tokens=5,
+                ).strip().upper()
+                return resp.startswith("SI") or resp.startswith("SÍ")
+            except Exception:
+                return False  # si falla la validacion, dejar pasar
+
+        _cities   = ", ".join(config.CHANNEL_CITIES[:4])
+        _f_names  = ", ".join(config.CHANNEL_FEMALE_NAMES[:5])
+        _m_names  = ", ".join(config.CHANNEL_MALE_NAMES[:5])
+        _FALLBACK_PROMPT = (
+            "Inventa UNA confesion erotica y adulta de vida real en español latino. "
+            "600-900 palabras. Primera persona. "
+            "Sin ficcion, sin fantasia, sin anime, sin magia, sin poderes. "
+            "Solo situaciones que pueden ocurrir en la vida real: "
+            "infidelidad, deseo prohibido, secreto entre personas reales. "
+            f"Ciudad: una de {_cities}. "
+            f"Nombres femeninos: {_f_names}. Nombres masculinos: {_m_names}. "
+            "Formato:\nTITULO: <max 80 chars, sin emojis>\nHISTORIA: <historia completa>"
+        )
+
         prompt = (
             "Sos una escritora adulta especializada en confesiones prohibidas y literatura erotica.\n"
             "Tu voz es la de una mujer latina que confiesa en secreto algo que nunca le dijo "
             "a nadie. Cruda. Real. Sin filtro. Sin censura.\n\n"
             f"HISTORIA BASE:\nTitulo: {titulo}\n{texto[:2000]}\n\n"
             "REGLAS OBLIGATORIAS:\n\n"
+            "0. CRITICO: el resultado final tiene que poder ocurrir en la vida real.\n"
+            "   Si la historia base tiene fantasia, ficcion, magia, personajes de anime,\n"
+            "   videojuegos, series, poderes sobrenaturales, reencarnacion, o cualquier\n"
+            "   elemento imaginario: IGNORALOS POR COMPLETO.\n"
+            "   Toma solo el conflicto emocional humano (traicion, deseo, secreto)\n"
+            "   y narralo como si ocurriera en un departamento / oficina / hotel real.\n\n"
             "1. PRIMERA LINEA DE IMPACTO — arranca con algo que deje sin aliento:\n"
             "   'Tenia 24 anos cuando me acosté por primera vez con el marido de mi hermana.'\n"
             "   'Lo hicimos tres veces esa noche. El era el novio de mi mejor amiga.'\n"
             "   'Nunca pense que iba a desear tanto a alguien que no me pertenecia.'\n\n"
-            "2. MUNDO REAL SIEMPRE — si hay fantasia, transformala:\n"
-            "   Fantasia/anime/Hogwarts → universidad, oficina, hotel, edificio, bar\n"
-            "   Poderes/hechizos → alcohol, celos, llamadas, secretos, fotos\n"
-            "   Criaturas → personas reales con personalidades intensas\n"
-            "   Ciudad real: Buenos Aires, Bogota, Ciudad de Mexico, Madrid, Lima\n\n"
+            "2. MUNDO REAL SIEMPRE:\n"
+            f"   Cualquier personaje ficticio → persona real con nombre latino\n"
+            f"   Cualquier lugar ficticio → {', '.join(config.CHANNEL_CITIES)}\n"
+            "   Cualquier poder/elemento fantástico → emocion, alcohol, celos, secretos\n\n"
             "3. NOMBRES LATINOS siempre:\n"
-            "   Mujeres: Sofia, Valeria, Camila, Andrea, Lucia, Daniela, Renata\n"
-            "   Hombres: Diego, Mateo, Sebastian, Andres, Carlos, Tomas, Emilio\n\n"
-            "4. TENSION SEXUAL MAXIMA — esto es lo mas importante:\n"
+            f"   Mujeres: {', '.join(config.CHANNEL_FEMALE_NAMES[:7])}\n"
+            f"   Hombres: {', '.join(config.CHANNEL_MALE_NAMES[:7])}\n\n"
+            "4. TENSION SEXUAL MAXIMA:\n"
             "   - Describí el deseo fisico con detalle: miradas, manos, calor, respiracion\n"
             "   - Las escenas de intimidad tienen que ser explicitas, no sugeridas\n"
-            "   - Describí como se sintio, que hizo, que le hicieron, que quisieron mas\n"
-            "   - El morbo tiene que estar en cada parrafo: traicion, secreto, lo prohibido\n"
-            "   - Usa vocabulario adulto directo cuando sea necesario\n"
-            "   - Que el lector sienta que esta leyendo algo que no deberia leer\n\n"
-            "5. ESTRUCTURA CRITICA — esto determina si la gente paga:\n"
-            "   - Parrafo 1 (primeras 3-4 oraciones): presenta la situacion Y el momento prohibido.\n"
-            "     El lector tiene que sentir la tension ANTES de los 400 caracteres.\n"
-            "     Ejemplo: 'Llevabamos 6 meses trabajando juntos. Esa tarde se quedo hasta tarde\n"
-            "     y quando apague la luz... el estaba detras de mi.'\n"
-            "   - Parrafo 2-3: la escena se intensifica, detalle fisico y emocional\n"
-            "   - Parrafo 4-5: el acto prohibido con maximo detalle sensorial\n"
-            "   - Final: consecuencia o revelacion impactante — CORTAR sin resolver\n\n"
-            "6. Longitud: entre 600 y 900 palabras. Sin titulos internos. Solo prosa continua.\n\n"
-            "Responde SOLO en este formato:\n"
-            "TITULO: <frase que enganche, maximo 80 chars, SIN emojis>\n"
-            "HISTORIA: <historia completa, cruda, sin censura>"
+            "   - El morbo tiene que estar en cada parrafo: traicion, secreto, lo prohibido\n\n"
+            "5. ESTRUCTURA:\n"
+            "   Parrafo 1: situacion + tension antes de 400 chars\n"
+            "   Parrafo 2-3: escena se intensifica\n"
+            "   Parrafo 4-5: acto prohibido con detalle sensorial\n"
+            "   Final: revelacion impactante — CORTAR sin resolver\n\n"
+            "6. Longitud: 600-900 palabras. Sin titulos internos. Solo prosa.\n\n"
+            "Responde SOLO:\n"
+            "TITULO: <frase que enganche, max 80 chars, SIN emojis, SIN ficcion>\n"
+            "HISTORIA: <historia completa>"
         )
         try:
             raw = self._llm_call(prompt, max_tokens=2000)
             t_match = re.search(r"TITULO:\s*(.+)",   raw)
             h_match = re.search(r"HISTORIA:\s*(.+)", raw, re.DOTALL)
             nuevo_titulo   = t_match.group(1).strip()[:100] if t_match else titulo[:100]
-            nueva_historia = h_match.group(1).strip()       if h_match else texto
+            nueva_historia = h_match.group(1).strip()       if h_match else ""
             if len(nueva_historia) < 300:
                 raise ValueError("muy corta")
+            # Validacion LLM: si el resultado sigue teniendo ficcion, generar desde cero
+            if _is_fictional(nuevo_titulo + ". " + nueva_historia[:500]):
+                self.log("rewrite: resultado tiene ficcion — generando confesion nueva")
+                raw2 = self._llm_call(_FALLBACK_PROMPT, max_tokens=2000)
+                t2 = re.search(r"TITULO:\s*(.+)",   raw2)
+                h2 = re.search(r"HISTORIA:\s*(.+)", raw2, re.DOTALL)
+                nuevo_titulo   = t2.group(1).strip()[:100] if t2 else nuevo_titulo
+                nueva_historia = h2.group(1).strip()       if h2 else nueva_historia
             self.log(f"historia reescrita: {len(nueva_historia)} chars")
             return nuevo_titulo, nueva_historia
         except Exception as e:
-            self.log(f"rewrite fallo ({e}) — usando original")
+            self.log(f"rewrite fallo ({e}) — generando confesion nueva")
+            # Si falla todo: siempre generar algo nuevo, nunca usar el original con ficcion
+            try:
+                raw3 = self._llm_call(_FALLBACK_PROMPT, max_tokens=2000)
+                t3 = re.search(r"TITULO:\s*(.+)",   raw3)
+                h3 = re.search(r"HISTORIA:\s*(.+)", raw3, re.DOTALL)
+                if t3 and h3 and len(h3.group(1)) > 200:
+                    return t3.group(1).strip()[:100], h3.group(1).strip()
+            except Exception:
+                pass
             return titulo, texto
 
     # ── Copy: hook de la historia (solo UNA linea, el gancho) ────────────────
 
+    @property
+    def _HOOK_FALLBACKS(self): return config.CHANNEL_HOOK_FALLBACKS
+
     def _craft_hook(self, titulo: str, texto: str) -> str:
         """
         Genera UNA sola frase gancho en primera persona.
-        Si Groq está disponible la usa; si no, extrae directamente del título.
+        Si el LLM la produce con ficción, usa pool de fallbacks reales.
         """
-        import re
         prompt = (
-            "Eres el admin de un canal de confesiones en Telegram. "
+            "Eres el admin de un canal de confesiones de vida real en Telegram. "
             "Escribe UNA sola frase gancho en primera persona (maximo 90 caracteres). "
+            "Solo drama real: infidelidad, secretos, deseo prohibido entre personas reales. "
             "Tiene que crear intriga sin revelar nada. Sin emojis. Sin punto al final.\n"
             "Ejemplos:\n"
             "  - Mi marido no sabe que yo se todo\n"
             "  - Esa noche descubri quien era realmente\n"
             "  - Lleve anos mintiendole a todos\n\n"
             f"Historia base: {titulo} — {texto[:300]}\n\n"
-            "Responde SOLO con la frase gancho."
+            "Responde SOLO con la frase gancho. "
+            "Si la historia base tiene ficcion, inventa un gancho de vida real."
         )
         try:
             raw  = self._llm_call(prompt, max_tokens=60).strip()
             hook = raw.split("\n")[0].strip()[:120]
             if len(hook) > 15:
-                return hook
+                # Validar: si el LLM dice que es ficcion, usar fallback
+                check = self._llm_call(
+                    f"¿Esta frase suena como algo que puede ocurrir en la vida real "
+                    f"(no ficcion, no fantasia)?\n\"{hook}\"\nResponde solo SI o NO.",
+                    max_tokens=5,
+                ).strip().upper()
+                if check.startswith("SI") or check.startswith("SÍ"):
+                    return hook
         except Exception:
             pass
-        # Fallback: limpiar el titulo
-        return re.sub(r"[^\w\s,\.\!\?áéíóúüñÁÉÍÓÚÜÑ]", "", titulo)[:100].strip()
+        return random.choice(self._HOOK_FALLBACKS)
 
-    # ── Templates de copy profesional (no dependen del LLM débil) ────────────
+    # ── Templates de copy — voz de GATA CURIOSA (personal, no de bot) ─────────
 
-    # Post gratis: solo el hook + CTA minimo. No se revela nada del contenido.
-    _FREE_TEMPLATES = [
-        (
-            "🔥 <b>CONFESIÓN REAL</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "Esta historia no está en YouTube.\n"
-            "Solo aquí. Solo por <b>{stars} ⭐</b>\n\n"
-            "⬇️ Desbloqueá justo abajo."
-        ),
-        (
-            "⚠️ <b>HISTORIA REAL | ANÓNIMA</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "La guardé para este canal.\n"
-            "Por <b>{stars} ⭐ Stars</b> la lees completa.\n\n"
-            "👇 Está justo abajo."
-        ),
-        (
-            "🗣️ <b>ME LO CONTARON EN SECRETO</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "No puedo publicar esto en otro lado.\n"
-            "<b>{stars} ⭐</b> y es tuya.\n\n"
-            "⬇️ Historia completa debajo."
-        ),
-        (
-            "🔒 <b>CONFESIÓN #GATA</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "Demasiado real para YouTube.\n"
-            "Aquí está completa — <b>{stars} ⭐ Stars</b>.\n\n"
-            "👇 Tap para desbloquear."
-        ),
-    ]
-
-    # Caption del paid media: lo que se ve ANTES de pagar (sin spoilers)
-    _PAID_CAPTIONS = [
-        (
-            "🔒 <b>CONTENIDO EXCLUSIVO</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "Pagá <b>{stars} ⭐ Stars</b> y lees la historia completa.\n"
-            "Borrosa hasta que desbloquees."
-        ),
-        (
-            "🔞 <b>SOLO PARA LOS QUE SE ATREVEN</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "<b>{stars} ⭐</b> → historia completa, sin cortes.\n"
-            "La imagen se desbloquea al pagar."
-        ),
-        (
-            "🗝️ <b>HISTORIA COMPLETA AQUÍ ADENTRO</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "Desbloqueá con <b>{stars} ⭐ Stars</b>.\n"
-            "Sin pagar, no se ve."
-        ),
-        (
-            "⛔ <b>ACCESO RESTRINGIDO</b>\n\n"
-            "<i>«{hook}»</i>\n\n"
-            "Esta historia cuesta <b>{stars} ⭐</b>.\n"
-            "Pagá y lees todo. Sin censura."
-        ),
-    ]
-
-    # Posts de engagement: preguntas que dividen la audiencia
-    _ENGAGEMENT_POSTS = [
-        "Él la engañó con su mejor amiga.\nLe pidió perdón llorando. Dice que fue \"un error\".\n\n¿Tú perdonarías o lo dejarías sin pensarlo dos veces? 👇",
-        "Lleva 3 años con él. Acaba de encontrar fotos borradas en su teléfono.\nÉl dice que no son nada.\n\n¿Le crees o ya empezás a dudar? 🤔",
-        "Su ex la llama después de 1 año llorando.\nDice que cometió el peor error de su vida.\n\n¿Contestarías o colgarías directo? Comenten ⬇️",
-        "Descubrió que su novio le mentía sobre su pasado.\nNo la engañó con otra, pero sí ocultó cosas importantes.\n\n¿Eso también es traición o no? 💭",
-        "Él nunca le dijo \"te amo\" en 2 años.\nAhora que ella lo dejó, se lo dice todos los días.\n\n¿Lo tomarías en serio o ya es tarde? 👇",
-        "Su mejor amiga le contaba sus secretos al ex de ella.\nTodo este tiempo. Sin decirle nada.\n\n¿La perdonás o eso no tiene perdón? Comenten 💬",
-        "Llevan 5 años juntos. Ella encontró mensajes de otra.\nÉl dice que \"no llegó a nada\".\n\n¿Intentional o te vas? 🤷‍♀️",
-        "Él la trataba mal. Ella se fue.\nAhora él cambió, dice que es otra persona.\n\n¿Las personas realmente cambian o solo aprenden a esconder mejor? 👇",
-    ]
-
-    # Posts de valor: reflexiones que engancha sin vender nada
-    _VALUE_POSTS = [
-        "Hay una diferencia entre perdonar y seguir aguantando.\n\nPerdonar es para vos. Seguir aguantando es para él.\n\nNo las confundas.",
-        "A veces no es que no viste las señales.\nEs que las viste y elegiste creer que las cosas iban a cambiar.\n\nEso no te hace tonta. Te hace humana.",
-        "El que te quiere de verdad no te hace dudar de su amor cada dos días.\n\nSi estás constantemente adivindando si le importás — ya tenés la respuesta.",
-        "Hay personas que te quieren y personas que te necesitan.\nAprender a distinguirlos es la lección más cara que existe.",
-        "No fue que te engañó.\nFue que después de que lo hizo, seguiste dudando de vos en lugar de dudar de él.",
-        "La gente que te trata mal casi siempre encuentra la forma de hacerte sentir que es tu culpa.\n\nNo lo es.",
-        "Alejarse de alguien que amás es difícil.\nQuedarte con alguien que te hace daño es más difícil todavía.\nElegís tu tipo de dolor.",
-        "El amor que duele todo el tiempo no es amor.\nEs costumbre. Es miedo. Es no conocer otra cosa.\n\nPero no es amor.",
-    ]
-
-    # Posts de urgencia: empujan conversiones a Stars
-    _URGENCY_POSTS = [
-        "🔒 Esta semana subí 3 historias que no voy a volver a publicar.\n\nUna de ellas involucra a alguien de su propia familia.\n\n{stars} ⭐ y la desbloqueás.",
-        "Hay historias que no puedo subir a YouTube.\nDemasiado reales. Demasiado crudas.\n\nEsas solo están aquí. Por {stars} ⭐ Stars.",
-        "La historia que acabo de subir tiene más de 1.000 palabras.\nNo te la cuento gratis. No en este canal.\n\n{stars} ⭐ → historia completa, sin cortes.",
-        "El contenido que más me piden es el que no puedo publicar en otro lado.\n\nEse contenido está aquí. {stars} ⭐ y es tuyo.",
-        "Las historias detrás del candado son las que la gente quiere leer de verdad.\n\nVos sabés cuál es el precio. {stars} ⭐",
-    ]
+    # Pools de contenido — definidos en config.py para fácil edición sin tocar código
+    @property
+    def _STORY_INTROS(self):   return config.CHANNEL_STORY_INTROS
+    @property
+    def _STORY_CLIFF(self):    return config.CHANNEL_STORY_CLIFF
+    @property
+    def _ENGAGEMENT_POSTS(self): return config.CHANNEL_ENGAGEMENT_POSTS
+    @property
+    def _VALUE_POSTS(self):    return config.CHANNEL_VALUE_POSTS
+    @property
+    def _URGENCY_POSTS(self):  return config.CHANNEL_URGENCY_POSTS
 
     def _craft_engagement_post(self) -> str:
         return random.choice(self._ENGAGEMENT_POSTS)
 
     def _craft_value_post(self) -> str:
         return random.choice(self._VALUE_POSTS)
-
-    def _craft_stars_cta(self, hook: str = "") -> str:
-        stars = self._stars()
-        opciones = [
-            f"Lo que pasa después no está en ningún otro lado. {stars} Stars y es tuyo.",
-            f"La historia completa está debajo. {stars} Stars para verla.",
-            f"Solo {stars} ⭐ y sabés cómo termina de verdad.",
-            f"El final te va a dejar sin palabras. {stars} Stars para desbloquearlo.",
-            f"No subo esto a YouTube. Solo aquí, solo por {stars} Stars.",
-        ]
-        return random.choice(opciones)
-
-    def _craft_urgency_post(self) -> str:
-        """
-        Post de urgencia/escasez para empujar conversiones a Stars.
-        """
-        stars   = self._stars()
-        channel = getattr(config, "TELEGRAM_CHANNEL_LINK", "")
-        options = [
-            (
-                f"🔒 Esta semana desbloqueé 3 historias que no voy a repetir.\n\n"
-                f"Cada una cuesta solo {stars} ⭐ Stars.\n"
-                f"La de hoy involucra a alguien de su propia familia.\n\n"
-                f"¿La ves o la dejas pasar?"
-                + (f"\n👉 {channel}" if channel else "")
-            ),
-            (
-                f"Hay historias que no puedo publicar en YouTube.\n"
-                f"Demasiado reales. Demasiado crudas.\n\n"
-                f"Esas solo están aquí. Por {stars} ⭐ Stars las desbloqueas.\n"
-                f"La última que subí dejó a la gente sin palabras."
-                + (f"\n📲 {channel}" if channel else "")
-            ),
-            (
-                f"📸 Las imágenes que acompañan esta historia no las vas a encontrar en ningún lado.\n\n"
-                f"Historia completa + fotos reales = {stars} ⭐ Stars.\n"
-                f"Hoy hay una nueva. Y es de las que no se olvidan."
-            ),
-        ]
-        return random.choice(options)
 
     # ── Imágenes de Pexels ─────────────────────────────────────────────────────
 
@@ -432,43 +408,44 @@ class ChannelManagerBot(BaseAgent):
                         pass
                 return ImageFont.load_default()
 
-            # Header — SIN emojis
-            draw.text((W // 2, 52), ">> HISTORIA COMPLETA <<", font=_font(50),
-                      fill=(255, 255, 255), anchor="mm")
-            draw.line([(50, 108), (W - 50, 108)], fill=(160, 0, 28), width=3)
+            # Header limpio — sin mayúsculas genéricas
+            draw.text((W // 2, 50), "Historia completa", font=_font(46),
+                      fill=(200, 200, 215), anchor="mm")
+            draw.line([(60, 98), (W - 60, 98)], fill=(100, 0, 20), width=2)
 
-            # Hook en rojo
+            # Hook en rojo suave (no grita)
             hook_clean = hook.replace('"', '').replace("'", "")[:110]
-            hook_lines = textwrap.wrap(f'"{hook_clean}"', width=36)
-            y = 138
+            hook_lines = textwrap.wrap(f"“{hook_clean}”", width=38)
+            y = 128
             for line in hook_lines[:3]:
-                draw.text((W // 2, y), line, font=_font(42),
-                          fill=(255, 70, 70), anchor="mm")
-                y += 52
+                draw.text((W // 2, y), line, font=_font(38),
+                          fill=(230, 80, 80), anchor="mm")
+                y += 48
 
-            draw.line([(50, y + 8), (W - 50, y + 8)], fill=(50, 50, 70), width=2)
-            y += 32
+            y += 18
 
-            # Texto de la historia
-            font_story = _font(33)
+            # Texto de la historia — mayor y más espaciado
+            font_story = _font(34)
             story_clean = full_story.replace("\n\n", "\n").strip()
 
             story_lines: list[str] = []
             for paragraph in story_clean.split("\n"):
-                story_lines.extend(textwrap.wrap(paragraph.strip(), width=43) or [""])
+                wrapped = textwrap.wrap(paragraph.strip(), width=42) or [""]
+                story_lines.extend(wrapped)
+                story_lines.append("")  # espacio entre párrafos
 
             for line in story_lines:
-                if y > H - 110:
-                    draw.text((60, y), "[ continua... ]", font=font_story,
-                              fill=(120, 120, 140))
+                if y > H - 120:
+                    draw.text((60, y), "— continúa —", font=_font(30),
+                              fill=(90, 90, 110))
                     break
-                draw.text((60, y), line, font=font_story, fill=(215, 215, 230))
-                y += 44
+                draw.text((60, y), line, font=font_story, fill=(210, 210, 228))
+                y += 46 if line else 14
 
-            # Footer
-            draw.line([(50, H - 88), (W - 50, H - 88)], fill=(50, 50, 70), width=2)
-            draw.text((W // 2, H - 52), "GATA CURIOSA  |  Confesiones Reales",
-                      font=_font(28), fill=(120, 120, 140), anchor="mm")
+            # Footer minimalista
+            draw.line([(60, H - 80), (W - 60, H - 80)], fill=(40, 40, 55), width=1)
+            draw.text((W // 2, H - 46), "GATA CURIOSA",
+                      font=_font(26), fill=(90, 90, 110), anchor="mm")
 
             out_path = out_dir / "story_card.jpg"
             img.save(str(out_path), "JPEG", quality=93)
@@ -512,28 +489,13 @@ class ChannelManagerBot(BaseAgent):
         hook          = self._craft_hook(titulo, texto)
         stars         = self._stars()
 
-        # ── POST 1: GRATIS — comienzo de la historia, corte en el momento tenso ─
+        # ── POST 1: GRATIS — intro personal + comienzo de historia + corte cinematográfico
         preview, _ = self._split_story_for_preview(texto, target=480)
 
-        # Intros que rotan para que no sea siempre igual
-        _INTROS = [
-            "🗣️ <b>CONFESIÓN ANÓNIMA</b>",
-            "⚠️ <b>HISTORIA REAL | ANÓNIMA</b>",
-            "🔥 <b>CONFESIÓN REAL</b>",
-            "📩 <b>ME LO CONTARON EN SECRETO</b>",
-        ]
-        _CORTES = [
-            f"\n...\n\n🔒 <b>El resto está justo abajo — {stars} ⭐ Stars</b>",
-            f"\n...\n\n👇 <b>Continúa abajo. Solo {stars} ⭐</b>",
-            f"\n...\n\n⬇️ <b>La historia completa: {stars} ⭐ Stars</b>",
-            f"\n...\n\n🔓 <b>Desbloqueá el final — {stars} ⭐</b>",
-        ]
+        intro  = random.choice(self._STORY_INTROS)
+        cliff  = random.choice(self._STORY_CLIFF).format(stars=stars)
 
-        free_text = (
-            f"{random.choice(_INTROS)}\n\n"
-            f"{preview}\n"
-            f"{random.choice(_CORTES)}"
-        )
+        free_text = f"{intro}{preview}{cliff}"
 
         r1 = self._api("sendMessage", json={
             "chat_id":                  self._channel(),
@@ -545,6 +507,7 @@ class ChannelManagerBot(BaseAgent):
             self.log(f"post gratis fallo: {r1.get('description', '?')}")
             return False
 
+        free_msg_id = (r1.get("result") or {}).get("message_id")
         time.sleep(5)
 
         # ── POST 2: PAGADO — historia COMPLETA borrosa hasta pagar Stars ─────
@@ -564,14 +527,7 @@ class ChannelManagerBot(BaseAgent):
                 self.log("sin media para paid post — abortando")
                 return False
 
-            # Caption del paid media: minimalista, no repite el hook (ya está arriba)
-            _PAID_SIMPLE = [
-                f"🔒 Historia completa adentro — {stars} ⭐ para desbloquear.",
-                f"⬆️ Sigue la historia. {stars} ⭐ Stars y la lees entera.",
-                f"El final que no te esperás. {stars} ⭐ → historia completa.",
-                f"Sin censura. {stars} ⭐ Stars y es tuya.",
-            ]
-            caption    = random.choice(_PAID_SIMPLE)
+            caption = random.choice(config.CHANNEL_PAID_CAPTIONS).format(stars=stars)
             media_json = [{"type": "photo", "media": f"attach://m{i}"}
                           for i in range(len(all_media))]
             files = {f"m{i}": open(p, "rb") for i, p in enumerate(all_media)}
@@ -584,8 +540,10 @@ class ChannelManagerBot(BaseAgent):
                     "media":      json.dumps(media_json),
                 }, files=files)
                 if r2.get("ok"):
-                    paid_ok = True
-                    self._record_post(CONTENT_CONFESSION, hook)
+                    paid_ok  = True
+                    paid_id  = (r2.get("result") or {}).get("message_id")
+                    msg_ids  = [i for i in [free_msg_id, paid_id] if i]
+                    self._record_post(CONTENT_CONFESSION, hook, msg_ids)
                     self.log(f"confesion publicada: '{hook[:60]}'")
                 else:
                     self.log(f"paid media fallo: {r2.get('description', '?')}")
@@ -609,7 +567,8 @@ class ChannelManagerBot(BaseAgent):
         })
         ok = result.get("ok", False)
         if ok:
-            self._record_post(CONTENT_ENGAGEMENT, post[:80])
+            mid = (result.get("result") or {}).get("message_id")
+            self._record_post(CONTENT_ENGAGEMENT, post[:80], [mid] if mid else [])
             self.log("post de engagement publicado")
         return ok
 
@@ -622,7 +581,8 @@ class ChannelManagerBot(BaseAgent):
         })
         ok = result.get("ok", False)
         if ok:
-            self._record_post(CONTENT_VALUE, post[:80])
+            mid = (result.get("result") or {}).get("message_id")
+            self._record_post(CONTENT_VALUE, post[:80], [mid] if mid else [])
             self.log("post de valor publicado")
         return ok
 
@@ -638,7 +598,8 @@ class ChannelManagerBot(BaseAgent):
         })
         ok = result.get("ok", False)
         if ok:
-            self._record_post(CONTENT_URGENCY, post[:80])
+            mid = (result.get("result") or {}).get("message_id")
+            self._record_post(CONTENT_URGENCY, post[:80], [mid] if mid else [])
             self.log("post de urgencia publicado")
         return ok
 
@@ -649,26 +610,26 @@ class ChannelManagerBot(BaseAgent):
             return False
         channel_link = getattr(config, "TELEGRAM_CHANNEL_LINK", "")
         prompt = (
-            f"Escribe un post para Telegram anunciando este video de YouTube: '{title}'\n"
-            f"Hook del video: '{hook[:100]}'\n"
-            f"URL: {youtube_url}\n\n"
-            "El post debe: crear curiosidad, dar ganas de verlo YA, y mencionar que "
-            "la historia completa con imágenes está en el canal de Telegram.\n"
-            "Máximo 200 caracteres antes del link. Tono íntimo y dramático.\n"
-            "Responde solo con el texto del post (incluye el link del video)."
+            f"Sos la admin de un canal de confesiones en Telegram. Subiste un nuevo video de YouTube.\n"
+            f"Título: '{title}'\nHook: '{hook[:100]}'\n\n"
+            "Escribí un mensaje corto para tu canal de Telegram anunciando el video. "
+            "Tono: como si le avisaras a una amiga. Sin emojis de catálogo (🔥✅❤️). "
+            "Sin 'NUEVO VIDEO' en mayúsculas. Máximo 180 caracteres antes del link. "
+            "Tiene que crear intriga sin hacer spoiler. "
+            "Respondé solo con el texto (sin el link, lo agrego yo después)."
         )
         try:
-            copy = self._llm_call(prompt, max_tokens=200).strip()
-            if youtube_url not in copy:
-                copy = f"{copy}\n\n📺 {youtube_url}"
-            if channel_link and channel_link not in copy:
-                copy += f"\n📲 Más aquí → {channel_link}"
+            copy = self._llm_call(prompt, max_tokens=160).strip()
+            # Limpiar markdown del LLM si aparece
+            copy = copy.strip('"').strip("'")
+            copy = f"{copy}\n\n▶️ {youtube_url}"
+            if channel_link:
+                copy += f"\n\nHistoria completa con imágenes → {channel_link}"
         except Exception:
             copy = (
-                "\U0001f3ac <b>NUEVO VIDEO</b>\n\n"
-                f"<i>&ldquo;{hook[:180]}&rdquo;</i>\n\n"
-                f"\U0001f4fa {youtube_url}"
-                + (f"\n\U0001f4f2 Historia completa → {channel_link}" if channel_link else "")
+                f"Subí algo nuevo. Miralo antes de que lo eliminen.\n\n"
+                f"▶️ {youtube_url}"
+                + (f"\n\nHistoria completa → {channel_link}" if channel_link else "")
             )
 
         result = self._api("sendMessage", json={
@@ -680,6 +641,248 @@ class ChannelManagerBot(BaseAgent):
         if result.get("ok"):
             self.log(f"teaser YouTube: '{title[:55]}'")
         return result.get("ok", False)
+
+    # ── Historia extendida explícita con paywall de Stars (post-YouTube) ────────
+
+    def _generate_extended_story(
+        self, title: str, hook: str, script_text: str, scenes: list[dict]
+    ) -> str:
+        base = script_text or " ".join(s.get("text", "") for s in scenes)
+        prompt = (
+            "Sos una escritora adulta especializada en confesiones prohibidas y literatura erótica.\n"
+            "Tu voz es la de una mujer latina que confiesa algo que nunca le dijo a nadie.\n"
+            "Cruda. Real. Sin filtro. Sin censura.\n\n"
+            f"HISTORIA BASE:\nTítulo: {title}\nHook: {hook}\n\n{base[:2000]}\n\n"
+            "REGLAS:\n"
+            "1. Escribe la versión EXTENDIDA — el doble de larga. Arranca directamente con la acción.\n"
+            "2. Las escenas íntimas son EXPLÍCITAS: detalla actos físicos, sensaciones, deseo, "
+            "el morbo de lo prohibido. Vocabulario adulto directo. No sugerido, EXPLÍCITO.\n"
+            "3. Agrega lo que el video no mostró: antes, durante, después. Múltiples escenas.\n"
+            "4. Primera persona. Mundo real: departamento, hotel, oficina, auto, bar.\n"
+            "5. Nombres latinos: Sofía, Valeria, Camila, Diego, Sebastián, Mateo, Emilio.\n"
+            "6. Longitud: 600 a 1000 palabras. Solo prosa continua, sin títulos ni encabezados.\n\n"
+            "Responde SOLO con la historia (sin título, sin prólogo)."
+        )
+        try:
+            raw = self._llm_call(prompt, max_tokens=2000).strip()
+            if len(raw) < 400:
+                raise ValueError("demasiado corta")
+            self.log(f"extended story: {len(raw)} chars")
+            return raw
+        except Exception as e:
+            self.log(f"extended story LLM falló ({e}) — usando texto base")
+            return base
+
+    def _pexels_queries_for_script(self, scenes: list[dict]) -> list[str]:
+        """Elige las 2 mejores queries de Pexels desde los image_prompts de las escenas."""
+        priority_acts = {"CLIMAX", "CONFRONTACION", "DESCUBRIMIENTO", "FINAL", "REVELATION"}
+        priority = [
+            s.get("image_prompt", "").strip() for s in scenes
+            if s.get("act", "").upper() in priority_acts and s.get("image_prompt", "").strip()
+        ]
+        fallback = [s.get("image_prompt", "").strip() for s in scenes if s.get("image_prompt", "").strip()]
+        pool = priority or fallback
+        seen: set[str] = set()
+        queries: list[str] = []
+        for q in pool:
+            if q not in seen:
+                seen.add(q)
+                queries.append(q[:100])
+            if len(queries) >= 2:
+                break
+        return queries or ["passionate couple dramatic intimate dark cinema", "woman alone dramatic portrait night"]
+
+    def _render_story_cards(self, hook: str, full_story: str, out_dir: Path) -> list[str]:
+        """
+        Renderiza la historia completa como N imágenes paginadas.
+        Cada imagen es una página de la historia — sin corte ni 'continúa'.
+        Retorna lista de paths (vacía si PIL no está disponible).
+        """
+        try:
+            import textwrap
+            from PIL import Image, ImageDraw, ImageFont
+
+            W, H = 1080, 1350
+            HEADER_H   = 220   # espacio reservado para gradiente + hook + separador
+            FOOTER_H   = 100   # espacio reservado para footer
+            TEXT_Y0    = HEADER_H + 10
+            TEXT_YMAX  = H - FOOTER_H
+            LINE_H     = 46    # altura por línea de texto
+            BLANK_H    = 14    # altura de línea vacía (párrafo)
+            FONT_SIZE  = 34
+            WRAP_WIDTH = 42
+
+            font_paths = [
+                str(config.FONTS_DIR / "Impact.ttf"),
+                "C:/Windows/Fonts/impact.ttf",
+                "C:/Windows/Fonts/arialbd.ttf",
+                "C:/Windows/Fonts/arial.ttf",
+            ]
+            def _font(size: int):
+                for fp in font_paths:
+                    try:
+                        return ImageFont.truetype(fp, size)
+                    except Exception:
+                        pass
+                return ImageFont.load_default()
+
+            # Pre-procesar todas las líneas
+            story_clean = full_story.replace("\n\n", "\n").strip()
+            all_lines: list[str] = []
+            for paragraph in story_clean.split("\n"):
+                wrapped = textwrap.wrap(paragraph.strip(), width=WRAP_WIDTH) or [""]
+                all_lines.extend(wrapped)
+                all_lines.append("")  # espacio entre párrafos
+
+            # Paginar: cuántas líneas caben por página
+            def _lines_per_page() -> int:
+                available = TEXT_YMAX - TEXT_Y0
+                count = 0
+                used = 0
+                # Simular llenado para calcular máximo
+                for _ in range(200):
+                    h = LINE_H  # asumir línea de texto (peor caso)
+                    if used + h > available:
+                        break
+                    used += h
+                    count += 1
+                return max(count, 8)
+
+            MAX_LINES = _lines_per_page()
+            pages: list[list[str]] = []
+            for start in range(0, max(len(all_lines), 1), MAX_LINES):
+                chunk = all_lines[start:start + MAX_LINES]
+                if any(l.strip() for l in chunk):
+                    pages.append(chunk)
+
+            if not pages:
+                pages = [all_lines[:MAX_LINES] or [full_story[:200]]]
+
+            paths: list[str] = []
+            hook_clean = hook.replace('"', '').replace("'", "")[:110]
+
+            for page_idx, page_lines in enumerate(pages):
+                img  = Image.new("RGB", (W, H), (6, 6, 14))
+                draw = ImageDraw.Draw(img)
+
+                # Franja roja
+                for yi in range(200):
+                    t = 1 - yi / 200
+                    r = int(160 * t)
+                    draw.line([(0, yi), (W, yi)], fill=(r, 0, 28))
+                draw.rectangle([0, 0, W - 1, H - 1], outline=(160, 0, 28), width=5)
+
+                # Header: página 1 muestra el hook; el resto solo el número
+                if page_idx == 0:
+                    draw.text((W // 2, 40), "Historia completa",
+                              font=_font(44), fill=(200, 200, 215), anchor="mm")
+                    draw.line([(60, 88), (W - 60, 88)], fill=(100, 0, 20), width=2)
+                    y = 100
+                    for line in textwrap.wrap(f'"{hook_clean}"', width=38)[:3]:
+                        draw.text((W // 2, y), line, font=_font(34),
+                                  fill=(230, 80, 80), anchor="mm")
+                        y += 44
+                else:
+                    total = len(pages)
+                    draw.text((W // 2, 55),
+                              f"Página {page_idx + 1} de {total}",
+                              font=_font(38), fill=(160, 160, 180), anchor="mm")
+                    draw.line([(60, 100), (W - 60, 100)], fill=(100, 0, 20), width=2)
+
+                # Cuerpo
+                y = TEXT_Y0
+                font_story = _font(FONT_SIZE)
+                for line in page_lines:
+                    if y >= TEXT_YMAX:
+                        break
+                    draw.text((60, y), line, font=font_story, fill=(210, 210, 228))
+                    y += LINE_H if line.strip() else BLANK_H
+
+                # Footer
+                draw.line([(60, H - 80), (W - 60, H - 80)], fill=(40, 40, 55), width=1)
+                draw.text((W // 2, H - 46), "GATA CURIOSA",
+                          font=_font(26), fill=(90, 90, 110), anchor="mm")
+
+                out_path = out_dir / f"story_card_{page_idx + 1}.jpg"
+                img.save(str(out_path), "JPEG", quality=93)
+                paths.append(str(out_path))
+
+            self.log(f"story cards: {len(paths)} página(s) renderizada(s)")
+            return paths
+
+        except Exception as e:
+            self.log(f"render story cards ERROR: {e}")
+            return []
+
+    def post_extended_story_paid(self, script: dict, stars: int | None = None) -> bool:
+        """
+        Envía historia extendida explícita bloqueada con Stars, justo después del teaser YouTube.
+
+        Contenido desbloqueado: historia completa paginada en N imágenes + 1-2 fotos de Pexels.
+        """
+        if not self._ok():
+            return False
+
+        stars       = stars if stars is not None else self._stars()
+        title       = script.get("title", "")
+        hook        = script.get("hook", title)
+        script_text = script.get("script_text", "")
+        scenes      = script.get("scenes", [])
+
+        story_text = self._generate_extended_story(title, hook, script_text, scenes)
+        queries    = self._pexels_queries_for_script(scenes)
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="chbot_ext_"))
+        try:
+            # Páginas de la historia (todas las que hagan falta, sin corte)
+            card_paths = self._render_story_cards(hook, story_text, tmp_dir)
+
+            # 1-2 fotos de Pexels que coincidan con la historia
+            imgs: list[str] = []
+            for q in queries:
+                found = self._fetch_images(q, n=1)
+                imgs.extend(p for p in found if Path(p).exists())
+                if len(imgs) >= 2:
+                    break
+
+            # Orden: fotos de Pexels primero (visual impacto), luego páginas de historia
+            all_media: list[str] = []
+            all_media.extend(imgs[:2])
+            all_media.extend(p for p in card_paths if Path(p).exists())
+            all_media = all_media[:10]  # límite Telegram
+
+            if not all_media:
+                self.log("extended story paid: sin media — abortando")
+                return False
+
+            caption    = f"{hook}\n\n📖 Historia completa ({len(card_paths)} páginas) — {stars} ⭐"
+            media_json = [{"type": "photo", "media": f"attach://m{i}"}
+                          for i in range(len(all_media))]
+            files = {f"m{i}": open(p, "rb") for i, p in enumerate(all_media)}
+            try:
+                r = self._api("sendPaidMedia", data={
+                    "chat_id":    self._channel(),
+                    "star_count": str(stars),
+                    "caption":    caption[:1024],
+                    "parse_mode": "HTML",
+                    "media":      json.dumps(media_json),
+                }, files=files)
+                ok = r.get("ok", False)
+                if ok:
+                    mid = (r.get("result") or {}).get("message_id")
+                    self._record_post("extended_story", hook[:80], [mid] if mid else [])
+                    self.log(f"extended story paid OK: '{title[:55]}' ({len(card_paths)} páginas)")
+                else:
+                    self.log(f"extended story paid fallo: {r.get('description', '?')}")
+                return ok
+            finally:
+                for f in files.values():
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ── Estrategia diaria completa ─────────────────────────────────────────────
 
@@ -694,6 +897,11 @@ class ChannelManagerBot(BaseAgent):
             return 0
 
         from modules.scraper import get_story_for_channel
+
+        # Borrar mensajes viejos antes de publicar los nuevos
+        deleted = self.cleanup_old_channel_posts()
+        if deleted:
+            self.notify(f"🗑️ Canal: {deleted} mensaje(s) antiguo(s) eliminado(s)")
 
         plan      = self._plan_content_mix(slots)
         published = 0

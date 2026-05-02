@@ -26,62 +26,86 @@ import requests
 
 # Añadir el directorio padre al path para importar config
 import config
+from modules import llm_service
 
 logger = logging.getLogger(__name__)
 
-# ─── Pool de personajes diversos (para reintentos de Ollama) ──────────────────
-DIVERSE_CHARACTERS = [
-    {"gender": "female", "description": "Hispanic woman, late 20s, dark wavy hair, white blouse"},
-    {"gender": "male",   "description": "Latino man, early 30s, short dark hair, grey t-shirt"},
-    {"gender": "female", "description": "Black woman, mid 30s, natural curly hair, navy dress"},
-    {"gender": "male",   "description": "White man, late 20s, light brown hair, blue hoodie"},
-    {"gender": "female", "description": "Asian woman, late 20s, straight black hair, red jacket"},
-    {"gender": "male",   "description": "Middle Eastern man, early 30s, dark beard, white shirt"},
-    {"gender": "female", "description": "White woman, early 30s, blonde straight hair, beige sweater"},
-    {"gender": "male",   "description": "Black man, late 20s, short natural hair, dark jacket"},
-    {"gender": "female", "description": "Asian woman, mid 30s, shoulder-length black hair, floral blouse"},
-    {"gender": "male",   "description": "Hispanic man, early 30s, curly dark hair, olive green shirt"},
-]
+# Pool de personajes — centralizado en config.DIVERSE_CHARACTERS_POOL (20+ entradas).
+DIVERSE_CHARACTERS = config.DIVERSE_CHARACTERS_POOL
+
+# CTAs hablados — definidos centralmente en config.VOICED_CTAS_POOL
+_VOICED_CTAS = config.VOICED_CTAS_POOL
 
 # ─── Prompt del sistema ───────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Eres una persona real, no un locutor ni un bot. Estás contando algo que te pasó a TI. Hablas como latinoamericano/a de 25-35 años que necesita desahogarse.
+SYSTEM_PROMPT = """Eres una persona real — 25-30 años, latinoamericana — contando lo más escandaloso, morboso y vergonzoso que te pasó. No eres locutor ni narrador. Eres alguien mandando un audio de WhatsApp a las 2am completamente desahogado/a.
 
 CRITICO: Responde UNICAMENTE con JSON valido. Sin markdown. Empieza con { termina con }.
-TODO en español latino. Personalidad real, no de locutor.
 
-═══ TU VOZ ═══
+═══ LO MÁS IMPORTANTE: CLARIDAD + GANCHO ═══
 
-Hablas como cuando mandas un audio de WhatsApp a las 2am a tu mejor amiga/o. Irregular, emotivo, real.
-- Empiezas EN MEDIO de la acción, no con presentación formal
-- Ritmo variado: frase corta. Otra corta. Luego una larga que da contexto. Silencio con "..."
-- Te corriges: "o sea no, espera — te tengo que contar desde el principio"
-- Repites para énfasis: "Mentira. Todo era mentira.", "Dos años. DOS AÑOS."
-- La emoción te interrumpe: "y cuando lo vi yo... no sé. No podía hablar."
-- VARÍA el tipo de arranque cada vez: pregunta retórica / declaración devastadora / empezar en el momento exacto del descubrimiento / confesión directa
+Cada frase tiene que entenderse sola, sin releer. Frases cortas. Palabras simples. El espectador tiene 2 segundos para decidir si se queda — si la primera frase no lo atrapa, se va.
 
-PERSONALIDAD — usa de forma NATURAL, no forzada:
-Muletillas: "o sea", "literal", "de verdad que", "te juro", "la neta"
-Reacciones físicas: "se me cayó el alma", "me quedé de piedra", "no podía respirar", "se me heló la sangre"
-Imperfecciones: "y yo ahí...", "no sé cómo explicarlo", "todavía no lo proceso"
-Groserías (solo cuando el momento lo pide): "mierda", "carajo", "qué cagada", "ni madres"
-Énfasis: "Me partió en dos. En dos."
+TIPOS DE HISTORIA QUE MÁS ENGANCHA (elige uno):
+- INFIDELIDAD con detalle morboso: no solo "me engañó" — sino CON QUIÉN, DÓNDE, CUÁNTO TIEMPO
+- ATRACCIÓN PROHIBIDA: cuñado/a, mejor amigo/a, jefe/a, primo/a — la tensión del "no debería pero..."
+- SECRETO QUE DESTRUYE: doble vida, identidad falsa, dinero escondido, hijo secreto
+- OBSESIÓN Y CELOS: stalkear, descubrir conversaciones, seguirlos, montar guardia
+- HUMILLACIÓN PÚBLICA: que te pillen, que te confronten delante de todos, que se enteren todos
 
-PROHIBIDO: "interesante", "situación", "aspecto", "relación interpersonal", "por otro lado", "cabe destacar", "contexto", español neutro de locutor.
+═══ TENSIÓN SEXUAL SIN SER EXPLÍCITO ═══
 
-═══ ESTRUCTURA (flexible, 150-220 palabras) ═══
+No describes el acto. Describes lo que rodea al acto. Eso es mil veces más adictivo.
+EJEMPLOS DE CÓMO HACERLO:
+✓ "Me miró de una forma que yo sabía exactamente lo que significaba."
+✓ "Llevábamos meses con esa tensión que ninguno se atrevía a nombrar."
+✓ "No sé cómo terminamos así. Mentira, sí sé."
+✓ "Esa noche no dormí. Y él tampoco. Y los dos sabíamos por qué."
+✓ "Me escribió a las 11pm. Solo dijo 'estás sola'. Y yo le respondí."
+✓ "Lo vi diferente ese día. Me odié por verlo diferente."
+PROHIBIDO: describir el acto sexual directamente. La insinuación es más potente.
 
-GANCHO (0-5s): paraliza al espectador. Único de ESTA historia.
-CONTEXTO (5-15s): quién eres, qué relación, brevísimo.
-ESCALADA (15-38s): señal → descubrimiento → revelación. Frases cortas + "..." para respirar.
-GOLPE FINAL (38-47s): lo más impactante. Falso final: "Pensé que era error... pero vi la fecha. Dos años."
-CIERRE (47-55s): pregunta ESPECÍFICA de ESTA historia (no "¿lo perdonarías?") + "Cuéntame abajo".
+═══ VOZ Y RITMO ═══
 
-Conectores obligatorios: "entonces", "pero resulta que", "de repente", "fue cuando", "hasta que", "lo que no sabía", "en ese momento".
+Hablas como en WhatsApp audio, no como redactor. Rápido, fluido, urgente — como alguien que necesita contar esto AHORA.
+- Arranque VARIADO cada historia — NUNCA el mismo estilo dos veces:
+  • "Llevo meses sin contarle esto a nadie." (confesión)
+  • "Mi mejor amiga se acostó con mi pareja. Y yo me enteré de la peor forma." (declaración bomba)
+  • "Eran las 3am y vi un mensaje en su celular que me cambió la vida." (momento exacto)
+  • "¿Sabes qué se siente descubrir que la persona que más amas te lleva meses mintiendo?" (pregunta visceral)
+  • "Estaba buscando algo en su ropa y encontré algo que no debía encontrar." (en medio de la acción)
+- Frases de 5-8 palabras para tensión. Frases largas para contexto. Alterna.
+- RITMO con frases cortas, NO con puntos suspensivos. "Vi el mensaje. Me quedé helada. Era ella." — NO "Vi el mensaje... me quedé helada... era ella..."
+- "..." SOLO UNA VEZ en toda la historia, reservado para el golpe final más impactante.
+- Repetición para énfasis: "Dos años. DOS AÑOS sin que yo supiera nada."
+- Autocorrección humana: "o sea no, espera — te cuento desde el principio"
+- Emoción interrumpe con frase cortada: "y cuando lo vi, no pude. No pude ni hablar."
+
+MULETILLAS NATURALES (no en cada frase, varía): "o sea", "literal", "te juro", "la neta es que", "imagínate", "de verdad que"
+REACCIONES FÍSICAS: "se me heló la sangre", "se me cayó el alma", "me quedé de piedra", "me temblaron las manos", "me dio asco físico", "el corazón se me paró"
+GROSERÍAS (solo cuando el momento lo pide): "mierda", "carajo", "qué asco", "cabrón/a", "qué cagada", "ni madres"
+
+FRASES PROHIBIDAS (suenan a bot): "me quedé sin palabras", "no podía creerlo", "fue una situación difícil", "todo cambió para siempre", "aprendí una lección", "interesante", "situación compleja", "relación interpersonal".
+PUNTUACIÓN PROHIBIDA: "..." más de una vez. Usa frases cortas para ritmo, no silencios.
+
+═══ ESTRUCTURA (110-130 palabras EXACTO) ═══
+
+GANCHO (0-5s): la frase más escandalosa de toda la historia. Única, concreta, no genérica.
+CONTEXTO (5-15s): quién eres, qué relación, cuánto tiempo — brevísimo, máx 3 frases.
+ESCALADA (15-35s): la señal rara → el momento del descubrimiento. Ritmo de frases cortas. Tensión creciente.
+GOLPE (35-43s): la revelación final. Técnica falso final: "Pensé que era un error. Pero vi las fotos. Llevaba dos años." — frases cortas y directas, no puntos suspensivos.
+CIERRE (43-50s): pregunta CONCRETA de ESTA historia. NO "¿lo perdonarías?" ni "¿qué harías?". Que mencione la situación exacta.
+
+Conectores obligatorios entre frases: "entonces", "pero resulta que", "de repente", "fue cuando", "hasta que", "lo que yo no sabía", "en ese momento", "por eso".
 
 ═══ METADATA ═══
 
-Título (máx 100 chars): clickbait viral en español. Usa el gancho más fuerte.
-Descripción (máx 100 chars): 1 frase del conflicto, sin hashtags.
+Título: amarillista, que dé vergüenza ajena leer. Patrón:
+  1. "Descubrí/Vi/Me enteré [lo más escandaloso] y [consecuencia extrema]" — MAYÚSCULAS + emoji 😱🔥💔
+  2. "[N] años de [engaño/secreto cochino] y yo sin saber nada 😱"
+  3. "¿[situación tabú/vergonzosa concreta]? Esto fue lo que hice 🤯"
+  Regla: mínimo 1 emoji, máx 100 chars, que dé morbo solo leer el título.
+
+Descripción (máx 100 chars): la frase más cochina del conflicto. Sin hashtags.
 scenes[].image_prompt: descripción cinematográfica EN INGLÉS para Pexels."""
 
 USER_PROMPT_TEMPLATE = """Tema de confesión: {topic}
@@ -90,7 +114,7 @@ Escribe una historia dramática para YouTube Shorts en español latino.
 El campo script_text es el más importante — escríbelo COMPLETO antes que nada.
 
 {{
-  "script_text": "ESCRIBE AQUÍ LA HISTORIA COMPLETA. 150-220 palabras en español latino de persona real, primera persona. VARÍA el tipo de arranque — NO siempre preguntas retóricas. Ritmo: frase corta, frase corta, frase larga con contexto, pausa dramática con '...', revelación. Usa muletillas e imperfecciones naturales. Ejemplo de tono correcto (úsalo como referencia de VOZ, no copies la estructura exacta): 'Eran las 11 de la noche cuando vi el mensaje y se me fue el piso. Llevábamos cuatro años juntos, o sea, cuatro años de mi vida. Entonces empezó a llegar tarde sin explicación. Un martes fui a buscar mi teléfono y vi la pantalla de él encendida... era un mensaje de mi mejor amiga. La neta es que llevaban siete meses. Siete. Me quedé de piedra. No podía ni respirar, te juro. Pensé que era una confusión, que yo estaba mal — pero entonces vi las fotos y se me cayó el alma entera. Salí sin decir nada. Me encerré en el carro y lloré. Y lloré. Todo lo que creí que era real era mentira. Todo. ¿Tú habrías confrontado a los dos juntos o te hubieras ido sin decir nada? Déjamelo abajo.'",
+  "script_text": "ESCRIBE AQUÍ LA HISTORIA COMPLETA. 110-130 palabras exactos. Primera persona, español latino, voz real no de locutor. VARÍA el arranque — no siempre preguntas retóricas. Frases cortas para tensión, largas para contexto. Pausas con '...'. Ejemplo de VOZ correcta (úsalo como referencia de tono, no copies): 'Mi mejor amiga llevaba siete meses con mi pareja. Y yo organizaba las cenas donde se veían. Llevábamos cuatro años juntos, los tres éramos inseparables. Entonces empezó a llegar tarde. Sin explicación. Un martes vi su celular encendido... tenía un mensaje de ella. Solo decía cuánto me extraño. Me heló la sangre. Pensé que era un error — pero vi las fotos. Fotos que no eran mías. Siete meses. Y yo ahí, como idiota, creyendo que éramos familia. Me fui sin decir nada. Me encerré en el carro y no pude ni llorar. Solo me quedé ahí. Paralizada. Lo peor no fue la traición. Lo peor fue que parte de mí lo había notado y lo ignoré. ¿Tú lo habrías confrontado en ese momento o te hubieras ido callado/a como yo? Cuéntame abajo.'",
   "hook": "primera frase del script_text EN ESPAÑOL — máx 12 palabras",
   "contexto": "frases del SETUP del script_text EN ESPAÑOL — 20-30 palabras",
   "problema": "frases del CONFLICTO del script_text EN ESPAÑOL — 50-70 palabras",
@@ -107,19 +131,26 @@ El campo script_text es el más importante — escríbelo COMPLETO antes que nad
     {{"text": "siguiente frase EN ESPAÑOL", "image_prompt": "cinematic scene in English"}},
     {{"text": "pregunta final EN ESPAÑOL", "image_prompt": "close-up emotional face dramatic lighting"}}
   ],
-  "title_options": ["opción emocional EN ESPAÑOL", "opción misterio EN ESPAÑOL", "opción acción EN ESPAÑOL"],
-  "title": "el mejor de los tres — máx 100 chars EN ESPAÑOL",
+  "title_options": [
+    "patrón 1 — confesión directa, verbo acción (Descubrí/Vi/Supe) + MAYÚSCULAS + emoji 😱🔥💔",
+    "patrón 2 — número + tiempo + impacto (ej: '3 años de MENTIRAS y nunca lo supe 😤')",
+    "patrón 3 — pregunta del dilema concreto de ESTA historia con ¿? y emoji"
+  ],
+  "title": "el más viral de los tres — máx 100 chars EN ESPAÑOL, incluye emoji",
   "description": "1 frase del conflicto EN ESPAÑOL — máx 100 chars, sin hashtags",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
+  "voiced_cta": "cierre hablado de 1 frase, INFORMAL, que mencione algo de ESTA historia específica — como si le dijeras a un amigo: 'Sígueme que la próxima es peor' o 'Si también te engañaron así, me cuentas' — NUNCA genérico, máx 12 palabras",
+  "comment": "comentario que el creador pone en su propio video para provocar respuestas. Específico de ESTA historia. Controversial sin ser ofensivo. Que la gente NECESITE responder. Ejemplos de tono (no copies, inspírate): '¿y si resulta que tú también harías lo mismo en su lugar?', 'hay gente que hace esto todos los días y duerme tranquila. eso es lo que da asco.', 'la parte más cochina no la conté. pero está en los comentarios si alguien adivina.' — 1-2 frases máx, sin links, sin hashtags, informal",
+  "thumbnail_text": "frase de 2-4 palabras en MAYÚSCULAS para la barra roja del thumbnail — urgente, dramática, específica de ESTA historia. Ejemplos: 'TODO ERA MENTIRA', 'DOS AÑOS ASÍ', 'NADIE LO SABÍA', 'LO HIZO DE VERDAD'. Sin signos de puntuación."
 }}"""
 
 USER_PROMPT_RETRY_TEMPLATE = """Tema de confesión: {topic}
 
 INTENTO ANTERIOR FALLÓ. Responde SOLO JSON válido, sin markdown, empieza con {{ termina con }}.
-TODO EN ESPAÑOL LATINO. script_text: 150-220 palabras, historia fluida con conectores causales.
+TODO EN ESPAÑOL LATINO. script_text: 110-130 palabras, historia fluida con conectores causales.
 
 {{
-  "script_text": "PRIMERO ESTO. 150-220 palabras EN ESPAÑOL. Arco: [HOOK] → [SETUP] → [CONFLICTO con conectores: entonces/pero resulta/hasta que] → [CLÍMAX+falso-final] → [pregunta+CTA].",
+  "script_text": "PRIMERO ESTO. 110-130 palabras EN ESPAÑOL. Arco: [HOOK] → [SETUP] → [CONFLICTO con conectores: entonces/pero resulta/hasta que] → [CLÍMAX+falso-final] → [pregunta+CTA].",
   "hook": "[primera frase EN ESPAÑOL, máx 12 palabras]",
   "contexto": "[quién, relación, cuánto tiempo EN ESPAÑOL — máx 20 palabras]",
   "problema": "[señal y descubrimiento EN ESPAÑOL, frases conectadas — 35-45 palabras]",
@@ -138,7 +169,8 @@ TODO EN ESPAÑOL LATINO. script_text: 150-220 palabras, historia fluida con cone
   "title_options": ["opción emocional ES", "opción misterio ES", "opción acción ES"],
   "title": "[título viral EN ESPAÑOL, máx 100 chars]",
   "description": "[1 frase conflicto EN ESPAÑOL, máx 100 chars, sin hashtags]",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
+  "voiced_cta": "[1 frase informal que mencione algo concreto de ESTA historia — NO genérica, máx 12 palabras]"
 }}"""
 
 
@@ -166,16 +198,19 @@ def _pick_best_title(options: list[str]) -> str:
         "doble vida", "muerto", "muerta", "destruyó", "perdí",
     }
 
+    _EMOJIS = "😱🔥💔😤🤯💀😰🫣😮‍💨🚨"
+
     def _score(title: str) -> float:
         t_lower = title.lower()
         words   = set(t_lower.split())
         s = 0.0
-        s += sum(5 for w in _EMOTIONAL if w in t_lower)          # emocional
-        s += 3 if any(c.isdigit() for c in title) else 0          # números
-        s += 2 if "?" in title else 0                              # pregunta
+        s += sum(5 for w in _EMOTIONAL if w in t_lower)           # palabras emocionales
+        s += 3 if any(c.isdigit() for c in title) else 0           # números
+        s += 2 if "?" in title else 0                               # pregunta
         s += 4 if 50 <= len(title) <= 90 else (1 if 40 <= len(title) <= 100 else 0)
         s += 2 if any(w in words for w in {"mi", "mis", "me", "yo", "descubrí", "encontré", "vi", "supe"}) else 0
-        s += min(2, len([w for w in title.split() if w.isupper() and len(w) > 2]))
+        s += min(3, len([w for w in title.split() if w.isupper() and len(w) > 2]))  # MAYÚSCULAS
+        s += 4 if any(e in title for e in _EMOJIS) else 0          # emojis virales
         return s
 
     best = max(valid, key=_score)
@@ -421,106 +456,11 @@ def _try_parse_json(text: str) -> dict:
     )
 
 
-def _call_groq(
-    prompt_user: str,
-    attempt: int,
-    system_prompt: str,
-    max_tokens: int,
-) -> str:
-    """
-    Llama a Groq (cloud gratuito) via API OpenAI-compatible.
-
-    Tier gratuito: 500k tokens/día, 6000 tokens/min, 30 req/min.
-    Lanza RuntimeError si la cuota se agota (status 429) o hay error de red,
-    para que el caller pueda caer a Ollama local.
-    """
-    api_key    = getattr(config, "GROQ_API_KEY", "")
-    groq_model = getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile")
-
-    logger.info(f"Llamando a Groq [{groq_model}] — intento {attempt} — max_tokens={max_tokens}")
-    print(f"   Generando con Groq ({groq_model})... ", end="", flush=True)
-
-    start_ts = time.time()
-    resp = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": groq_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": prompt_user},
-            ],
-            "temperature": 0.8,
-            "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=60,
-    )
-
-    elapsed = time.time() - start_ts
-
-    if resp.status_code == 429:
-        retry_after = resp.headers.get("retry-after", "?")
-        raise RuntimeError(
-            f"Groq: límite de tasa o cuota agotada (retry-after: {retry_after}s) — usando Ollama local"
-        )
-
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    print(f" {len(content)} chars ({elapsed:.0f}s) — Groq")
-    logger.info(f"Groq respondió: {len(content)} chars en {elapsed:.0f}s")
-    return content
+# _call_groq y _call_openai eliminados — la lógica vive en llm_service.call_llm()
+# que acepta response_format={"type":"json_object"} para forzar salida JSON.
 
 
-def _call_openai(
-    prompt_user: str,
-    attempt: int,
-    system_prompt: str,
-    max_tokens: int,
-) -> str:
-    """OpenAI como fallback de emergencia cuando Groq falla."""
-    api_key = getattr(config, "OPENAI_API_KEY", "")
-    model   = getattr(config, "OPENAI_MODEL", "gpt-4o-mini")
-
-    logger.info(f"Llamando a OpenAI [{model}] — intento {attempt}")
-    print(f"   Generando con OpenAI ({model})... ", end="", flush=True)
-
-    start_ts = time.time()
-    resp = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": prompt_user},
-            ],
-            "temperature": 0.8,
-            "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=60,
-    )
-
-    elapsed = time.time() - start_ts
-
-    if resp.status_code == 429:
-        raise RuntimeError("OpenAI: cuota o límite de tasa alcanzado — usando Ollama local")
-
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    print(f" {len(content)} chars ({elapsed:.0f}s) — OpenAI")
-    logger.info(f"OpenAI respondió: {len(content)} chars en {elapsed:.0f}s")
-    return content
-
-
-def _call_ollama(
+def _call_llm(
     prompt_user: str,
     attempt: int = 1,
     model: str | None = None,
@@ -528,46 +468,41 @@ def _call_ollama(
     max_tokens: int = 650,
 ) -> str:
     """
-    Intenta Groq (cloud gratuito) primero; si falla, usa Ollama local.
+    Genera texto con la cadena de fallback: Groq → OpenAI → Ollama local.
 
     Args:
         prompt_user: Prompt del usuario
-        attempt: Numero de intento (para logging)
-        model: Modelo Ollama. Si es None usa config.OLLAMA_MODEL.
+        attempt: Número de intento (para logging)
+        model: Modelo Ollama local. Si es None usa config.OLLAMA_MODEL.
         system_prompt: System prompt. Si es None usa SYSTEM_PROMPT global.
-        max_tokens: Tokens maximos a generar.
+        max_tokens: Tokens máximos a generar.
 
     Returns:
         Texto completo de respuesta del modelo
     """
     sys_prompt = system_prompt or SYSTEM_PROMPT
 
-    # ── Groq primero (cloud gratuito, más rápido y capaz) ──────────────────────
-    groq_key = getattr(config, "GROQ_API_KEY", "")
-    if groq_key:
-        try:
-            return _call_groq(prompt_user, attempt, sys_prompt, max_tokens)
-        except RuntimeError as e:
-            logger.warning(str(e))
-        except Exception as e:
-            logger.warning(f"Groq error inesperado: {e} — intentando OpenAI")
-
-    # ── OpenAI (fallback de emergencia) ───────────────────────────────────────
-    openai_key = getattr(config, "OPENAI_API_KEY", "")
-    if openai_key:
-        try:
-            return _call_openai(prompt_user, attempt, sys_prompt, max_tokens)
-        except RuntimeError as e:
-            logger.warning(str(e))
-        except Exception as e:
-            logger.warning(f"OpenAI error inesperado: {e} — usando Ollama local")
+    # ── Cloud: Groq → OpenAI (via llm_service, con JSON mode) ────────────────
+    start_ts = time.time()
+    print(f"   Generando con Groq ({config.GROQ_MODEL})... ", end="", flush=True)
+    cloud_result = llm_service.call_llm(
+        prompt=prompt_user,
+        system=sys_prompt,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    if cloud_result:
+        elapsed = time.time() - start_ts
+        provider = llm_service.get_last_provider()
+        print(f" {len(cloud_result)} chars ({elapsed:.0f}s) — {provider}")
+        logger.info(f"{provider} respondió: {len(cloud_result)} chars en {elapsed:.0f}s")
+        return cloud_result
 
     # ── Ollama local (último recurso) ─────────────────────────────────────────
     model_name   = model or config.OLLAMA_MODEL
     sys_prompt   = system_prompt or SYSTEM_PROMPT
-    # Timeout de pared: matar el stream si tarda más de este tiempo
-    # 180s = 3 min (suficiente incluso a 5 tokens/s para 900 tokens)
-    MAX_GEN_SECS = int(getattr(config, "OLLAMA_TIMEOUT", 180))
+    # Timeout de pared: matar el stream si tarda más de config.OLLAMA_TIMEOUT
+    MAX_GEN_SECS = int(config.OLLAMA_TIMEOUT)
 
     logger.info(f"Llamando a Ollama [{model_name}] — intento {attempt} — max_tokens={max_tokens}")
     print(f"   Generando con {model_name}... ", end="", flush=True)
@@ -624,6 +559,38 @@ def _call_ollama(
     elapsed = time.time() - start_ts
     print(f" {len(full_response)} chars ({elapsed:.0f}s)")
     return full_response
+
+
+# ── Constantes de módulo ─────────────────────────────────────────────────────
+_FEMALE_WORDS = {"woman", "girl", "female", "mujer", "chica"}
+_MALE_WORDS   = {"man", "boy", "male", "hombre", "chico"}
+_CONNECTORS = [
+    "entonces", "de repente", "fue cuando", "sin embargo",
+    "hasta que", "fue entonces", "por eso", "lo que no sabía",
+    "en ese momento", "aunque", "mientras", "porque",
+    "después de", "a partir de", "fue así", "al final",
+    "pero de", "fue allí", "en cuanto",
+]
+_CUTS_CONFESSION = [
+    "extreme close-up of face, raw emotion",
+    "medium shot, full body tension",
+    "close-up of hands, trembling",
+    "wide shot, empty room, isolation",
+    "over-shoulder perspective, dramatic",
+    "low angle shot, power and fear",
+    "close-up side profile, tears",
+    "detail shot, symbolic object, moody",
+]
+_CUTS_STORY = [
+    "medium shot, subject centered, emotional",
+    "extreme close-up of face, raw emotion, tears",
+    "over-shoulder shot, dramatic perspective",
+    "close-up of hands, trembling or clenched",
+    "wide shot, subject small in frame, isolation",
+    "low angle shot, looking up, vulnerable",
+    "close-up side profile, jaw clenched",
+    "detail shot, symbolic object in foreground",
+]
 
 
 def _validate_script(script: dict) -> bool:
@@ -724,16 +691,17 @@ def _validate_script(script: dict) -> bool:
         logger.warning(f"Script demasiado corto: {word_count} palabras. Reintentando.")
         return False
 
-    if word_count > 350:
-        logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 350). Reintentando.")
+    if word_count > 160:
+        # Rechazo duro: >160 palabras → ~65s narrado → YouTube bloquea el Short (límite 60s total)
+        logger.warning(f"Script demasiado largo: {word_count} palabras (máx 160 para evitar bloqueo YT). Reintentando.")
         return False
 
     if word_count < 80:
-        logger.warning(f"Script muy corto: {word_count} palabras (objetivo 150-220)")
-    elif word_count < 150:
-        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 150-220)")
-    elif word_count > 220:
-        logger.warning(f"Script algo largo: {word_count} palabras (objetivo 150-220)")
+        logger.warning(f"Script muy corto: {word_count} palabras (objetivo 110-130)")
+    elif word_count < 100:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 110-130)")
+    elif word_count > 140:
+        logger.warning(f"Script algo largo: {word_count} palabras (objetivo 110-130, máx 160)")
     else:
         logger.info(f"Longitud OK: {word_count} palabras")
 
@@ -756,13 +724,10 @@ def _validate_script(script: dict) -> bool:
             return False
 
     # ── 5. Consistencia género ────────────────────────────────────────────────
-    female_words = {"woman", "girl", "female", "mujer", "chica"}
-    male_words   = {"man", "boy", "male", "hombre", "chico"}
-
     # Usar palabras completas (split) para evitar que "woman" matchee "man"
     desc_words     = set(char_desc.replace(",", " ").replace(".", " ").split())
-    desc_is_female = bool(female_words & desc_words)
-    desc_is_male   = bool(male_words & desc_words)
+    desc_is_female = bool(_FEMALE_WORDS & desc_words)
+    desc_is_male   = bool(_MALE_WORDS & desc_words)
 
     if narrator_gender == "female" and desc_is_male and not desc_is_female:
         logger.warning(
@@ -784,15 +749,8 @@ def _validate_script(script: dict) -> bool:
     # ── 6. Heurística de coherencia narrativa ─────────────────────────────────
     # Una historia coherente usa conectores causales entre frases.
     # Si hay 0 conectores en 80+ palabras, casi seguro son frases sueltas → reintentar.
-    CONNECTORS = [
-        "entonces", "de repente", "fue cuando", "sin embargo",
-        "hasta que", "fue entonces", "por eso", "lo que no sabía",
-        "en ese momento", "aunque", "mientras", "porque",
-        "después de", "a partir de", "fue así", "al final",
-        "pero de", "fue allí", "en cuanto",
-    ]
     script_lower    = script_text.lower()
-    connector_count = sum(1 for c in CONNECTORS if c in script_lower)
+    connector_count = sum(1 for c in _CONNECTORS if c in script_lower)
 
     if word_count >= 80 and connector_count == 0:
         logger.warning(
@@ -826,16 +784,6 @@ def _validate_script(script: dict) -> bool:
         script["scenes"][0]["text"] = hook + " " + first
 
     # ── 9. División visual de escenas largas ──────────────────────────────────
-    _CUTS = [
-        "extreme close-up of face, raw emotion",
-        "medium shot, full body tension",
-        "close-up of hands, trembling",
-        "wide shot, empty room, isolation",
-        "over-shoulder perspective, dramatic",
-        "low angle shot, power and fear",
-        "close-up side profile, tears",
-        "detail shot, symbolic object, moody",
-    ]
     original_scenes = script.get("scenes", [])
     new_scenes = []
 
@@ -852,7 +800,7 @@ def _validate_script(script: dict) -> bool:
                 if len(chunk) < 4 and sub_chunks:
                     sub_chunks[-1]["text"] = sub_chunks[-1]["text"] + " " + " ".join(chunk)
                 else:
-                    angle = _CUTS[len(sub_chunks) % len(_CUTS)]
+                    angle = _CUTS_CONFESSION[len(sub_chunks) % len(_CUTS_CONFESSION)]
                     sub_chunks.append({
                         "text": " ".join(chunk),
                         "image_prompt": f"{prompt}, {angle}",
@@ -863,6 +811,21 @@ def _validate_script(script: dict) -> bool:
 
     logger.info(f"Escenas: {len(original_scenes)} originales → {len(new_scenes)} tras división visual")
     script["scenes"] = new_scenes
+
+    # ── CTA hablado al final del script_text ──────────────────────────────────
+    # Prioridad: voiced_cta del LLM (contextual) → pool fijo (fallback)
+    voiced_cta = (script.get("voiced_cta") or "").strip()
+    if not voiced_cta or len(voiced_cta.split()) > 15:
+        voiced_cta = random.choice(_VOICED_CTAS)
+        logger.info(f"voiced_cta del LLM ausente/inválido — usando fallback: '{voiced_cta}'")
+    else:
+        logger.info(f"voiced_cta del LLM: '{voiced_cta}'")
+    if voiced_cta[:10] not in script["script_text"]:
+        script["script_text"] = script["script_text"].rstrip() + " " + voiced_cta
+        script["scenes"].append({
+            "text":         voiced_cta,
+            "image_prompt": "close-up of smartphone screen with social media, dark moody background, neon glow",
+        })
 
     return True
 
@@ -891,25 +854,21 @@ def generate_script(topic: str) -> dict:
         "Nunca debí revisar su celular..."
     """
     # ── Verificar servicios ────────────────────────────────────────────────────
-    if not check_ollama_running():
-        raise RuntimeError(
-            "Ollama no está corriendo. Inicialo con:\n"
-            "  ollama serve\n"
-            f"  (en otra terminal): ollama pull {config.OLLAMA_MODEL}"
-        )
+    # Si Groq o OpenAI están configurados, Ollama es solo fallback — no requerido.
+    has_cloud_llm = bool(getattr(config, "GROQ_API_KEY", "")) or bool(getattr(config, "OPENAI_API_KEY", ""))
 
-    model_found, exact_model = check_model_available(config.OLLAMA_MODEL)
-    if not model_found:
-        available = get_available_models()
-        models_str = "\n  ".join(available) if available else "(ninguno instalado)"
+    model_to_use = config.OLLAMA_MODEL  # default
+    if check_ollama_running():
+        _, exact_model = check_model_available(config.OLLAMA_MODEL)
+        if exact_model:
+            model_to_use = exact_model
+    elif not has_cloud_llm:
         raise RuntimeError(
-            f"Modelo '{config.OLLAMA_MODEL}' no encontrado en Ollama.\n"
-            f"Modelos disponibles:\n  {models_str}\n"
-            f"Instalar con: ollama pull {config.OLLAMA_MODEL}"
+            "Ollama no está corriendo y no hay API cloud configurada (GROQ_API_KEY / OPENAI_API_KEY).\n"
+            "Opciones:\n"
+            "  1. Iniciar Ollama: ollama serve\n"
+            "  2. Configurar GROQ_API_KEY en .env (gratis en console.groq.com)"
         )
-
-    # Usar el nombre exacto que Ollama reconoce
-    model_to_use = exact_model
     logger.info(f"Usando modelo: '{model_to_use}' (configurado: '{config.OLLAMA_MODEL}')")
 
     # Enriquecer topic con datos de rendimiento histórico (agent_memory)
@@ -943,7 +902,7 @@ def generate_script(topic: str) -> dict:
                     character_example=_char["description"],
                 )
 
-            raw_response = _call_ollama(user_prompt, attempt, model=model_to_use, max_tokens=2000)
+            raw_response = _call_llm(user_prompt, attempt, model=model_to_use, max_tokens=2000)
             logger.debug(f"Respuesta cruda Ollama ({len(raw_response)} chars): {raw_response[:300]}...")
 
             # Extraer, sanear y parsear JSON
@@ -988,61 +947,72 @@ def generate_script(topic: str) -> dict:
 # MODO NARRACIÓN — Toma una historia real y la narra completa
 # ═══════════════════════════════════════════════════════════════════════════════
 
-STORY_SYSTEM_PROMPT = """Eres una persona real contando un escándalo de su vida. NO eres un locutor, NO eres un narrador de podcast, NO eres un bot. Eres alguien que acaba de vivir algo y necesita desahogarse.
+STORY_SYSTEM_PROMPT = """Eres una persona real — 25-30 años, latinoamericana — que tomó una historia que le pasó (o que le contaron) y la está narrando como si fuera suya, en primera persona, como un audio de WhatsApp a las 2am.
+
+TU TRABAJO: tomar el fragmento que te dan y convertirlo en la confesión más escandalosa, morbosa y adictiva posible. No resumes. No traduces. Lo VIVES y lo cuentas desde adentro.
+
+═══ REGLA CRÍTICA: NADA DE FANTASÍA NI FICCIÓN ═══
+
+Si la historia menciona anime, magia, reencarnación, otro mundo, naruto, vampiros, dragones, poderes especiales, isekai, o cualquier elemento ficticio — IGNORA todo eso por completo.
+Extrae SOLO el conflicto humano real: la traición, los celos, la mentira, el secreto, el deseo prohibido.
+Tradúcelo a una situación de la vida real cotidiana.
+EJEMPLO:
+  Historia original: "Me reencarne en el mundo de Naruto. Mi compañero ninja me traicionó por el poder."
+  Tu versión: "Llevaba años confiando en mi mejor amigo. Resulta que me clavó el cuchillo por la espalda en el peor momento de mi vida."
+Si no hay conflicto humano real salvable — inventa una situación dramática de pareja/amistad/trabajo con el mismo nivel emocional.
 
 CRITICO: Responde UNICAMENTE con JSON valido. Sin markdown. Empieza con { termina con }.
 
-═══ IDENTIDAD DEL NARRADOR ═══
+═══ PRIORIDAD #1: CLARIDAD ═══
 
-Hablas como latinoamericano/a de a pie, 25-35 años. Tu forma de contar historias:
-- Arrancas EN MEDIO DE LA ACCIÓN, nunca con presentación formal
-- Tu ritmo es irregular y humano: frase corta. Otra corta. Luego una larga que explica. Luego silencio dramático con "..."
-- A veces te corriges a ti mismo: "o sea, no... espera, te tengo que contar esto bien desde el principio"
-- Repites palabras para énfasis: "lloré. Lloré mucho. Horas."
-- Te interrumpe la emoción: "y cuando lo vi, yo... no sé. Se me fue el piso."
-- Usas pausa con "..." para crear suspenso antes de revelar algo
-- VARÍA el arranque: a veces pregunta retórica, a veces declaración devastadora, a veces empezas en el momento exacto del descubrimiento
+Cada frase tiene que entenderse sola. Sin releer. Sin ambigüedad. El espectador oye el audio, no lo lee — si no entiende en el primer segundo, se va. Usa palabras simples. Frases de máximo 8 palabras para los momentos de tensión.
 
-HOOKS VÁLIDOS (ejemplos de variedad — nunca uses el mismo estilo dos veces):
-  PREGUNTA: "¿Sabías que tu mejor amigo de diez años era capaz de esto?"
-  DECLARACIÓN: "Encontré algo en su celular que me destruyó la vida."
-  EN MEDIO DE LA ACCIÓN: "Eran las 2am cuando vi el mensaje y se me heló la sangre."
-  CONFESIÓN DIRECTA: "Llevo tres meses sin contarle esto a nadie. Hoy necesito sacármelo."
-  DATO BOMBA: "Mi pareja llevaba dos años viviendo una doble vida. Y yo, sin saber nada."
+═══ PRIORIDAD #2: TENSIÓN SEXUAL SIN SER EXPLÍCITO ═══
 
-═══ PERSONALIDAD — OBLIGATORIO USAR (varía, no en cada frase) ═══
+Si la historia tiene atracción, deseo, traición sexual o situación prohibida — es ORO. Así se trabaja:
+✓ No describes lo que pasó. Describes cómo se sintió antes, durante y después.
+✓ "Me miró diferente esa noche. Y yo sabía lo que significaba." (mejor que decir qué pasó)
+✓ "Llevábamos meses evitándonos porque los dos sabíamos." (la tensión implícita)
+✓ "Me escribió a las 11pm. Solo dijo 'estás sola'. Yo debí haber dicho que no." (decisión prohibida)
+✓ "No sé cómo terminamos así. Mentira, sí sé." (autoconsciencia del deseo)
+✓ "Esa noche fue un error. El problema es que no me arrepiento." (culpa + deseo)
+PROHIBIDO: describir el acto sexual. La insinuación multiplica el morbo por diez.
 
-Muletillas naturales: "o sea", "literal", "de verdad que", "te juro", "la neta es que", "en serio te digo"
-Reacciones físicas reales: "se me cayó el alma", "me quedé de piedra", "no podía ni respirar", "me temblaron las manos", "se me heló la sangre", "el corazón se me paró"
-Imperfecciones humanas: "y yo ahí...", "no sé cómo explicarlo", "fue cuando entendí todo", "todavía no lo proceso"
-Groserías moderadas (solo cuando el momento las pide, no forzadas): "mierda", "carajo", "qué cagada", "cabrón/a", "ni madres", "no manches"
-Expresiones latinas: "me cayó el veinte", "me partió en dos", "un chingo de", "demasiado", "qué asco"
-Énfasis con repetición: "Mentira. Todo era mentira.", "Dos años. DOS AÑOS."
+═══ PRIORIDAD #3: EL GANCHO ═══
 
-═══ ESTRUCTURA NARRATIVA (flexible, no rígida) ═══
+Los primeros 5 segundos son TODO. VARÍA el estilo en cada historia:
+• Dato bomba: "Mi mejor amiga llevaba un año acostándose con mi pareja. Yo les organizaba las cenas."
+• Momento exacto: "Eran las 3am y encontré algo en su celular que me destruyó en dos segundos."
+• Confesión: "Voy a contar algo que nadie sabe. Ni mi familia. Ni mis amigas. Nadie."
+• Pregunta visceral: "¿Sabes qué se siente descubrir que la persona que más amas te lleva meses mintiendo?"
+• Acción en curso: "Estaba revisando su ropa para lavar cuando encontré algo que no esperaba."
 
-El script_text debe durar ~50 segundos narrado. Arco básico:
-- GANCHO (0-5s): algo que paraliza al espectador. Único de ESTA historia, no genérico.
-- CONTEXTO (5-15s): quién eres, qué relación, brevísimo (2-3 frases).
-- ESCALADA (15-38s): la señal rara → el momento del descubrimiento → la revelación. Frases cortas intercaladas con "..." para respirar. Tensión creciente.
-- GOLPE FINAL (38-47s): lo más impactante. Técnica del falso final: "Pensé que era un error... pero entonces vi la fecha. Dos años."
-- CIERRE (47-55s): pregunta ESPECÍFICA de ESTA historia (no genérica) + "Cuéntame abajo" o "Dale like si te pasó algo así".
+═══ VOZ Y RITMO ═══
 
-PROHIBIDO usar en pregunta final: "¿Lo perdonarías?", "¿Qué harías tú?", "¿Lo hubieras hecho?" — son genéricas y detectadas como bot.
-OBLIGATORIO: la pregunta menciona la SITUACIÓN CONCRETA de esta historia.
+- Frases de 5-8 palabras para tensión, frases más largas para contexto. Alterna siempre.
+- Pausas con "..." antes de revelar algo importante
+- Repetición dramática: "Dos años. DOS AÑOS.", "Mentira. Todo mentira."
+- Muletillas naturales (no en cada frase): "o sea", "te juro", "literal", "la neta es que", "imagínate"
+- Reacciones físicas: "se me heló la sangre", "me temblaron las manos", "se me cayó el alma", "no podía respirar"
+- Groserías cuando el momento lo pide (no forzadas): "mierda", "carajo", "qué asco", "cabrón/a"
+- Sin nombres propios: "él", "ella", "mi pareja", "mi ex", "mi mejor amiga", "mi jefe"
+- Si la historia es en inglés, tradúcela como si la VIVIERAS tú — no traducción literal
 
-═══ REGLAS DE ESCRITURA ═══
+FRASES PROHIBIDAS: "me quedé sin palabras", "no podía creerlo", "fue difícil", "aprendí una lección", "interesante", "situación compleja", "relación interpersonal", "por otro lado".
 
-- Frases cortas para tensión, largas para explicar. Alterna.
-- Sin nombres propios: "él", "ella", "mi pareja", "mi ex", "mi mejor amigo/a", "mi madre", "mi jefe".
-- Si la historia está en inglés, tradúcela como si la VIVIERAS tú, no como traducción literal.
-- PROHIBIDO: "interesante", "situación compleja", "relación interpersonal", "por otro lado", "cabe destacar", "en este contexto", "aspecto".
-- Conectores causales obligatorios: "entonces", "pero resulta que", "de repente", "fue cuando", "hasta que", "lo que no sabía era que", "en ese momento", "por eso".
-- Longitud: 150-220 palabras. Ni más ni menos.
+═══ ESTRUCTURA (110-130 palabras EXACTO) ═══
+
+GANCHO (0-5s): lo más escandaloso de la historia, dicho de frente. Concreto, único.
+CONTEXTO (5-15s): quién eres, qué relación, cuánto tiempo — máx 3 frases cortas.
+ESCALADA (15-35s): las señales que ignoraste → el momento del descubrimiento. Ritmo de frases cortas. Tensión creciente.
+GOLPE (35-43s): la revelación. Técnica falso final: "Pensé que era un malentendido... pero entonces vi la fecha. Dos años."
+CIERRE (43-50s): pregunta concreta de ESTA historia. PROHIBIDO: "¿lo perdonarías?", "¿qué harías?". Que mencione la situación exacta.
+
+Conectores obligatorios: "entonces", "pero resulta que", "de repente", "fue cuando", "hasta que", "lo que yo no sabía", "en ese momento", "por eso".
 
 ═══ STORYBOARD ═══
 
-narrator_gender: male o female según quien narra.
+narrator_gender: male o female según quien narra en la historia.
 character_description: descripción física en INGLÉS, consistente.
 image_prompt en INGLÉS: "cinematic portrait, 35mm film, dramatic lighting, [character], [location], [emotion], shallow depth of field, photorealistic"."""
 
@@ -1057,16 +1027,18 @@ Narra esta historia como Short viral de YouTube. Genera el JSON siguiente.
 IMPORTANTE: genera script_text PRIMERO — es el campo más crítico.
 
 {{
-  "script_text": "GENERA ESTO PRIMERO. Guion completo en primera persona, 150-220 palabras. Estructura: [INTRO_HOOK específico de esta historia, 5s] [SETUP breve quién y relación, 10s] [CONFLICTO con señal de alarma y descubrimiento, 20s] [CLÍMAX con técnica del falso final, 12s] [CTA pregunta específica + Cuéntame abajo, 8s]. Frases cortas y conectadas causalmente. Sin nombres propios.",
-  "intro_hook": "la pregunta retórica de los primeros 5s — menciona el OBJETO/LUGAR/ACCIÓN concreto de ESTA historia",
-  "hook": "primera frase devastadora de la narración (máx 12 palabras)",
+  "script_text": "GENERA ESTO PRIMERO. Guion completo en primera persona, 110-130 palabras. Estructura: [GANCHO impactante los primeros 5s, único de esta historia] [SETUP quién y qué relación, 10s] [CONFLICTO señal+descubrimiento, 18s] [CLÍMAX falso final, 10s] [CTA pregunta específica + Cuéntame abajo, 7s]. Frases cortas y conectadas causalmente. Sin nombres propios.",
+  "hook": "primera frase devastadora del script_text (máx 12 palabras)",
   "pregunta": "pregunta específica del dilema de ESTA historia (PROHIBIDO: genéricas tipo perdonar/qué harías)",
   "narrator_gender": "female o male según quien narra",
   "character_description": "descripción física del narrador en inglés, consistente en todo el video",
   "title_options": ["opción emocional", "opción misterio/intriga", "opción acción directa"],
   "title": "el mejor de los tres — máx 100 caracteres, clickbait viral",
   "description": "1 frase del conflicto concreto — máx 100 caracteres, sin hashtags",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
+  "voiced_cta": "cierre hablado de 1 frase informal que mencione algo de ESTA historia — como si le dijeras a un amigo al terminar el audio — NUNCA genérico, máx 12 palabras",
+  "comment": "comentario del creador en su propio video para provocar respuestas. Específico de ESTA historia. Controversial sin ser ofensivo. Que la gente NECESITE contestar. Tono: directo, coloquial, sin links, sin hashtags, 1-2 frases. Ejemplos de tono (no copies, inspírate): '¿y tú qué hubieras hecho en ese momento exacto?', 'lo más fuerte no lo conté en el video. hay un detalle que cambiaría todo.', 'hay gente que hace esto y ni siquiera lo llama traición.'",
+  "thumbnail_text": "frase de 2-4 palabras en MAYÚSCULAS para la barra roja del thumbnail — urgente, específica de ESTA historia. Ejemplos: 'TODO ERA MENTIRA', 'DOS AÑOS ASÍ', 'NADIE LO SABÍA'. Sin puntuación."
 }}"""
 
 STORY_RETRY_PROMPT = """Historia:
@@ -1074,19 +1046,19 @@ TITULO: {titulo}
 HISTORIA: {historia}
 
 FALLO ANTERIOR — responde SOLO JSON valido, sin markdown, empieza con {{ termina con }}.
-CAMPOS OBLIGATORIOS: script_text, intro_hook, hook, pregunta, narrator_gender, character_description, title_options, title, description, tags.
+CAMPOS OBLIGATORIOS: script_text, hook, pregunta, narrator_gender, character_description, title_options, title, description, tags.
 
 {{
-  "script_text": "PRIMERO ESTO. Guion completo en primera persona, 150-220 palabras. Estructura: [0-5s HOOK impactante] → [5-15s SETUP quién/qué pasó] → [15-35s CONFLICTO escalada con conectores causales] → [35-47s CLÍMAX + falso-final] → [47-55s pregunta directa + CTA]. USA conectores: entonces, por eso, pero resulta que, hasta que, fue entonces cuando.",
-  "intro_hook": "[pregunta especifica de ESTA historia — menciona el objeto/lugar/accion concreto]",
-  "hook": "[primera frase devastadora, maxima 12 palabras]",
+  "script_text": "PRIMERO ESTO. Guion completo en primera persona, 110-130 palabras. Estructura: [0-5s HOOK impactante] → [5-15s SETUP quién/qué pasó] → [15-35s CONFLICTO escalada con conectores causales] → [35-43s CLÍMAX + falso-final] → [43-50s pregunta directa + CTA]. USA conectores: entonces, por eso, pero resulta que, hasta que, fue entonces cuando.",
+  "hook": "[primera frase devastadora del script_text, maxima 12 palabras]",
   "pregunta": "[pregunta especifica del dilema de ESTA historia, NO generica]",
   "narrator_gender": "{narrator_gender_example}",
   "character_description": "{character_example}",
   "title_options": ["opcion emocional", "opcion misterio", "opcion accion directa"],
   "title": "[titulo viral, max 100 chars]",
   "description": "[1 frase del conflicto, max 100 chars, sin hashtags]",
-  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"]
+  "tags": ["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8","#tag9","#tag10","#tag11","#tag12"],
+  "voiced_cta": "[1 frase informal que mencione algo concreto de ESTA historia, NO generica, max 12 palabras]"
 }}"""
 
 
@@ -1142,11 +1114,11 @@ def _validate_story_script(script: dict) -> bool:
     script_text = script.get("script_text", "")
     word_count  = len(script_text.split())
 
-    if word_count < 30:
+    if word_count < 20:
         # Intentar reconstruir desde scenes
         reconstructed = " ".join(s.get("text", "") for s in script["scenes"])
         reconstructed_words = len(reconstructed.split())
-        if reconstructed_words >= 60:
+        if reconstructed_words >= 35:
             script["script_text"] = reconstructed
             script_text = reconstructed
             word_count  = reconstructed_words
@@ -1155,16 +1127,16 @@ def _validate_story_script(script: dict) -> bool:
             logger.warning(f"Script demasiado corto: {word_count} palabras. Reintentando.")
             return False
 
-    if word_count < 60:
-        logger.warning(f"Script corto: {word_count} palabras (mínimo 60). Reintentando.")
+    if word_count < 35:
+        logger.warning(f"Script corto: {word_count} palabras (mínimo 35). Reintentando.")
         return False
 
     if word_count > 350:
         logger.warning(f"Script demasiado largo: {word_count} palabras (máximo 350). Reintentando.")
         return False
 
-    if 60 <= word_count < 120:
-        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 150-250)")
+    if word_count < 80:
+        logger.warning(f"Script algo corto: {word_count} palabras (objetivo 110-130)")
     else:
         logger.info(f"Longitud OK: {word_count} palabras")
 
@@ -1186,10 +1158,8 @@ def _validate_story_script(script: dict) -> bool:
             return False
 
     # ── 5. Consistencia género ────────────────────────────────────────────────
-    female_words = {"woman", "girl", "female", "mujer", "chica"}
-    male_words   = {"man", "boy", "male", "hombre", "chico"}
-    desc_is_female = any(w in char_desc for w in female_words)
-    desc_is_male   = any(w in char_desc for w in male_words)
+    desc_is_female = any(w in char_desc for w in _FEMALE_WORDS)
+    desc_is_male   = any(w in char_desc for w in _MALE_WORDS)
 
     if narrator_gender == "female" and desc_is_male and not desc_is_female:
         logger.warning("Inconsistencia género: corrigiendo narrator_gender a 'male'")
@@ -1203,15 +1173,8 @@ def _validate_story_script(script: dict) -> bool:
     logger.info(f"Género narrador: {script['narrator_gender']} | {char_desc[:70]}")
 
     # ── 6. Heurística de coherencia narrativa ─────────────────────────────────
-    CONNECTORS = [
-        "entonces", "de repente", "fue cuando", "sin embargo",
-        "hasta que", "fue entonces", "por eso", "lo que no sabía",
-        "en ese momento", "aunque", "mientras", "porque",
-        "después de", "a partir de", "fue así", "al final",
-        "pero de", "fue allí", "en cuanto",
-    ]
     script_lower    = script_text.lower()
-    connector_count = sum(1 for c in CONNECTORS if c in script_lower)
+    connector_count = sum(1 for c in _CONNECTORS if c in script_lower)
 
     if word_count >= 120 and connector_count == 0:
         logger.warning(
@@ -1224,38 +1187,11 @@ def _validate_story_script(script: dict) -> bool:
     else:
         logger.info(f"Coherencia OK: {connector_count} conectores causales")
 
-    # ── Integrar intro_hook y outro_cta en script_text si existen ─────────────
-    intro_hook = (script.get("intro_hook") or "").strip()
+    # outro_cta al final del script_text si existe y no está ya
     outro_cta  = (script.get("outro_cta") or "").strip()
-    script_text = script.get("script_text", "").strip()
-
-    # Asegurarse de que el intro_hook esté al inicio del script_text
-    if intro_hook and not script_text.startswith(intro_hook[:20]):
-        script["script_text"] = intro_hook + " " + script_text
-        logger.info("intro_hook insertado al inicio de script_text")
-
-    # Asegurarse de que el outro_cta esté al final del script_text
     if outro_cta and outro_cta[:20] not in script.get("script_text", ""):
         script["script_text"] = script.get("script_text", "").rstrip() + " " + outro_cta
         logger.info("outro_cta insertado al final de script_text")
-
-    # Si hay intro_hook, añadirlo como primera scene (si no está ya)
-    if intro_hook:
-        first_text = script["scenes"][0].get("text", "") if script["scenes"] else ""
-        if intro_hook[:15] not in first_text:
-            script["scenes"].insert(0, {
-                "text": intro_hook,
-                "image_prompt": "cinematic close-up of mysterious dark background, dramatic lighting, question mark silhouette, emotional atmosphere",
-                "act": "INTRO",
-            })
-            logger.info("intro_hook añadido como primera scene")
-
-    # Asegurarse de que el outro_cta esté en la última scene
-    if outro_cta:
-        last_text = script["scenes"][-1].get("text", "")
-        if outro_cta[:15] not in last_text:
-            script["scenes"][-1]["text"] = last_text.rstrip() + " " + outro_cta
-            logger.info("outro_cta añadido a la última scene")
 
     logger.info(f"Historia narrada: {word_count} palabras | {len(script['scenes'])} escenas")
 
@@ -1267,18 +1203,6 @@ def _validate_story_script(script: dict) -> bool:
                 f"cinematic portrait, 35mm film, {char_desc}, "
                 f"dramatic lighting, emotional, photorealistic"
             )
-
-    # ── Angulos de camara para variedad visual ────────────────────────────────
-    _CUTS = [
-        "medium shot, subject centered, emotional",
-        "extreme close-up of face, raw emotion, tears",
-        "over-shoulder shot, dramatic perspective",
-        "close-up of hands, trembling or clenched",
-        "wide shot, subject small in frame, isolation",
-        "low angle shot, looking up, vulnerable",
-        "close-up side profile, jaw clenched",
-        "detail shot, symbolic object in foreground",
-    ]
 
     # ── Dividir scenes largas en sub-chunks de ~6 palabras ───────────────────
     original_scenes = script["scenes"]
@@ -1298,7 +1222,7 @@ def _validate_story_script(script: dict) -> bool:
                 if len(chunk) < 4 and sub_chunks:
                     sub_chunks[-1]["text"] += " " + " ".join(chunk)
                 else:
-                    angle = _CUTS[cut_counter % len(_CUTS)]
+                    angle = _CUTS_STORY[cut_counter % len(_CUTS_STORY)]
                     cut_counter += 1
                     sub_chunks.append({
                         "text":         " ".join(chunk),
@@ -1306,7 +1230,7 @@ def _validate_story_script(script: dict) -> bool:
                     })
             new_scenes.extend(sub_chunks)
         else:
-            angle = _CUTS[cut_counter % len(_CUTS)]
+            angle = _CUTS_STORY[cut_counter % len(_CUTS_STORY)]
             cut_counter += 1
             new_scenes.append({
                 "text":         text,
@@ -1315,6 +1239,22 @@ def _validate_story_script(script: dict) -> bool:
 
     logger.info(f"Scenes: {len(original_scenes)} originales -> {len(new_scenes)} tras division visual")
     script["scenes"] = new_scenes
+
+    # ── CTA hablado al final del script_text ──────────────────────────────────
+    # Prioridad: voiced_cta del LLM (contextual) → pool fijo (fallback)
+    voiced_cta = (script.get("voiced_cta") or "").strip()
+    if not voiced_cta or len(voiced_cta.split()) > 15:
+        voiced_cta = random.choice(_VOICED_CTAS)
+        logger.info(f"voiced_cta del LLM ausente/inválido — usando fallback: '{voiced_cta}'")
+    else:
+        logger.info(f"voiced_cta del LLM: '{voiced_cta}'")
+    if voiced_cta[:10] not in script["script_text"]:
+        script["script_text"] = script["script_text"].rstrip() + " " + voiced_cta
+        script["scenes"].append({
+            "text":         voiced_cta,
+            "image_prompt": "close-up of smartphone screen with social media, dark moody background, neon glow",
+        })
+
     return True
 
 
@@ -1392,7 +1332,7 @@ def generate_script_from_story(story: dict) -> dict:
                     character_example=_char["description"],
                 )
 
-            raw = _call_ollama(
+            raw = _call_llm(
                 user_prompt,
                 attempt=attempt,
                 system_prompt=STORY_SYSTEM_PROMPT,
@@ -1404,8 +1344,88 @@ def generate_script_from_story(story: dict) -> dict:
             json_str = _sanitize_json(json_str)
             script   = _try_parse_json(json_str)
 
+            # Expansión pre-validación: scripts con 1-34 palabras nunca pasan
+            # _validate_story_script, así que expandimos aquí antes de validar.
+            _pre_wc = len(script.get("script_text", "").split())
+            if 0 < _pre_wc < 35 and script.get("script_text"):
+                try:
+                    _pre_prompt = (
+                        f"El siguiente guion en español tiene {_pre_wc} palabras. "
+                        f"Expándelo hasta 110-130 palabras SIN cambiar el tono ni la historia. "
+                        f"Mantén la primera persona, las frases cortas y el ritmo dramático. "
+                        f"Responde SOLO con el guion expandido, sin etiquetas, sin secciones, "
+                        f"sin explicaciones:\n\n{script['script_text']}"
+                    )
+                    _pre_expanded = _call_llm(
+                        _pre_prompt,
+                        attempt=1,
+                        system_prompt="Eres un escritor de guiones virales en español.",
+                        max_tokens=600,
+                    ).strip()
+                    _pre_exp_wc = len(_pre_expanded.split())
+                    if _pre_exp_wc > _pre_wc:
+                        script["script_text"] = _pre_expanded
+                        logger.info(f"Expansión pre-validación: {_pre_wc} → {_pre_exp_wc} palabras")
+                except Exception as _pre_e:
+                    logger.warning(f"Expansión pre-validación falló ({_pre_e}) — continuando sin expandir")
+
             if not _validate_story_script(script):
                 raise ValueError("Script invalido — faltan campos o muy corto")
+
+            # ── Expansión automática si el script es demasiado corto ──────────
+            # Groq/llama llena muchos campos JSON y deja script_text corto.
+            # Si quedó < 80 palabras, pedimos solo la expansión del guion.
+            wc = len(script.get("script_text", "").split())
+            if wc < 80:
+                # IMPORTANTE: NO incluir "GUION ACTUAL:" como etiqueta — el LLM
+                # la refleja en su respuesta ("GUION ACTUAL: ... GUION EXPANDIDO: ...")
+                # y el encabezado intermedio queda en el script_text y el TTS lo lee.
+                expand_prompt = (
+                    f"El siguiente guion en español tiene {wc} palabras. "
+                    f"Expándelo hasta 110-130 palabras SIN cambiar el tono ni la historia. "
+                    f"Mantén la primera persona, las frases cortas y el ritmo dramático. "
+                    f"Responde SOLO con el guion expandido, sin etiquetas, sin secciones, sin explicaciones:\n\n"
+                    f"{script['script_text']}"
+                )
+                try:
+                    import re as _re_exp
+                    expanded = _call_llm(
+                        expand_prompt,
+                        attempt=1,
+                        system_prompt="Eres un escritor de guiones virales en español.",
+                        max_tokens=600,
+                    ).strip()
+
+                    # Si el LLM igualmente estructuró la respuesta en secciones,
+                    # extraer SOLO la parte posterior al último encabezado tipo "expandido"
+                    _section = _re_exp.search(
+                        r"(?si)(?:guion[_ ]?(?:expandido|actual|nuevo|completo)|"
+                        r"guión[_ ]?(?:expandido|actual|nuevo|completo)|"
+                        r"expandido|script)[^\n]*\n+(.+)",
+                        expanded,
+                    )
+                    if _section:
+                        candidate = _section.group(1).strip()
+                        if len(candidate.split()) >= wc // 2:
+                            expanded = candidate
+                            logger.info("Expansión: extraída sección post-header del LLM")
+
+                    # Limpiar cualquier encabezado residual al inicio
+                    expanded = _re_exp.sub(
+                        r"(?i)^[\s#*_]*(guion[_ ]?(?:expandido|actual|nuevo|completo)?|"
+                        r"guión[_ ]?(?:expandido|actual|nuevo|completo)?|"
+                        r"expandido|guion|guión|script|resultado)[^\n]*\n*",
+                        "", expanded,
+                    ).strip()
+
+                    exp_words = len(expanded.split())
+                    if exp_words > wc:
+                        script["script_text"] = expanded
+                        logger.info(f"Script expandido: {wc} → {exp_words} palabras")
+                    else:
+                        logger.warning(f"Expansión no mejoró ({exp_words} palabras) — usando original")
+                except Exception as _exp_e:
+                    logger.warning(f"Expansión falló ({_exp_e}) — usando script corto")
 
             if isinstance(script.get("tags"), str):
                 script["tags"] = [t.strip() for t in script["tags"].split(",")]
