@@ -122,6 +122,9 @@ UPLOAD_RETRY_WAIT: int = 60  # segundos entre reintentos
 YOUTUBE_UPLOAD_ENABLED: bool = (
     os.getenv("YOUTUBE_UPLOAD_ENABLED", "false").lower() == "true"
 )
+# "public" | "private" | "unlisted"
+# Con "private" el video queda oculto hasta que publisher_bot.py lo publique.
+YOUTUBE_PRIVACY_STATUS: str = os.getenv("YOUTUBE_PRIVACY_STATUS", "public")
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 VIDEOS_PER_DAY: int = int(os.getenv("VIDEOS_PER_DAY", "3"))

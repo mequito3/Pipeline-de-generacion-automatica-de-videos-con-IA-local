@@ -26,13 +26,15 @@ _TIKTOK_UPLOAD_URLS = [
 ]
 TIKTOK_CHROME_PROFILE = str(Path(config.BASE_DIR) / "chrome_profile_tiktok")
 
-# Reutilizar helpers anti-detección del uploader de YouTube
+# Reutilizar helpers anti-detección y utilidades de ventana del uploader de YouTube
 from modules.youtube_uploader import (
     _delay,
     _human_type,
     _inject_stealth,
     _scroll,
     _random_mouse_wander,
+    _win_foreground,
+    _cleanup_chrome_profile,
 )
 
 # Pool de comentarios de fallback (config.TIKTOK_COMMENTS_POOL tiene 20+ entradas).
@@ -229,6 +231,11 @@ async def _upload_async(
     profile_dir = Path(TIKTOK_CHROME_PROFILE)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
+    # Matar instancias previas de Chrome y resetear posición de ventana.
+    # Sin esto Chrome restaura la posición guardada en Preferences (puede ser
+    # fuera de pantalla) aunque se pase --start-maximized en los args.
+    _cleanup_chrome_profile(profile_dir)
+
     browser = await uc.start(
         user_data_dir=str(profile_dir),
         browser_args=[
@@ -236,6 +243,7 @@ async def _upload_async(
             "--no-default-browser-check",
             "--disable-blink-features=AutomationControlled",
             "--start-maximized",
+            "--window-position=0,0",
             "--disable-dev-shm-usage",
         ],
         headless=False,
@@ -248,6 +256,8 @@ async def _upload_async(
 
         # Warm-up: visitar TikTok home antes de ir a Studio
         page = await browser.get("https://www.tiktok.com")
+        await page.activate()
+        _win_foreground("TikTok")   # traer Chrome al primer plano del OS
         await _delay(3, 6)
         await _scroll(page, random.randint(100, 250))
         await _random_mouse_wander(page)
@@ -328,6 +338,7 @@ async def _upload_async(
             logger.warning("TikTok: no se confirmó carga — intentando publicar igual")
 
         await _delay(2, 3)
+        _win_foreground("TikTok")   # asegurar primer plano antes de escribir caption
 
         # ── Caption ──────────────────────────────────────────────────────────
         try:
@@ -470,6 +481,7 @@ async def _upload_async(
             logger.debug(f"TikTok visibilidad (no crítico): {_ve}")
 
         # ── Botón Publicar ────────────────────────────────────────────────────
+        _win_foreground("TikTok")   # asegurar primer plano antes del click en Publicar
         await _delay(1.0, 2.0)
         clicked = await active_tab.evaluate("""
             (function() {

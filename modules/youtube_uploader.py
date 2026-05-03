@@ -1328,10 +1328,17 @@ async def _upload_async(
                 logger.warning(f"Paso {step}: {e}")
                 await _delay(3.0, 5.0)
 
-        # ── Visibilidad: Público ──────────────────────────────────────────────
-        logger.info("Estableciendo visibilidad: Público...")
+        # ── Visibilidad ───────────────────────────────────────────────────────
+        _privacy = getattr(config, "YOUTUBE_PRIVACY_STATUS", "public").upper()
+        _privacy_labels = {
+            "PUBLIC": ["Pública", "Public", "Público"],
+            "PRIVATE": ["Privado", "Private"],
+            "UNLISTED": ["No listado", "Unlisted"],
+        }
+        _privacy_label_es = {"PUBLIC": "Público", "PRIVATE": "Privado", "UNLISTED": "No listado"}.get(_privacy, _privacy)
+        logger.info(f"Estableciendo visibilidad: {_privacy_label_es}...")
         public_radio = await page.select(
-            "tp-yt-paper-radio-button[name='PUBLIC']", timeout=25
+            f"tp-yt-paper-radio-button[name='{_privacy}']", timeout=25
         )
 
         if public_radio is None:
@@ -1340,11 +1347,11 @@ async def _upload_async(
                 await _human_click(page, extra_next)
                 await _delay(7.0, 14.0)
             public_radio = await page.select(
-                "tp-yt-paper-radio-button[name='PUBLIC']", timeout=20
+                f"tp-yt-paper-radio-button[name='{_privacy}']", timeout=20
             )
 
         if public_radio is None:
-            for text in ["P\u00fablica", "Public", "P\u00fablico"]:
+            for text in _privacy_labels.get(_privacy, []):
                 try:
                     public_radio = await page.find(text, timeout=6)
                     if public_radio:
@@ -1353,17 +1360,17 @@ async def _upload_async(
                     pass
 
         if public_radio is None:
-            logger.error("No se encontró el botón de visibilidad 'Público'")
+            logger.error(f"No se encontró el botón de visibilidad '{_privacy_label_es}'")
             return False, ""
 
         await _think()
         await _random_mouse_wander(page)
         await _delay(2.0, 4.5)
         await _human_click(page, public_radio)
-        logger.info("Visibilidad: Público seleccionado")
+        logger.info(f"Visibilidad: {_privacy_label_es} seleccionado")
         await _delay(3.0, 5.0)
 
-        # ── Verificar que Público quedó realmente seleccionado ────────────────
+        # ── Verificar que la visibilidad quedó realmente seleccionada ─────────
         public_confirmed = False
         for verify_attempt in range(3):
             try:
@@ -1377,27 +1384,30 @@ async def _upload_async(
                 )
                 if checked:
                     public_confirmed = True
-                    logger.info("Verificado: visibilidad Público confirmada")
+                    logger.info(f"Verificado: visibilidad {_privacy_label_es} confirmada")
                     break
                 else:
-                    logger.warning(f"Público no confirmado (intento {verify_attempt+1}/3) — reintentando click")
+                    logger.warning(f"{_privacy_label_es} no confirmado (intento {verify_attempt+1}/3) — reintentando click")
                     await _delay(1.5, 3.0)
                     await _human_click(page, public_radio)
                     await _delay(2.0, 3.5)
             except Exception as e:
-                logger.debug(f"Verificación Público intento {verify_attempt+1}: {e}")
+                logger.debug(f"Verificación {_privacy_label_es} intento {verify_attempt+1}: {e}")
                 await _delay(1.5, 2.5)
 
         if not public_confirmed:
             # Último recurso: buscar el radio por texto visible
             try:
-                pub_label = await page.find("Pública", timeout=5)
-                if pub_label is None:
-                    pub_label = await page.find("Public", timeout=3)
+                fallback_texts = _privacy_labels.get(_privacy, [])
+                pub_label = None
+                for ft in fallback_texts:
+                    pub_label = await page.find(ft, timeout=5)
+                    if pub_label:
+                        break
                 if pub_label:
                     await _human_click(page, pub_label)
                     await _delay(2.0, 3.5)
-                    logger.info("Visibilidad: click por texto 'Pública'")
+                    logger.info(f"Visibilidad: click por texto '{fallback_texts[0] if fallback_texts else _privacy}'")
             except Exception:
                 pass
 
@@ -1553,54 +1563,109 @@ def upload_to_youtube(
     comment: str = "",
 ) -> str | None:
     """
-    Sube un video a YouTube Studio con anti-detección multicapa.
-
-    Returns:
-        URL del video si se subió (puede ser "" si no se capturó la URL pero sí se subió).
-        None si el upload falló.
+    Sube un video a YouTube via Data API v3 (sin Chrome).
+    Retorna la URL del video o None si fallo.
     """
-    video_path = Path(video_path)
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video no encontrado: {video_path}")
+    _vpath = Path(video_path)
+    if not _vpath.exists():
+        raise FileNotFoundError(f"Video no encontrado: {_vpath}")
 
-    logger.info(f"Iniciando upload: {video_path.name}")
+    logger.info(f"Iniciando upload API: {_vpath.name}")
+
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+    except ImportError:
+        logger.error("google-api-python-client no instalado: pip install google-api-python-client google-auth google-auth-oauthlib")
+        return None
+
+    _token_file = Path(__file__).parent.parent / "youtube_publisher_token.json"
+    if not _token_file.exists():
+        logger.error(f"Token no encontrado: {_token_file} — ejecuta setup_youtube_publisher.py")
+        return None
+
+    _scopes  = ["https://www.googleapis.com/auth/youtube"]
+    _privacy = getattr(config, "YOUTUBE_PRIVACY_STATUS", "public").lower()
 
     for attempt in range(1, config.UPLOAD_MAX_RETRIES + 1):
         try:
-            # En Windows, asyncio.run() puede dejar el event loop en SelectorEventLoop
-            # después de que edge-tts u otras corrutinas corran. nodriver necesita
-            # ProactorEventLoop para lanzar subprocesos (Chrome). Lo creamos explícitamente.
-            if platform.system() == "Windows":
-                loop = asyncio.ProactorEventLoop()
-                asyncio.set_event_loop(loop)
-                try:
-                    ok, youtube_url = loop.run_until_complete(
-                        _upload_async(video_path, title, description, tags, thumbnail_path, comment)
-                    )
-                finally:
-                    try:
-                        # Cancelar tareas pendientes de nodriver/websockets antes de cerrar
-                        pending = asyncio.all_tasks(loop)
-                        if pending:
-                            for t in pending:
-                                t.cancel()
-                            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                        loop.run_until_complete(loop.shutdown_asyncgens())
-                    except Exception:
-                        pass
-                    loop.close()
-                    asyncio.set_event_loop(None)
-            else:
-                ok, youtube_url = asyncio.run(
-                    _upload_async(video_path, title, description, tags, thumbnail_path, comment)
-                )
+            creds = Credentials.from_authorized_user_file(str(_token_file), _scopes)
+            if not creds.valid:
+                if creds.expired and creds.refresh_token:
+                    logger.info("Token expirado — renovando...")
+                    creds.refresh(Request())
+                    _token_file.write_text(creds.to_json(), encoding="utf-8")
+                else:
+                    raise RuntimeError("Token invalido — re-ejecuta setup_youtube_publisher.py")
 
-            if ok:
-                return youtube_url
-            logger.warning(f"Intento {attempt} falló sin excepción")
+            yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+            body = {
+                "snippet": {
+                    "title":           title[:100],
+                    "description":     description[:5000],
+                    "tags":            [t for t in tags if t][:30],
+                    "categoryId":      "24",  # Entertainment
+                    "defaultLanguage": "es",
+                },
+                "status": {
+                    "privacyStatus":            _privacy,
+                    "selfDeclaredMadeForKids":  False,
+                    "madeForKids":              False,
+                },
+            }
+
+            media = MediaFileUpload(
+                str(_vpath),
+                mimetype="video/*",
+                resumable=True,
+                chunksize=4 * 1024 * 1024,
+            )
+
+            req      = yt.videos().insert(part="snippet,status", body=body, media_body=media)
+            response = None
+            last_pct = 0
+            while response is None:
+                status_obj, response = req.next_chunk()
+                if status_obj:
+                    pct = int(status_obj.progress() * 100)
+                    if pct >= last_pct + 10:
+                        logger.info(f"Upload: {pct}%")
+                        last_pct = pct
+
+            video_id    = response["id"]
+            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"Video subido ({_privacy}): {youtube_url}")
+
+            # Thumbnail
+            if thumbnail_path and Path(thumbnail_path).exists():
+                try:
+                    yt.thumbnails().set(
+                        videoId=video_id,
+                        media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg"),
+                    ).execute()
+                    logger.info("Thumbnail establecido")
+                except Exception as _te:
+                    logger.warning(f"Thumbnail fallo (no critico): {_te}")
+
+            # Comentario
+            if comment:
+                try:
+                    yt.commentThreads().insert(
+                        part="snippet",
+                        body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": comment}}}},
+                    ).execute()
+                    logger.info("Comentario publicado")
+                except Exception as _ce:
+                    logger.warning(f"Comentario fallo (no critico): {_ce}")
+
+            return youtube_url
+
         except Exception as e:
             logger.error(
-                f"Excepción en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: "
+                f"Excepcion en intento {attempt}/{config.UPLOAD_MAX_RETRIES}: "
                 f"{type(e).__name__}: {e}",
                 exc_info=True,
             )
@@ -1609,6 +1674,5 @@ def upload_to_youtube(
             logger.info(f"Reintentando en {config.UPLOAD_RETRY_WAIT}s...")
             time.sleep(config.UPLOAD_RETRY_WAIT)
 
-    logger.error(f"Upload falló tras {config.UPLOAD_MAX_RETRIES} intentos")
+    logger.error(f"Upload API fallo tras {config.UPLOAD_MAX_RETRIES} intentos")
     return None
-

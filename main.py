@@ -110,6 +110,7 @@ import config
 from modules import script_generator, tts_engine, video_assembler, pexels_fetcher
 from modules import growth_agent
 from modules import analytics_agent, ceo_report
+from modules import comment_agent
 from modules.tiktok_growth_agent import run_tiktok_growth
 from modules import telegram_commander
 from modules.company import CEOOrchestrator
@@ -207,7 +208,7 @@ def _publish_queued_video(item: dict) -> bool:
     video_path = item.get("video_path", "")
     if not video_path or not Path(video_path).exists():
         logger.error(f"Cola: video no encontrado en disco: {video_path}")
-        telegram_commander.notify("❌ Cola: video no encontrado en disco — generando uno nuevo...")
+        telegram_commander.notify("❌ Cola: video no encontrado en disco — descartando item...")
         return False
 
     script = item.get("script", {})
@@ -738,11 +739,12 @@ def _run_scheduler(topic: str | None = None) -> None:
 
     import threading as _thr
 
-    analytics_done_today: str = ""
-    channel_done_today: str   = ""
-    growth_done_today: str    = ""
-    _schedule_day: str        = ""
-    today_slots: list         = []
+    analytics_done_today: str  = ""
+    channel_done_today: str    = ""
+    growth_done_today: str     = ""
+    comments_done_today: str   = ""
+    _schedule_day: str         = ""
+    today_slots: list          = []
 
     while True:
         now       = _dt.datetime.now()
@@ -771,6 +773,17 @@ def _run_scheduler(topic: str | None = None) -> None:
             briefing = _orchestrator_briefing()
             logger.info(f"[ORQUESTADOR] {briefing['action']}")
             telegram_commander.notify(f"🧠 Orquestador: {briefing['action']}")
+
+        # ── Comment agent: responder comentarios (una vez al día a las 21h) ───
+        comments_target = _dt.datetime.combine(now.date(), _dt.time(21, 0))
+        if comments_done_today != today_str and now >= comments_target:
+            comments_done_today = today_str
+            try:
+                logger.info("Comment agent: iniciando respuestas automaticas...")
+                res = comment_agent.run_comment_agent()
+                logger.info(f"Comment agent: {res['replied']} replies en {res['videos']} videos")
+            except Exception as _ce:
+                logger.warning(f"Comment agent fallo (no critico): {_ce}")
 
         # ── Canal Telegram: confesiones diarias ───────────────────────────────
         channel_hour   = a_h + 1
@@ -850,15 +863,25 @@ def _run_scheduler(topic: str | None = None) -> None:
         logger.info(f"Slot {slot_str} alcanzado — iniciando publicación...")
         telegram_commander.notify(f"🎬 Slot {slot_str} — iniciando pipeline ahora...")
 
-        queued = _queue_pop()
-        if queued:
-            logger.info("Cola: publicando video previamente aprobado...")
+        # Intentar hasta 3 items de cola antes de generar video nuevo.
+        # Evita que un item con video eliminado bloquee toda la cola.
+        published_from_queue = False
+        for _qi in range(3):
+            queued = _queue_pop()
+            if not queued:
+                break
+            video_path = queued.get("video_path", "")
+            if not video_path or not Path(video_path).exists():
+                logger.warning(f"Cola: item con video eliminado — descartando y pasando al siguiente...")
+                telegram_commander.notify("⚠️ Cola: video no encontrado — descartado, intentando siguiente...")
+                continue
+            logger.info(f"Cola: publicando video previamente aprobado...")
             telegram_commander.notify("📥 Publicando video guardado en cola...")
-            ok = _publish_queued_video(queued)
-            if not ok:
-                logger.warning("Cola: falló — generando video nuevo...")
-                _safe_run_factory()
-        else:
+            published_from_queue = _publish_queued_video(queued)
+            break
+
+        if not published_from_queue:
+            logger.warning("Cola: vacía o falló — generando video nuevo...")
             _safe_run_factory()
 
 
@@ -914,6 +937,11 @@ Prerequisitos:
         "--channel",
         action="store_true",
         help="Publicar confesiones en el canal de Telegram ahora (sin esperar el scheduler)"
+    )
+    parser.add_argument(
+        "--comments",
+        action="store_true",
+        help="Ejecutar el agente de comentarios ahora (responde comentarios recientes con IA)"
     )
     args = parser.parse_args()
 
@@ -973,6 +1001,14 @@ Prerequisitos:
         print(f"\n{'='*60}")
         print(report_text)
         print(f"{'='*60}\n")
+
+    elif getattr(args, "comments", False):
+        setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))
+        result = comment_agent.run_comment_agent()
+        print(f"\n  Videos revisados  : {result['videos']}")
+        print(f"  Comentarios vistos: {result['comments_processed']}")
+        print(f"  Spam descartado   : {result['skipped_spam']}")
+        print(f"  Respuestas dadas  : {result['replied']}\n")
 
     elif getattr(args, "channel", False):
         setup_logging(datetime.now().strftime("%Y%m%d_%H%M%S"))

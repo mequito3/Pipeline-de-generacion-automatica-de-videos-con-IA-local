@@ -350,19 +350,38 @@ def _handle_command(text: str) -> str:
     if cmd == "/queue":
         try:
             import main as _main
+            from pathlib import Path as _Path
+            from datetime import datetime as _dt
             items = _main._queue_load()
             if not items:
-                return "📭 Cola vacia — no hay videos pendientes de publicar."
+                return "📭 Cola vacía — no hay videos pendientes de publicar."
+            now = _dt.now()
             lines = [f"📋 <b>{len(items)} video(s) en cola:</b>\n"]
             for i, item in enumerate(items, 1):
-                title     = item.get("script", {}).get("title", "Sin título")[:60]
+                title     = item.get("script", {}).get("title", "Sin título")[:55]
+                video_ok  = _Path(item.get("video_path", "")).exists()
+                file_icon = "✅" if video_ok else "❌ archivo eliminado"
                 sched_raw = item.get("scheduled_for", "")
+                queued_raw = item.get("queued_at", "")
                 try:
-                    from datetime import datetime as _dt
-                    sched = _dt.fromisoformat(sched_raw).strftime("%d/%m/%Y a las %H:%M")
+                    sched_dt = _dt.fromisoformat(sched_raw)
+                    overdue  = now - sched_dt
+                    if overdue.total_seconds() > 0:
+                        days = overdue.days
+                        sched_str = f"⚠️ Vencido hace {days}d" if days > 0 else "⚠️ Vencido hoy"
+                    else:
+                        sched_str = f"⏰ {sched_dt.strftime('%d/%m a las %H:%M')}"
                 except Exception:
-                    sched = sched_raw
-                lines.append(f"{i}. <b>{title}</b>\n   ⏰ Publicacion: {sched}")
+                    sched_str = sched_raw
+                try:
+                    queued_dt  = _dt.fromisoformat(queued_raw)
+                    queued_str = queued_dt.strftime("%d/%m %H:%M")
+                except Exception:
+                    queued_str = "?"
+                lines.append(
+                    f"{i}. <b>{title}</b>\n"
+                    f"   {file_icon}  |  {sched_str}  |  Encolado: {queued_str}"
+                )
             return "\n".join(lines)
         except Exception as e:
             return f"❌ Error leyendo cola: {e}"
