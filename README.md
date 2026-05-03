@@ -1,214 +1,166 @@
-# Shorts Factory — Confesiones Dramáticas
+# Shorts Factory — Generador Automático de YouTube Shorts + TikTok
 
-Generador automático de **YouTube Shorts + TikTok** de historias de confesiones dramáticas en español.
-Pipeline 100% automatizado: genera el guión, la voz, el video y lo sube solo.
+Pipeline 100% automatizado que genera, aprueba y publica **YouTube Shorts y TikToks** de confesiones dramáticas en español. Sin edición manual. Sin intervención humana más allá de aprobar el video por Telegram.
 
 ```
-Reddit/Groq (historia) → Edge TTS (voz) → Pexels (video) → FFmpeg (ensamblado) → YouTube + TikTok
+Reddit/Groq → Edge TTS → Pexels → FFmpeg → Telegram (aprobación) → YouTube API + TikTok
 ```
 
----
-
-## Resultados reales
-
-Canal activo en producción con este sistema:
-
-**YouTube:** https://www.youtube.com/@gatacuriosa001
-**TikTok:** https://www.tiktok.com/@gatacuriosa001
-
-Videos producidos y subidos 100% automáticamente — sin edición manual.
+> Canal activo generado 100% con este sistema:
+> **YouTube:** https://www.youtube.com/@gatacuriosa001 · **TikTok:** https://www.tiktok.com/@gatacuriosa001
 
 ---
 
 ## Qué hace exactamente
 
-1. **Busca una historia real** en Reddit (confesiones, secretos familiares, traiciones)
-2. **Genera un guión dramático** con Groq (llama-3.3-70b) — gancho, narración, pregunta final
-3. **Convierte a voz** con Microsoft Edge TTS (voz neural femenina/masculina en español)
-4. **Descarga clips de Pexels** que encajan emocionalmente con la historia
-5. **Ensambla el Short** (1080×1920, subtítulos animados, música de fondo)
-6. **Envía por WhatsApp** el thumbnail para aprobación manual (SI/NO desde tu celular)
-7. **Sube a YouTube** automáticamente (nodriver — sin detección de bot)
-8. **Sube a TikTok** automáticamente (mismo video, caption correcto)
-9. **Notifica por WhatsApp** con los links de YouTube y TikTok
-10. **Growth agent**: pinea comentario en tu video, comenta en videos del nicho
-
-Todo esto ocurre 3 veces al día en piloto automático con `python main.py`.
+1. **Busca historias reales** en Reddit (confesiones, secretos familiares, traiciones)
+2. **Genera un guión dramático** con Groq (llama-3.3-70b) — gancho, narración en 3 actos, pregunta viral al final
+3. **Convierte a voz** con Microsoft Edge TTS (voz neural en español)
+4. **Descarga clips de Pexels** que encajan emocionalmente con cada acto
+5. **Ensambla el Short** (1080x1920, subtítulos animados, música CC0, efectos de sonido)
+6. **Envía por Telegram** el video + thumbnail para aprobación manual (✅/❌)
+7. **Sube a YouTube** vía Data API v3 como **Privado** (sin Chrome, sin Selenium)
+8. **Sube a TikTok** automáticamente (video público inmediato)
+9. **Publica en YouTube** en horarios pico via bot en servidor (12h, 18h, 21h)
+10. **Responde comentarios** con IA automáticamente una vez al día
+11. **Growth agent**: comenta en videos del nicho para ganar visibilidad orgánica
+12. **CEO Report**: reporte diario de métricas por Telegram
 
 ---
 
-## Requisitos
+## Arquitectura de publicación
 
-| Componente | Versión |
+```
+[Genera video] → [Aprueba en Telegram] → [Sube a YouTube PRIVADO + TikTok PUBLICO]
+                                                       |
+                                       [Bot en servidor publica en horarios pico]
+                                             12:00 · 18:00 · 21:00
+```
+
+Esto permite controlar exactamente cuando aparece cada video en el feed de YouTube, maximizando el alcance en horas de mayor audiencia.
+
+---
+
+## Stack técnico
+
+| Componente | Tecnología |
 |---|---|
-| Python | 3.10+ |
-| Chrome | Cualquier versión reciente |
-| ffmpeg | Cualquier versión reciente |
-| Groq API | Gratuita (500k tokens/día) |
-| Pexels API | Gratuita |
-| Twilio | Gratuito (sandbox WhatsApp) |
+| LLM | Groq (llama-3.3-70b) → OpenAI → Ollama (fallback) |
+| Voz | Microsoft Edge TTS (neural, español) |
+| Video stock | Pexels API |
+| Ensamblado | FFmpeg |
+| Aprobación | Telegram Bot |
+| Upload YouTube | YouTube Data API v3 (OAuth2) |
+| Upload TikTok | nodriver (Chrome automation) |
+| Servidor publisher | Python + cron (Hetzner) |
+| Growth | nodriver (comentarios humanos en el nicho) |
 
-No requiere GPU. No requiere Stable Diffusion. No requiere Ollama (opcional como fallback).
+**No requiere GPU. No requiere Stable Diffusion. Costo mensual: $0.**
 
 ---
 
 ## Instalación
 
 ```bash
-# 1. Clonar el proyecto
-git clone <repo>
-cd crypto_shorts_factory
-
-# 2. Instalar dependencias
+git clone https://github.com/mequito3/Pipeline-de-generacion-automatica-de-videos-con-IA-local.git
+cd Pipeline-de-generacion-automatica-de-videos-con-IA-local
 pip install -r requirements.txt
-
-# 3. Instalar ffmpeg
-winget install ffmpeg
-
-# 4. Configurar credenciales
-copy .env.example .env
-# Editar .env con tus claves
 ```
+
+Requiere `ffmpeg` instalado en el sistema.
 
 ---
 
-## Configuración (.env)
+## Configuración
+
+```bash
+cp .env.example .env
+# Editar .env con tus claves
+```
+
+Variables principales:
 
 ```env
-# APIs gratuitas
-PEXELS_API_KEY=tu_key_de_pexels
-GROQ_API_KEY=tu_key_de_groq
-
-# YouTube (perfil Chrome con sesión activa)
+GROQ_API_KEY=tu_key
+PEXELS_API_KEY=tu_key
+TELEGRAM_BOT_TOKEN=tu_bot_token
+TELEGRAM_CHAT_ID=tu_chat_id
 YOUTUBE_UPLOAD_ENABLED=true
-
-# TikTok (perfil Chrome separado con sesión activa)
+YOUTUBE_PRIVACY_STATUS=private
 TIKTOK_UPLOAD_ENABLED=true
-TIKTOK_USERNAME=tu_usuario_sin_arroba
-
-# WhatsApp (aprobación manual antes de subir)
-WHATSAPP_APPROVAL_ENABLED=true
-TWILIO_ACCOUNT_SID=ACxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxx
-TWILIO_WHATSAPP_FROM=+14155238886
-WHATSAPP_TO=+591xxxxxxxx
-
-# Canal
-CHANNEL_NAME=GATA CURIOSA
-
-# Scheduler: 3 videos/día en horas pico
-SCHEDULE_HOURS=8
-SCHEDULE_PEAK_HOURS=7,19,21
+TIKTOK_USERNAME=tu_usuario
+VIDEOS_PER_DAY=3
 ```
 
-### Configurar sesión de Chrome
+### Setup YouTube API (una sola vez)
 
-Para YouTube:
 ```bash
-# Abrir Chrome con el perfil del bot
-chrome.exe --user-data-dir="C:\ruta\al\proyecto\chrome_profile"
-# Ir a studio.youtube.com e iniciar sesión
-# Cerrar Chrome
+python setup_youtube_publisher.py
 ```
 
-Para TikTok:
-```bash
-chrome.exe --user-data-dir="C:\ruta\al\proyecto\chrome_profile_tiktok"
-# Ir a tiktok.com e iniciar sesión
-# Cerrar Chrome
-```
+Abre el navegador, autorizas con tu cuenta de Google y guarda el token. No necesitas volver a hacerlo.
 
 ---
 
 ## Uso
 
-### Piloto automático (recomendado)
 ```bash
-python main.py
-# Produce 3 videos/día, growth agent automático, CEO report diario
+python main.py                                    # Piloto automático, 3 videos/dia
+python main.py --now                              # Generar y subir ahora
+python main.py --now --topic "secreto familiar"  # Con tema especifico
+python main.py --comments                         # Responder comentarios con IA
+python main.py --analytics                        # Ver estadisticas del canal
 ```
 
-### Producir un video ahora
-```bash
-python main.py --now
-```
-
-### Con tema específico
-```bash
-python main.py --now --topic "secreto familiar devastador"
-```
-
-### Mantener corriendo indefinidamente (Windows PowerShell)
-```powershell
-while ($true) { python main.py; Start-Sleep 30 }
-```
+También puedes controlar todo desde Telegram con `/generate`, `/queue`, `/stats` y más.
 
 ---
 
-## Arquitectura
+## Módulos principales
 
-```
-crypto_shorts_factory/
-├── main.py                      # Orquestador + scheduler automático
-├── config.py                    # Configuración central
-├── .env                         # Credenciales (NO subir a git)
-├── modules/
-│   ├── script_generator.py      # Guión con Groq (llama-3.3-70b)
-│   ├── tts_engine.py            # Voz con Microsoft Edge TTS
-│   ├── video_assembler.py       # Video con FFmpeg + Pexels
-│   ├── youtube_uploader.py      # Upload YouTube (nodriver)
-│   ├── tiktok_uploader.py       # Upload TikTok (nodriver)
-│   ├── whatsapp_notifier.py     # Aprobación + notificaciones
-│   ├── growth_agent.py          # Comentarios automáticos (Groq)
-│   ├── analytics_agent.py       # Métricas del canal
-│   └── ceo_report.py            # Reporte diario por WhatsApp
-├── assets/
-│   ├── music/                   # Música de fondo
-│   └── pexels_cache/            # Cache de clips descargados
-├── output/
-│   └── run_YYYYMMDD_HHMMSS/
-│       ├── final_video.mp4
-│       └── thumbnail.jpg
-└── logs/
-    └── run_YYYYMMDD_HHMMSS.log
-```
+| Módulo | Descripción |
+|---|---|
+| `youtube_uploader.py` | Upload vía YouTube Data API v3, sin Chrome |
+| `tiktok_uploader.py` | Upload con nodriver, anti-detección multicapa |
+| `comment_agent.py` | Responde comentarios con IA, filtra spam, límite 30/día |
+| `playlist_manager.py` | Clasifica videos en playlists automáticamente vía API |
+| `growth_agent.py` | Comenta en videos del nicho con IA para ganar visibilidad |
+| `analytics_agent.py` | Métricas del canal + CEO Report diario por Telegram |
+| `telegram_commander.py` | Bot Telegram completo con comandos de control |
+| `publish_next_private.py` | Bot standalone para servidor: privado → público en horarios pico |
 
 ---
 
-## Módulos
+## Estructura del proyecto
 
-### Growth Agent
-Simula comportamiento humano para ganar visibilidad:
-- Comenta en 2–5 videos del nicho por sesión (máx 5/día)
-- Comentarios 100% generados por IA — sin plantillas fijas
-- Lee comentarios existentes antes de escribir
-- Likea videos, mira clips, pausa entre acciones
-- Jamás usa "sígueme" o "te sigo" (bot-tell obvio)
-- Filtra automáticamente videos fuera del nicho (anime, gaming, etc.)
-
-### Analytics Agent
-- Lee métricas reales del canal (views, likes, retención)
-- Genera CEO Report diario por WhatsApp con los videos de mejor rendimiento
-
----
-
-## Costos
-
-| Servicio | Plan | Costo |
-|---|---|---|
-| Groq (LLM) | Free tier | $0 |
-| Pexels (videos) | Free tier | $0 |
-| Edge TTS (voz) | Incluido en Windows | $0 |
-| Twilio WhatsApp | Sandbox gratuito | $0 |
-| nodriver (Chrome) | Open source | $0 |
-| **TOTAL** | | **$0/mes** |
+```
+├── main.py                        # Orquestador principal + scheduler
+├── config.py                      # Configuración central
+├── setup_youtube_publisher.py     # Setup OAuth YouTube (una vez)
+├── publish_next_private.py        # Bot publisher para servidor
+├── modules/                       # Todos los agentes
+├── output/                        # Videos generados
+└── logs/                          # Logs por sesión
+```
 
 ---
 
 ## Anti-detección
 
-- **nodriver** en lugar de Selenium — no inyecta `window.webdriver`
-- Perfiles Chrome reales con sesión guardada (no cookies ficticias)
-- Delays variables entre acciones (no timing fijo)
-- Escritura carácter a carácter con pausas aleatorias
-- Warm-up en home antes de ir a Studio
+- YouTube usa la **API oficial** — completamente permitido por Google
+- TikTok usa **nodriver** (no inyecta `window.webdriver` como Selenium)
+- Perfiles Chrome reales con sesión guardada
+- Escritura caracter a caracter con pausas aleatorias
+- Delays variables entre acciones
+
+---
+
+## Costos
+
+| Servicio | Costo |
+|---|---|
+| Groq API | $0 (500k tokens/día gratis) |
+| Pexels API | $0 |
+| Edge TTS | $0 |
+| YouTube Data API | $0 (10k unidades/día, 3 uploads = 4.8k) |
+| **Total** | **$0/mes** |
