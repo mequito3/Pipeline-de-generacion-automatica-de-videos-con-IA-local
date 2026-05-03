@@ -6,6 +6,14 @@
 ![Last Commit](https://img.shields.io/badge/último_commit-Abril_2026-blue)
 
 > Pipeline end-to-end para generar y publicar YouTube Shorts sobre criptomonedas y finanzas de forma completamente automatizada — sin depender de ninguna API de pago. Todo corre en tu propia máquina.
+>
+> ## 🎥 Demo en video
+>
+> ¿Querés ver el pipeline en acción? Mirá este Short con un ejemplo real generado automáticamente:
+>
+> [![Ver demo en YouTube Shorts](https://img.youtube.com/vi/36FG0ubCjA8/maxresdefault.jpg)](https://www.youtube.com/shorts/36FG0ubCjA8)
+>
+> ▶️ Click en la imagen para reproducir el Short en YouTube.
 
 ---
 
