@@ -81,9 +81,8 @@ WHATSAPP_TO: str = os.getenv("WHATSAPP_TO", "")
 # Segundos máximos esperando respuesta (default: 2 horas)
 WHATSAPP_APPROVAL_TIMEOUT: int = int(os.getenv("WHATSAPP_APPROVAL_TIMEOUT", "7200"))
 
-# ─── YouTube (Selenium) ───────────────────────────────────────────────────────
-YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
-YOUTUBE_PASSWORD: str = os.getenv("YOUTUBE_PASSWORD", "")
+# ─── YouTube Studio (nodriver + Chrome DevTools Protocol) ────────────────────
+# La sesión se conserva en CHROME_PROFILE_DIR; no se almacenan credenciales.
 YOUTUBE_STUDIO_URL: str = "https://studio.youtube.com"
 CHROME_PROFILE_DIR: str = str(BASE_DIR / "chrome_profile")
 UPLOAD_MAX_RETRIES: int = 3
