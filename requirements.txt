@@ -30,7 +30,7 @@ requests>=2.31.0                # Llamadas a A1111, ComfyUI y Ollama
 nodriver>=0.48.1                # Control asíncrono de Chrome vía CDP, sin Selenium/WebDriver
 
 # ─── Configuración ────────────────────────────────────────────────────────────
-python-dotenv>=1.0.0            # Cargar .env con credenciales de YouTube
+python-dotenv>=1.0.0            # Cargar configuración desde .env
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
 schedule>=1.2.1                 # Ejecutar el pipeline cada N horas
