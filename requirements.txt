@@ -26,9 +26,8 @@ Pillow>=10.0.0                  # Procesamiento de imágenes, upscale, fallback
 # ─── HTTP / APIs locales ──────────────────────────────────────────────────────
 requests>=2.31.0                # Llamadas a A1111, ComfyUI y Ollama
 
-# ─── Selenium (YouTube upload) ────────────────────────────────────────────────
-selenium>=4.18.0                # Automatización del navegador
-undetected-chromedriver>=3.5.5  # ChromeDriver anti-detección de bots
+# ─── YouTube Studio (upload mediante Chrome DevTools Protocol) ───────────────
+nodriver>=0.48.1                # Control asíncrono de Chrome vía CDP, sin Selenium/WebDriver
 
 # ─── Configuración ────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0            # Cargar .env con credenciales de YouTube
@@ -38,7 +37,7 @@ schedule>=1.2.1                 # Ejecutar el pipeline cada N horas
 
 # ─── Dependencias del sistema (NO pip) — instalar manualmente ─────────────────
 # ffmpeg: winget install ffmpeg  (requerido por moviepy y pydub)
-# Chrome: https://www.google.com/chrome/ (requerido por Selenium)
+# Chrome: https://www.google.com/chrome/ (requerido por nodriver)
 # Ollama: https://ollama.ai (servidor LLM local)
 # Stable Diffusion A1111: https://github.com/AUTOMATIC1111/stable-diffusion-webui
 # Stable Diffusion ComfyUI: https://github.com/comfyanonymous/ComfyUI
