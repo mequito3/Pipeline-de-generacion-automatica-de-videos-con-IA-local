@@ -24,7 +24,7 @@
 - **🗣️ Narración con TTS** — Voz sintética generada localmente, sin servicios externos.
 - **🎨 Imágenes con Stable Diffusion** — Cada escena tiene su imagen generada por SD, con fallback automático a CPU si no hay GPU disponible.
 - **🎬 Renderizado con FFmpeg** — Las escenas se combinan en un video final listo para subir.
-- **📅 Scheduler integrado** — Publicación automática en horarios configurables directamente desde la config.
+- **📅 Scheduler integrado** — Publicación automática en horarios configurables mediante YouTube Studio y un perfil persistente de Chrome.
 - **🔧 Temas configurables** — El pipeline adapta el contenido al nicho que definas en `.env`.
 - **🪟 Compatible con Windows** — Incluye instrucciones de troubleshooting para PATH de FFmpeg y dependencias TTS.
 
@@ -80,7 +80,7 @@
 | **Síntesis de voz** | TTS local | Narración del video |
 | **Generación de imágenes** | Stable Diffusion | Imágenes por escena |
 | **Renderizado** | FFmpeg | Composición del video final |
-| **Publicación** | YouTube API / automatización | Upload y scheduling |
+| **Publicación** | nodriver + Chrome DevTools Protocol | Upload mediante YouTube Studio y scheduling |
 | **Configuración** | `.env` + `config.py` | Variables de entorno y parámetros |
 
 ---
@@ -140,7 +140,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Editá `.env` con tus credenciales y URLs (ver sección [Configuración](#-configuración)).
+Editá `.env` con las URLs y opciones del pipeline (ver sección [Configuración](#-configuración)). Para publicar, inicia sesión una vez en YouTube Studio con el perfil de Chrome configurado; la contraseña no se guarda en `.env`.
 
 ### 5. Verificar la instalación de TTS
 
@@ -153,9 +153,8 @@ Si el módulo de voz no se instala automáticamente con `requirements.txt`, segu
 Copiá `.env.example` como `.env` y completá los valores:
 
 ```env
-# Credenciales de YouTube
-YOUTUBE_EMAIL=tu_email@gmail.com
-YOUTUBE_PASSWORD=tu_contraseña
+# Publicación en YouTube Studio
+YOUTUBE_UPLOAD_ENABLED=false
 CHANNEL_NAME=NombreDeTuCanal
 
 # URLs de servicios locales
@@ -194,7 +193,7 @@ El scheduler está configurado en `config.py`. Una vez activo, el pipeline se ej
 - [x] Generación de imágenes con Stable Diffusion
 - [x] Fallback automático CPU cuando no hay GPU
 - [x] Renderizado y composición con FFmpeg
-- [x] Upload automático a YouTube
+- [x] Upload automático a YouTube Studio mediante nodriver (CDP, sin Selenium)
 - [x] Scheduler con horarios configurables
 - [ ] **Música de fondo** — mezcla de audio ambiente sobre la narración *(en desarrollo)*
 - [ ] Soporte multi-idioma en TTS
